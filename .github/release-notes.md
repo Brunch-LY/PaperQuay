@@ -32,6 +32,7 @@ Download the native installer for your operating system from the Assets section 
 
 - WebDAV backup in this version is manual only. It does not run on startup or on a background schedule.
 - The local SQLite database remains the source of truth. WebDAV stores a remote backup copy only.
+- This `0.1.6` release may be rebuilt to refresh assets. If you previously saw a `0.1.5` filename under this tag, download the refreshed `0.1.6` asset after the latest workflow run finishes.
 - AI features require your own compatible model endpoint and API key in Settings.
 - MinerU parsing requires a MinerU API key unless you are using already parsed local cache data.
 
@@ -71,5 +72,6 @@ PaperQuay 是一款 AI 辅助的桌面端文献管理软件，支持文库管理
 
 - 本版本的 WebDAV 备份仍然是手动模式，不会在启动时或后台定时自动运行。
 - 本地 SQLite 数据库始终是唯一数据源，WebDAV 只保存远程备份副本。
+- 这个 `0.1.6` 版本可能会为刷新发布资产而重新构建。如果你之前在这个 tag 下看到过带有 `0.1.5` 文件名的安装包，请在最新 workflow 完成后重新下载刷新后的 `0.1.6` 资产。
 - AI 功能需要你在设置中自行配置兼容的大模型接口和 API Key。
 - MinerU 解析需要有效的 MinerU API Key，除非你使用的是已经解析好的本地缓存数据。
