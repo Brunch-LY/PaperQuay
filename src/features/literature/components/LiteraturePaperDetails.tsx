@@ -21,6 +21,11 @@ import type {
   LiteraturePaperTaskState,
   UpdatePaperRequest,
 } from '../../../types/library';
+import type { PdfReadingHeatmap } from '../../../types/reader';
+import {
+  loadPaperHistory,
+  PAPER_READING_HEATMAP_UPDATED_EVENT,
+} from '../../../utils/paperHistory';
 import {
   isPaperPipelineActionDisabled,
   isPaperPipelineBusy,
@@ -29,6 +34,7 @@ import {
   paperAuthors,
   paperPdfPath,
 } from '../literatureUi';
+import LiteratureReadingTimeChart from './LiteratureReadingTimeChart';
 
 interface LiteraturePaperDetailsProps {
   selectedPaper: LiteraturePaper | null;
@@ -218,6 +224,18 @@ function splitOverviewListItems(content: string, key: OverviewSectionKey): strin
     .split(/\n+/)
     .map((item) => item.replace(/^(\d+[.)]\s*|[-*\s]*)/, '').trim())
     .filter(Boolean);
+}
+
+function latestReadingHeatmapForPaper(paperId: string | null | undefined): PdfReadingHeatmap | null {
+  if (!paperId) {
+    return null;
+  }
+
+  const history = loadPaperHistory(`native-library:${paperId}`);
+
+  return Object.values(history?.pdfReadingHeatmaps ?? {})
+    .filter((heatmap) => heatmap.totalMs > 0)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
 }
 
 function draftFromPaper(paper: LiteraturePaper | null): PaperEditDraft {
@@ -466,10 +484,26 @@ export default function LiteraturePaperDetails({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PaperEditDraft>(() => draftFromPaper(selectedPaper));
   const [activeOverviewKey, setActiveOverviewKey] = useState<OverviewSectionKey>('overview');
+  const [readingHeatmap, setReadingHeatmap] = useState<PdfReadingHeatmap | null>(() =>
+    latestReadingHeatmapForPaper(selectedPaper?.id),
+  );
 
   useEffect(() => {
     setEditing(false);
     setDraft(draftFromPaper(selectedPaper));
+    setReadingHeatmap(latestReadingHeatmapForPaper(selectedPaper?.id));
+  }, [selectedPaper?.id]);
+
+  useEffect(() => {
+    const handleHeatmapUpdated = () => {
+      setReadingHeatmap(latestReadingHeatmapForPaper(selectedPaper?.id));
+    };
+
+    window.addEventListener(PAPER_READING_HEATMAP_UPDATED_EVENT, handleHeatmapUpdated);
+
+    return () => {
+      window.removeEventListener(PAPER_READING_HEATMAP_UPDATED_EVENT, handleHeatmapUpdated);
+    };
   }, [selectedPaper?.id]);
 
   const patchDraft = (patch: Partial<PaperEditDraft>) => {
@@ -800,6 +834,8 @@ export default function LiteraturePaperDetails({
                     </dd>
                   </div>
                 </dl>
+
+                <LiteratureReadingTimeChart heatmap={readingHeatmap} />
 
                 {selectedPaper.keywords.length > 0 ? (
                   <div className="flex flex-wrap gap-2">

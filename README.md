@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.6-2563eb?style=flat-square" alt="Version v0.1.6">
+  <img src="https://img.shields.io/badge/version-v0.1.8-2563eb?style=flat-square" alt="Version v0.1.8">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
   <img src="https://img.shields.io/badge/built%20with-Electron-47848f?style=flat-square" alt="Electron">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
@@ -87,6 +87,10 @@ PaperQuay includes a dedicated Notes workspace built on Tiptap. Notes are stored
 
 PaperQuay is designed not only for deep reading, but also for screening large numbers of papers quickly. In the overview panel, each paper can directly surface AI-generated fields such as background, research question, method, experiment setup, key findings, conclusions, and limitations.
 
+### Reading Time Visibility
+
+PaperQuay records time spent across PDF positions and surfaces it as reading heat previews in the library and a dedicated reading-time chart in the paper detail panel. This makes it easier to see which parts of a paper have actually received attention.
+
 ### Literature Library, Not Just Import
 
 PaperQuay can build an independent local library with PDF import, a configurable storage folder, categories, tags, metadata editing, search, filtering, notes, and local SQLite persistence. Zotero remains supported as an optional import source, not a required dependency.
@@ -108,8 +112,9 @@ The agent workspace is designed for library operations, not just conversation. I
 | 5. Generate overviews  | Produce reusable paper overviews for fast screening and later review.                 |
 | 6. Translate full text | Cache translated blocks so reading can jump instantly between source and translation. |
 | 7. Read and annotate   | Highlight, write, add notes, jump to annotations, and export annotated PDFs.          |
-| 8. Write notes         | Create rich Tiptap notes, link notes with `[[title]]`, add `#tags`, and reference papers. |
-| 9. Use the agent       | Ask the agent to rename, classify, tag, clean metadata, or summarize selected papers. |
+| 8. Review reading time | Inspect reading-time charts and heat previews to see which parts of the PDF were read. |
+| 9. Write notes         | Create rich Tiptap notes, link notes with `[[title]]`, add `#tags`, and reference papers. |
+| 10. Use the agent      | Ask the agent to rename, classify, tag, clean metadata, or summarize selected papers. |
 
 ---
 
@@ -142,9 +147,9 @@ The agent workspace is designed for library operations, not just conversation. I
 | File management | Configurable storage folder, copy / move / keep-path import modes, naming rules, and original-path tracking                          |
 | Metadata        | OpenAlex enrichment by DOI or title, optional OpenAlex API key / mailto settings, Crossref fallback, and manual editing before import |
 | Categories      | System categories, custom categories, nested subcategories, collapsible branches, context menus, drag sorting, and hierarchy changes |
-| Paper details   | Title, authors, year, venue, DOI, URL, abstract, keywords, tags, notes, citation, and favorite state                                 |
+| Paper details   | Title, authors, year, venue, DOI, URL, abstract, keywords, tags, notes, citation, favorite state, and a reading-time chart           |
 | Notes workspace | Tiptap rich-text editor, local autosave, full-text search, tags, wiki links, paper references, outline, and backlinks                |
-| Reader          | PDF reader with MinerU structured block views and region-based linkage                                                               |
+| Reader          | PDF reader with MinerU structured block views, region-based linkage, reading heat progress, and reading-time recording              |
 | Translation     | Full-text translation, cached block translations, and selection translation through OpenAI-compatible models                         |
 | Paper overview  | AI-generated screening fields for background, research questions, methods, experiment setup, findings, conclusions, and limitations  |
 | Agent workspace | Conversation UI with execution traces, tool call cards, paper selection, metadata tools, rename tools, tagging, and classification   |

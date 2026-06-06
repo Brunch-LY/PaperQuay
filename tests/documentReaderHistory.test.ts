@@ -9,6 +9,7 @@ import {
   upsertRecentPdfReadingHeatmap,
   upsertRecentPdfScrollPosition,
 } from '../src/features/reader/documentReaderHistory.ts';
+import { aggregateReadingTimeChartBins } from '../src/features/literature/readingTimeChartUtils.ts';
 import type { PdfReadingHeatmap, PdfScrollPosition } from '../src/types/reader.ts';
 
 function scrollPosition(overrides: Partial<PdfScrollPosition> = {}): PdfScrollPosition {
@@ -103,6 +104,16 @@ test('upsertRecentPdfReadingHeatmap stores newer activity and skips stale duplic
 
   assert.deepEqual(Object.keys(next ?? {}).sort(), ['fresh', 'newer']);
   assert.equal(upsertRecentPdfReadingHeatmap(next ?? {}, heatmap({ sourceKey: '' })), null);
+});
+
+test('aggregateReadingTimeChartBins compresses reading heatmap into chart buckets', () => {
+  const bins = Array.from({ length: 120 }, (_, index) => index + 1);
+  const chartBins = aggregateReadingTimeChartBins(heatmap({ bins }));
+
+  assert.equal(chartBins.length, 24);
+  assert.equal(chartBins[0], 15);
+  assert.equal(chartBins[23], 590);
+  assert.deepEqual(aggregateReadingTimeChartBins(null), Array.from({ length: 24 }, () => 0));
 });
 
 test('restorePdfSourceHistory clones recent scroll position for a new source key', () => {
