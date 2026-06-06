@@ -3,9 +3,12 @@ const { spawn } = require('node:child_process');
 const mirrorEnv = {
   ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/',
   npm_config_electron_mirror: process.env.npm_config_electron_mirror || 'https://npmmirror.com/mirrors/electron/',
-  ELECTRON_BUILDER_BINARIES_MIRROR: process.env.ELECTRON_BUILDER_BINARIES_MIRROR || 'https://npmmirror.com/mirrors/electron-builder-binaries/',
   CSC_IDENTITY_AUTO_DISCOVERY: process.env.CSC_IDENTITY_AUTO_DISCOVERY || 'false',
 };
+
+if (process.env.ELECTRON_BUILDER_BINARIES_MIRROR) {
+  mirrorEnv.ELECTRON_BUILDER_BINARIES_MIRROR = process.env.ELECTRON_BUILDER_BINARIES_MIRROR;
+}
 
 function withNoDeprecationWarning(nodeOptions) {
   const value = (nodeOptions || '').trim();
