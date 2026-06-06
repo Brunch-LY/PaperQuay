@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BookOpenText, FileJson, FileText, Info, Quote, X } from 'lucide-react';
+import { BookOpenText, FileJson, FileText, Info, PanelRightClose, Quote, X } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type { PaperAnnotation, SelectedExcerpt, ZoteroRelatedNote } from '../../types/reader';
 import { cn } from '../../utils/cn';
@@ -22,6 +22,7 @@ export interface MetadataPanelProps {
   statusMessage?: string;
   hasBlocks: boolean;
   aiConfigured: boolean;
+  onCollapse?: () => void;
 }
 
 function MetadataPanel({
@@ -35,6 +36,7 @@ function MetadataPanel({
   statusMessage,
   hasBlocks,
   aiConfigured,
+  onCollapse,
 }: MetadataPanelProps) {
   const l = useLocaleText();
 
@@ -50,6 +52,19 @@ function MetadataPanel({
       }
       icon={<Info className="h-4 w-4" strokeWidth={1.8} />}
       contentClassName="space-y-3"
+      actions={
+        onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="pq-icon-button h-8 w-8"
+            title={l('收起侧边栏', 'Collapse sidebar')}
+            aria-label={l('收起侧边栏', 'Collapse sidebar')}
+          >
+            <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
+          </button>
+        ) : null
+      }
     >
       <div className="space-y-1">
         <div className="text-base font-semibold text-slate-900">
@@ -95,6 +110,7 @@ export interface TranslateDrawerContentProps {
   onAppendSelectedExcerptToQa: () => void;
   onTranslateSelectedExcerpt: () => void;
   onClearSelectedExcerpt: () => void;
+  onCollapse?: () => void;
 }
 
 function TranslateDrawerContent({
@@ -106,6 +122,7 @@ function TranslateDrawerContent({
   onAppendSelectedExcerptToQa,
   onTranslateSelectedExcerpt,
   onClearSelectedExcerpt,
+  onCollapse,
 }: TranslateDrawerContentProps) {
   return (
     <div className="h-full overflow-y-auto px-4 py-4">
@@ -118,6 +135,7 @@ function TranslateDrawerContent({
         onAppendSelectedExcerptToQa={onAppendSelectedExcerptToQa}
         onTranslateSelectedExcerpt={onTranslateSelectedExcerpt}
         onClearSelectedExcerpt={onClearSelectedExcerpt}
+        onCollapse={onCollapse}
       />
     </div>
   );
@@ -364,6 +382,7 @@ export interface AnnotationsDrawerContentProps {
   onCreateAnnotation: (note: string) => void;
   onDeleteAnnotation: (annotationId: string) => void;
   onSelectAnnotation: (annotationId: string) => void;
+  onCollapse?: () => void;
 }
 
 function AnnotationsDrawerContent({
@@ -371,6 +390,7 @@ function AnnotationsDrawerContent({
   onCreateAnnotation,
   onDeleteAnnotation,
   onSelectAnnotation,
+  onCollapse,
 }: AnnotationsDrawerContentProps) {
   const l = useLocaleText();
   const [annotationDraft, setAnnotationDraft] = useState('');
@@ -391,6 +411,19 @@ function AnnotationsDrawerContent({
           )}
           icon={<Quote className="h-4 w-4" strokeWidth={1.8} />}
           contentClassName="space-y-3"
+          actions={
+            onCollapse ? (
+              <button
+                type="button"
+                onClick={onCollapse}
+                className="pq-icon-button h-8 w-8"
+                title={l('收起侧边栏', 'Collapse sidebar')}
+                aria-label={l('收起侧边栏', 'Collapse sidebar')}
+              >
+                <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
+              </button>
+            ) : null
+          }
         >
           <textarea
             value={annotationDraft}

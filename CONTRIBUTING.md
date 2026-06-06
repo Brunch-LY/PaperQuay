@@ -20,7 +20,7 @@ npm install
 Run the desktop app in development mode:
 
 ```bash
-npm run tauri:dev
+npm run dev
 ```
 
 Run frontend checks:
@@ -29,11 +29,10 @@ Run frontend checks:
 npm run build
 ```
 
-Run Rust checks:
+Build the desktop installer:
 
 ```bash
-cd src-tauri
-cargo check
+npm run electron:build
 ```
 
 ## Pull Request Guidelines

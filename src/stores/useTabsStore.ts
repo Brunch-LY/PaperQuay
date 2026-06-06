@@ -1,10 +1,10 @@
 import { create } from 'zustand';
 
-export type ReaderTabType = 'library' | 'reader';
+export type AppTabType = 'library' | 'reader' | 'agent' | 'notes' | 'note';
 
 export interface BaseAppTab {
   id: string;
-  type: ReaderTabType;
+  type: AppTabType;
   title: string;
 }
 
@@ -18,18 +18,42 @@ export interface ReaderTab extends BaseAppTab {
   documentId: string;
 }
 
-export type AppTab = LibraryTab | ReaderTab;
+export interface AgentTab extends BaseAppTab {
+  id: 'agent';
+  type: 'agent';
+}
+
+export interface NotesTab extends BaseAppTab {
+  id: 'notes';
+  type: 'notes';
+}
+
+export interface NoteTab extends BaseAppTab {
+  type: 'note';
+  noteId: string;
+  externalUpdate?: boolean;
+}
+
+export type AppTab = LibraryTab | ReaderTab | AgentTab | NotesTab | NoteTab;
 
 interface TabsState {
   tabs: AppTab[];
   activeTabId: string;
   openTab: (documentId: string, title: string) => string;
+  openAgentTab: () => string;
+  openNotesTab: () => string;
+  openNoteTab: (noteId: string, title: string) => string;
+  updateNoteTabTitle: (noteId: string, title: string) => void;
+  setNoteTabExternalUpdate: (noteId: string, externalUpdate: boolean) => void;
+  reorderTab: (sourceTabId: string, targetTabId: string, position: 'before' | 'after') => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   setHomeTabTitle: (title: string) => void;
 }
 
 export const HOME_TAB_ID = 'home';
+export const AGENT_TAB_ID = 'agent';
+export const NOTES_TAB_ID = 'notes';
 
 export function getHomeTabTitle(locale: 'zh-CN' | 'en-US') {
   return locale === 'en-US' ? 'My Library' : '我的文库';
@@ -45,6 +69,26 @@ function createHomeTab(title = getHomeTabTitle('zh-CN')): LibraryTab {
 
 function createReaderTabId(documentId: string): string {
   return `reader:${documentId}`;
+}
+
+function createNoteTabId(noteId: string): string {
+  return `note:${noteId}`;
+}
+
+function createAgentTab(): AgentTab {
+  return {
+    id: AGENT_TAB_ID,
+    type: 'agent',
+    title: 'Agent',
+  };
+}
+
+function createNotesTab(): NotesTab {
+  return {
+    id: NOTES_TAB_ID,
+    type: 'notes',
+    title: '笔记',
+  };
 }
 
 export const useTabsStore = create<TabsState>()((set, get) => ({
@@ -72,6 +116,121 @@ export const useTabsStore = create<TabsState>()((set, get) => ({
     }));
 
     return nextTab.id;
+  },
+  openAgentTab: () => {
+    const existingTab = get().tabs.find((tab) => tab.id === AGENT_TAB_ID);
+
+    if (existingTab) {
+      set({ activeTabId: existingTab.id });
+      return existingTab.id;
+    }
+
+    const nextTab = createAgentTab();
+
+    set((state) => ({
+      tabs: [...state.tabs, nextTab],
+      activeTabId: nextTab.id,
+    }));
+
+    return nextTab.id;
+  },
+  openNotesTab: () => {
+    const existingTab = get().tabs.find((tab) => tab.id === NOTES_TAB_ID);
+
+    if (existingTab) {
+      set({ activeTabId: existingTab.id });
+      return existingTab.id;
+    }
+
+    const nextTab = createNotesTab();
+
+    set((state) => ({
+      tabs: [...state.tabs, nextTab],
+      activeTabId: nextTab.id,
+    }));
+
+    return nextTab.id;
+  },
+  openNoteTab: (noteId, title) => {
+    const nextTabId = createNoteTabId(noteId);
+    const normalizedTitle = title.trim() || '未命名笔记';
+    const existingTab = get().tabs.find((tab) => tab.id === nextTabId);
+
+    if (existingTab) {
+      set((state) => ({
+        tabs: state.tabs.map((tab) =>
+          tab.id === nextTabId ? { ...tab, title: normalizedTitle } : tab,
+        ),
+        activeTabId: existingTab.id,
+      }));
+      return existingTab.id;
+    }
+
+    const nextTab: NoteTab = {
+      id: nextTabId,
+      type: 'note',
+      title: normalizedTitle,
+      noteId,
+    };
+
+    set((state) => ({
+      tabs: [...state.tabs, nextTab],
+      activeTabId: nextTab.id,
+    }));
+
+    return nextTab.id;
+  },
+  updateNoteTabTitle: (noteId, title) => {
+    const tabId = createNoteTabId(noteId);
+    const normalizedTitle = title.trim() || '未命名笔记';
+
+    set((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.id === tabId && tab.type === 'note' && tab.title !== normalizedTitle
+          ? { ...tab, title: normalizedTitle }
+          : tab,
+      ),
+    }));
+  },
+  setNoteTabExternalUpdate: (noteId, externalUpdate) => {
+    const tabId = createNoteTabId(noteId);
+
+    set((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.id === tabId && tab.type === 'note' && Boolean(tab.externalUpdate) !== externalUpdate
+          ? { ...tab, externalUpdate }
+          : tab,
+      ),
+    }));
+  },
+  reorderTab: (sourceTabId, targetTabId, position) => {
+    if (sourceTabId === targetTabId) {
+      return;
+    }
+
+    set((state) => {
+      const sourceIndex = state.tabs.findIndex((tab) => tab.id === sourceTabId);
+      const targetIndex = state.tabs.findIndex((tab) => tab.id === targetTabId);
+
+      if (sourceIndex === -1 || targetIndex === -1) {
+        return state;
+      }
+
+      const sourceTab = state.tabs[sourceIndex];
+      const nextTabs = state.tabs.filter((tab) => tab.id !== sourceTabId);
+      const nextTargetIndex = nextTabs.findIndex((tab) => tab.id === targetTabId);
+
+      if (nextTargetIndex === -1) {
+        return state;
+      }
+
+      const insertIndex = position === 'after' ? nextTargetIndex + 1 : nextTargetIndex;
+      nextTabs.splice(insertIndex, 0, sourceTab);
+
+      return {
+        tabs: nextTabs,
+      };
+    });
   },
   closeTab: (tabId) => {
     if (tabId === HOME_TAB_ID) {
@@ -101,10 +260,18 @@ export const useTabsStore = create<TabsState>()((set, get) => ({
     set({ activeTabId: tabId });
   },
   setHomeTabTitle: (title) => {
-    set((state) => ({
-      tabs: state.tabs.map((tab) =>
-        tab.id === HOME_TAB_ID && tab.type === 'library' ? { ...tab, title } : tab,
-      ),
-    }));
+    set((state) => {
+      const homeTab = state.tabs.find((tab) => tab.id === HOME_TAB_ID && tab.type === 'library');
+
+      if (homeTab?.title === title) {
+        return state;
+      }
+
+      return {
+        tabs: state.tabs.map((tab) =>
+          tab.id === HOME_TAB_ID && tab.type === 'library' ? { ...tab, title } : tab,
+        ),
+      };
+    });
   },
 }));

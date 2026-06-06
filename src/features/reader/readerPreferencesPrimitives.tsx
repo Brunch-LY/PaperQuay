@@ -126,11 +126,11 @@ export function SettingsField({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-chrome-800 dark:shadow-none">
+    <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:shadow-none">
       <div>
-        <div className="text-sm font-medium text-slate-900 dark:text-chrome-100">{label}</div>
+        <div className="text-sm font-medium text-slate-900 dark:text-[var(--pq-text)]">{label}</div>
         {description ? (
-          <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-chrome-300">
+          <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-[var(--pq-text-muted)]">
             {description}
           </div>
         ) : null}
@@ -145,7 +145,7 @@ export function SettingsInput(props: InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={clsx(
-        'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-300 focus:bg-white dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-100 dark:placeholder:text-chrome-400 dark:focus:border-accent-teal dark:focus:bg-chrome-700',
+        'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-300 focus:bg-white dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text)] dark:placeholder:text-[var(--pq-text-faint)] dark:focus:border-[color-mix(in_srgb,var(--pq-accent)_30%,transparent)] dark:focus:bg-[var(--pq-surface-2)]',
         props.className,
       )}
     />
@@ -157,7 +157,7 @@ export function SettingsSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
     <select
       {...props}
       className={clsx(
-        'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-300 focus:bg-white dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-100 dark:focus:border-accent-teal dark:focus:bg-chrome-700',
+        'w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-300 focus:bg-white dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text)] dark:focus:border-[color-mix(in_srgb,var(--pq-accent)_30%,transparent)] dark:focus:bg-[var(--pq-surface-2)]',
         props.className,
       )}
     />

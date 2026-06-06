@@ -1,19 +1,17 @@
 import clsx from 'clsx';
 import { useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronRight,
   FolderPlus,
-  HardDrive,
   Pencil,
   Trash2,
 } from 'lucide-react';
 import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import type {
-  LibrarySettings,
   LiteratureCategory,
 } from '../../../types/library';
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
-import { truncateMiddle } from '../../../utils/text';
 import {
   categoryIcon,
   categoryDisplayName,
@@ -21,12 +19,10 @@ import {
 } from '../literatureUi';
 
 interface LiteratureCategorySidebarProps {
-  settings: LibrarySettings | null;
   categories: FlatLiteratureCategory[];
   selectedCategoryId: string | null;
   onCreateCategory: (parentCategory?: LiteratureCategory | null) => void;
   onSelectCategory: (categoryId: string) => void;
-  onSelectStorageDir: () => void;
   onRenameCategory: (category: LiteratureCategory) => void;
   onDeleteCategory: (category: LiteratureCategory) => void;
   onCategoryMove: (categoryId: string, parentId: string | null) => void;
@@ -44,12 +40,10 @@ interface CategoryContextMenuState {
 }
 
 export default function LiteratureCategorySidebar({
-  settings,
   categories,
   selectedCategoryId,
   onCreateCategory,
   onSelectCategory,
-  onSelectStorageDir,
   onRenameCategory,
   onDeleteCategory,
   onCategoryMove,
@@ -225,14 +219,14 @@ export default function LiteratureCategorySidebar({
           }}
           onDrop={(event) => handleCategoryRowDrop(event, category)}
           className={clsx(
-            'flex min-w-0 flex-1 items-center justify-between rounded-2xl px-3 py-2.5 text-left text-sm transition',
+            'flex min-w-0 flex-1 items-center justify-between rounded-xl px-2.5 py-2 text-left text-[13px] transition',
             dragOver
-              ? 'bg-teal-50 text-teal-800 shadow-[0_14px_30px_rgba(20,184,166,0.14)] ring-1 ring-teal-300 dark:bg-teal-300/12 dark:text-teal-100 dark:ring-teal-300/30'
+              ? 'bg-[var(--pq-accent-soft)] text-[var(--pq-accent)] ring-1 ring-[var(--pq-accent-ring)]'
               : selectedCategoryId === category.id
-              ? 'bg-slate-900 text-white dark:bg-[#275b5f] dark:text-white'
+              ? 'bg-[var(--pq-accent-soft)] text-[var(--pq-accent)] shadow-[0_8px_20px_var(--pq-accent-shadow)] ring-1 ring-[var(--pq-accent-ring)]'
               : category.isSystem
-                ? 'text-slate-700 hover:bg-white dark:text-[#d7d7d7] dark:hover:bg-[#242424]'
-                : 'text-slate-600 hover:bg-slate-100 dark:text-[#a0a0a0] dark:hover:bg-[#242424]',
+                ? 'text-[var(--pq-text)] hover:bg-white/70 dark:hover:bg-white/8'
+                : 'text-[var(--pq-text-muted)] hover:bg-white/70 hover:text-[var(--pq-text)] dark:hover:bg-white/8',
           )}
           style={{ paddingLeft: `${12 + category.depth * 18}px` }}
           aria-expanded={hasChildren ? !collapsed : undefined}
@@ -274,8 +268,8 @@ export default function LiteratureCategorySidebar({
             className={clsx(
               'ml-2 shrink-0 rounded-full px-2 py-0.5 text-[11px]',
               selectedCategoryId === category.id
-                ? 'bg-white/16 text-white'
-                : 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-[#a0a0a0]',
+                ? 'bg-white/75 text-[var(--pq-accent)] dark:bg-white/14'
+                : 'bg-white/62 text-[var(--pq-text-faint)] dark:bg-white/8',
             )}
           >
             {category.paperCount}
@@ -289,22 +283,22 @@ export default function LiteratureCategorySidebar({
     <aside
       ref={rootRef}
       onWheelCapture={handleWheelCapture}
-      className="flex h-full min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-white/86 dark:border-white/10 dark:bg-[#181818]"
+      className="pq-library-pane flex h-full min-h-0 flex-col overflow-hidden border-r"
     >
-      <div className="border-b border-slate-200 px-4 py-4 dark:border-white/10">
+      <div className="pq-toolbar px-3.5 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-[#a0a0a0]">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8a8f94] dark:text-[#a0a0a0]">
               PaperQuay
             </div>
-            <div className="mt-1 text-xl font-semibold tracking-tight">
-              {l('本地文献库', 'Local Library')}
+            <div className="mt-0.5 text-base font-semibold tracking-tight text-[#202124] dark:text-[#e8e8e8]">
+              {l('本地文库', 'Local Library')}
             </div>
           </div>
           <button
             type="button"
             onClick={() => onCreateCategory(null)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-[#242424] dark:text-[#a0a0a0] dark:hover:bg-[#2b2b2b]"
+            className="pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/65 dark:bg-white/6"
             title={l('新建分类', 'New Category')}
           >
             <FolderPlus className="h-4 w-4" strokeWidth={1.9} />
@@ -314,9 +308,9 @@ export default function LiteratureCategorySidebar({
 
       <div
         data-wheel-scroll-target
-        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-3"
+        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 py-2.5"
       >
-        <div className="mb-3 rounded-3xl border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm dark:border-white/10 dark:bg-[#1e1e1e]">
+        <div className="mb-3 space-y-1">
           {systemCategories.map(renderCategoryRow)}
         </div>
 
@@ -328,9 +322,9 @@ export default function LiteratureCategorySidebar({
           }}
           onDrop={handleRootDrop}
           onContextMenu={(event) => openContextMenu(event, null)}
-          className="mb-2 rounded-2xl border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-400 transition hover:border-teal-300 hover:text-teal-700 dark:border-white/10 dark:text-[#8d8d8d] dark:hover:border-[#4fa3a8] dark:hover:text-[#79c6c9]"
+          className="mb-2 rounded-xl border border-dashed border-[var(--pq-border)] bg-white/32 px-2.5 py-2 text-xs text-[var(--pq-text-muted)] transition hover:border-[var(--pq-accent-border-strong)] hover:bg-[var(--pq-accent-soft)] hover:text-[var(--pq-accent)]"
         >
-          {l('拖动分类到这里可移回顶层，右键新建顶层分类', 'Drop a category here to move it to the root level. Right-click to create a root category.')}
+          {l('拖动分类到这里可移到顶层；右键可新建顶层分类。', 'Drop a category here to move it to the root level. Right-click to create a root category.')}
         </div>
 
         <div className="space-y-1">
@@ -338,27 +332,9 @@ export default function LiteratureCategorySidebar({
         </div>
       </div>
 
-      <div className="border-t border-slate-200 p-3 dark:border-white/10">
-        <button
-          type="button"
-          onClick={onSelectStorageDir}
-          className="flex w-full items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left text-xs text-slate-500 transition hover:bg-slate-50 dark:border-white/10 dark:bg-[#1e1e1e] dark:text-[#a0a0a0] dark:hover:bg-[#242424]"
-        >
-          <HardDrive className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-          <span className="min-w-0">
-            <span className="block font-medium text-slate-700 dark:text-[#e0e0e0]">
-              {l('文献存储文件夹', 'Storage Folder')}
-            </span>
-            <span className="mt-1 block truncate">
-              {settings?.storageDir ? truncateMiddle(settings.storageDir, 34) : l('未设置', 'Not set')}
-            </span>
-          </span>
-        </button>
-      </div>
-
-      {contextMenu ? (
+      {contextMenu ? createPortal(
         <div
-          className="fixed inset-0 z-50"
+          className="fixed inset-0 z-[10000]"
           onClick={closeContextMenu}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -366,7 +342,7 @@ export default function LiteratureCategorySidebar({
           }}
         >
           <div
-            className="min-w-52 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#242424]"
+            className="pq-acrylic min-w-52 overflow-hidden py-1.5"
             style={{
               left: contextMenu.x,
               top: contextMenu.y,
@@ -463,8 +439,10 @@ export default function LiteratureCategorySidebar({
               </button>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </aside>
   );
 }
+

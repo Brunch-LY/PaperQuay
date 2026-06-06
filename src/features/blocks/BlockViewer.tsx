@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -163,7 +164,7 @@ function BlockViewer({
   }> = [
     {
       mode: 'original',
-      label: l('原始 MinerU', 'Original MinerU'),
+      label: l('原文 MinerU', 'Original MinerU'),
     },
     {
       mode: 'translated',
@@ -175,23 +176,23 @@ function BlockViewer({
     },
     {
       mode: 'bilingual',
-      label: l('双语对照', 'Bilingual'),
+      label: l('双栏对照', 'Bilingual'),
       disabled: !hasAnyTranslations,
     },
   ];
 
-  const updateContentScale = (delta: number) => {
+  const updateContentScale = useCallback((delta: number) => {
     setContentScale((current) => clampContentScale(current + delta));
-  };
+  }, []);
 
-  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey) {
+  const registerBlockRef = useCallback((blockId: string, element: HTMLDivElement | null) => {
+    if (element) {
+      blockRefs.current[blockId] = element;
       return;
     }
 
-    event.preventDefault();
-    updateContentScale(event.deltaY < 0 ? CONTENT_SCALE_STEP : -CONTENT_SCALE_STEP);
-  };
+    delete blockRefs.current[blockId];
+  }, []);
 
   const emitSelectedText = () => {
     if (!onTextSelect) {
@@ -263,6 +264,29 @@ function BlockViewer({
   }, [activeBlockId, scrollSignal, smoothScroll]);
 
   useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return undefined;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+      updateContentScale(event.deltaY < 0 ? CONTENT_SCALE_STEP : -CONTENT_SCALE_STEP);
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [updateContentScale]);
+
+  useEffect(() => {
     if (!onTextSelect) {
       return undefined;
     }
@@ -326,10 +350,8 @@ function BlockViewer({
   if (renderableBlocks.length === 0) {
     return (
       <EmptyState
-        title={l('等待结构化内容', 'Waiting for Structured Content')}
-        description={l(
-          '打开或加载 MinerU JSON 后，这里会按块展示论文内容，并保持与左侧 PDF 的几何联动。',
-          'After opening or loading a MinerU JSON file, this panel will show the paper block by block and stay geometrically linked to the PDF on the left.',
+        title={l('Waiting for Structured Content', 'Waiting for Structured Content')}
+        description={l('After opening or loading a MinerU JSON file, this panel will show the paper block by block and stay geometrically linked to the PDF on the left.', 'After opening or loading a MinerU JSON file, this panel will show the paper block by block and stay geometrically linked to the PDF on the left.',
         )}
       />
     );
@@ -338,16 +360,15 @@ function BlockViewer({
   return (
     <div
       ref={containerRef}
-      className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_34%,#f4f7fb_100%)] text-slate-900 dark:bg-chrome-950 dark:text-chrome-100"
-      onWheel={handleWheel}
+      className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_34%,#f5f5f4_100%)] text-slate-900 dark:bg-[var(--pq-bg-primary)] dark:text-[var(--pq-text)]"
       onMouseUp={() => scheduleSelectionCommit()}
       onKeyUp={() => scheduleSelectionCommit()}
     >
       <div className="sticky top-0 z-40 px-4 pt-4">
-        <div className="mx-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl border border-white/80 bg-white/72 px-3 py-2 shadow-[0_10px_22px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800 dark:shadow-none">
-          <div className="flex items-center gap-2 rounded-full bg-slate-50 px-2.5 py-1 text-sm text-slate-600 dark:bg-chrome-700 dark:text-chrome-300">
-            <SearchCode className="h-4 w-4 text-slate-400 dark:text-chrome-400" strokeWidth={1.8} />
-            <span className="hidden sm:inline">{l('结构化阅读', 'Structured Reading')}</span>
+        <div className="mx-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl border border-white/80 bg-white/72 px-3 py-2 shadow-[0_10px_22px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:shadow-none">
+          <div className="flex items-center gap-2 rounded-full bg-slate-50 px-2.5 py-1 text-sm text-slate-600 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-muted)]">
+            <SearchCode className="h-4 w-4 text-slate-400 dark:text-[var(--pq-text-faint)]" strokeWidth={1.8} />
+            <span className="hidden sm:inline">{l('Structured Reading', 'Structured Reading')}</span>
           </div>
 
           <span className="pq-badge-neutral rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-500">
@@ -357,7 +378,7 @@ function BlockViewer({
             {l(`${translatedCount} 个译文块`, `${translatedCount} translated blocks`)}
           </span>
 
-          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1 text-xs text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300">
+          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white p-1 text-xs text-slate-600 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-muted)]">
             {displayModeOptions.map((option) => {
               const selected = option.mode === activeDisplayMode;
 
@@ -370,8 +391,8 @@ function BlockViewer({
                   className={cn(
                     'rounded-full px-3 py-1.5 font-medium transition-all duration-200',
                     selected
-                      ? 'bg-slate-900 text-white dark:bg-chrome-100 dark:text-chrome-900'
-                      : 'text-slate-500 hover:bg-slate-100 dark:text-chrome-300 dark:hover:bg-chrome-600',
+                      ? 'bg-slate-900 text-white dark:bg-[var(--pq-accent)] dark:text-[var(--pq-accent-text)]'
+                      : 'text-slate-500 hover:bg-slate-100 dark:text-[var(--pq-text-muted)] dark:hover:bg-[var(--pq-surface-3)]',
                     option.disabled &&
                       'cursor-not-allowed opacity-45 hover:bg-transparent dark:hover:bg-transparent',
                   )}
@@ -382,29 +403,29 @@ function BlockViewer({
             })}
           </div>
 
-          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-1 text-sm text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300">
+          <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-1 text-sm text-slate-600 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-muted)]">
             <button
               type="button"
               onClick={() => updateContentScale(-CONTENT_SCALE_STEP)}
-              className="rounded-full p-1.5 transition-all duration-200 hover:bg-slate-100 dark:hover:bg-chrome-600"
+              className="rounded-full p-1.5 transition-all duration-200 hover:bg-slate-100 dark:hover:bg-[var(--pq-surface-3)]"
               aria-label={l('缩小正文', 'Zoom out content')}
             >
               <ZoomOut className="h-4 w-4" strokeWidth={1.9} />
             </button>
-            <span className="min-w-[54px] text-center text-sm font-medium text-slate-700 dark:text-chrome-100">
+            <span className="min-w-[54px] text-center text-sm font-medium text-slate-700 dark:text-[var(--pq-text)]">
               {Math.round(contentScale * 100)}%
             </span>
             <button
               type="button"
               onClick={() => updateContentScale(CONTENT_SCALE_STEP)}
-              className="rounded-full p-1.5 transition-all duration-200 hover:bg-slate-100 dark:hover:bg-chrome-600"
+              className="rounded-full p-1.5 transition-all duration-200 hover:bg-slate-100 dark:hover:bg-[var(--pq-surface-3)]"
               aria-label={l('放大正文', 'Zoom in content')}
             >
               <ZoomIn className="h-4 w-4" strokeWidth={1.9} />
             </button>
           </div>
 
-          <span className="hidden rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-400 lg:inline dark:bg-chrome-700 dark:text-chrome-400">
+          <span className="hidden rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-400 lg:inline dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-faint)]">
             {l(
               '点击块可反向定位到 PDF 几何区域',
               'Click a block to jump back to the PDF geometry region',
@@ -429,15 +450,13 @@ function BlockViewer({
                 translatedText={translations[renderable.block.blockId]}
                 translationDisplayMode={translationDisplayMode}
                 onClick={onBlockClick}
-                registerRef={(element) => {
-                  blockRefs.current[renderable.block.blockId] = element;
-                }}
+                registerRef={registerBlockRef}
               />
             ))}
           </div>
 
           <div className="mt-8 flex justify-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400 shadow-sm dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-400 dark:shadow-none">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400 shadow-sm dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-faint)] dark:shadow-none">
               <Sparkles className="h-3.5 w-3.5" strokeWidth={1.9} />
               {l(
                 '左侧 PDF 与右侧结构块保持几何联动',
@@ -452,3 +471,4 @@ function BlockViewer({
 }
 
 export default memo(BlockViewer);
+

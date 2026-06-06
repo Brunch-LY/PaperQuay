@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { UiLanguage } from '../../types/reader';
 
 interface SpotlightRect {
@@ -428,7 +429,7 @@ export default function OnboardingGuide({
       }
     : undefined;
 
-  return (
+  const guide = (
     <div className="fixed inset-0 z-[80]">
       <div
         className="absolute inset-0 bg-[#111817]/72 dark:bg-[#060808]/78"
@@ -481,10 +482,10 @@ export default function OnboardingGuide({
                 <Icon className="h-5 w-5" strokeWidth={1.9} />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-accent-teal">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--pq-accent)]">
                   {step.eyebrow} / {steps.length}
                 </div>
-                <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-950 dark:text-chrome-50">
+                <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-950 dark:text-[var(--pq-text)]">
                   {step.title}
                 </h3>
               </div>
@@ -492,7 +493,7 @@ export default function OnboardingGuide({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl p-2 text-slate-500 transition hover:bg-[#e9f2ef] hover:text-slate-800 dark:text-chrome-300 dark:hover:bg-white/10 dark:hover:text-chrome-50"
+              className="rounded-xl p-2 text-slate-500 transition hover:bg-[#e9f2ef] hover:text-slate-800 dark:text-[var(--pq-text-muted)] dark:hover:bg-white/10 dark:hover:text-[var(--pq-text)]"
               aria-label={l('关闭引导', 'Close guide')}
             >
               <X className="h-4 w-4" strokeWidth={1.9} />
@@ -500,17 +501,17 @@ export default function OnboardingGuide({
           </div>
 
           <div className="mt-5 inline-flex items-center rounded-full border border-[#7fd1ca]/35 bg-[#e4f5f2] px-3 py-1 text-xs font-semibold text-[#315a56] dark:border-[#7fd1ca]/28 dark:bg-[#243331] dark:text-[#d8efec]">
-            <Sparkles className="mr-1.5 h-3.5 w-3.5 text-accent-teal" strokeWidth={1.9} />
+            <Sparkles className="mr-1.5 h-3.5 w-3.5 text-[var(--pq-accent)]" strokeWidth={1.9} />
             {spotlightRect
               ? l('正在高亮：', 'Highlighting: ')
               : l('当前界面暂未显示：', 'Not visible right now: ')}
             {step.targetLabel}
           </div>
 
-          <p className="mt-4 text-sm leading-7 text-slate-700 dark:text-chrome-100">
+          <p className="mt-4 text-sm leading-7 text-slate-700 dark:text-[var(--pq-text)]">
             {step.description}
           </p>
-          <div className="mt-4 rounded-2xl border border-[#d7e4e1] bg-white p-4 text-sm leading-6 text-slate-650 shadow-[0_10px_26px_rgba(15,23,42,0.06)] dark:border-white/10 dark:bg-[#202827] dark:text-chrome-200 dark:shadow-none">
+          <div className="mt-4 rounded-2xl border border-[#d7e4e1] bg-white p-4 text-sm leading-6 text-slate-650 shadow-[0_10px_26px_rgba(15,23,42,0.06)] dark:border-white/10 dark:bg-[#202827] dark:text-[var(--pq-text-muted)] dark:shadow-none">
             {step.detail}
           </div>
 
@@ -523,7 +524,7 @@ export default function OnboardingGuide({
                 className={clsx(
                   'h-2.5 rounded-full transition-all',
                   index === safeStepIndex
-                    ? 'w-9 bg-accent-teal'
+                    ? 'w-9 bg-[var(--pq-accent)]'
                     : 'w-2.5 bg-[#c9d8d5] hover:bg-[#9db8b3] dark:bg-white/18 dark:hover:bg-white/32',
                 )}
                 aria-label={l(`跳到第 ${index + 1} 步`, `Go to step ${index + 1}`)}
@@ -544,7 +545,7 @@ export default function OnboardingGuide({
                 type="button"
                 onClick={() => onStepIndexChange(Math.max(0, safeStepIndex - 1))}
                 disabled={isFirstStep}
-                className="inline-flex items-center justify-center rounded-xl border border-[#d3e0dd] bg-white px-4 py-2.5 text-sm font-medium text-slate-650 transition hover:border-[#aebfba] hover:bg-[#f1f7f5] disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/10 dark:bg-[#202827] dark:text-chrome-200 dark:hover:bg-white/10"
+                className="inline-flex items-center justify-center rounded-xl border border-[#d3e0dd] bg-white px-4 py-2.5 text-sm font-medium text-slate-650 transition hover:border-[#aebfba] hover:bg-[#f1f7f5] disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/10 dark:bg-[#202827] dark:text-[var(--pq-text-muted)] dark:hover:bg-white/10"
               >
                 <ArrowLeft className="mr-2 h-4 w-4" strokeWidth={1.9} />
                 {l('上一步', 'Back')}
@@ -572,4 +573,6 @@ export default function OnboardingGuide({
       </section>
     </div>
   );
+
+  return createPortal(guide, document.body);
 }

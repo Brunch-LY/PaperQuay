@@ -703,6 +703,7 @@ export function useReaderLibraryPreview({
           baseUrl: summaryModelPreset.baseUrl,
           apiKey: summaryModelPreset.apiKey.trim(),
           model: summaryModelPreset.model,
+          apiMode: summaryModelPreset.apiMode,
           temperature: getModelRuntimeConfig(settings, 'summary').temperature,
           reasoningEffort: getModelRuntimeConfig(settings, 'summary').reasoningEffort,
           title: item.title,
@@ -796,13 +797,19 @@ export function useReaderLibraryPreview({
     ],
   );
 
+  const generateLibraryPreviewRef = useRef(generateLibraryPreview);
+
+  useEffect(() => {
+    generateLibraryPreviewRef.current = generateLibraryPreview;
+  }, [generateLibraryPreview]);
+
   useEffect(() => {
     if (activeTabId !== HOME_TAB_ID || !selectedLibraryItem) {
       return;
     }
 
-    void generateLibraryPreview(selectedLibraryItem, false, { allowGenerate: false });
-  }, [activeTabId, generateLibraryPreview, selectedLibraryItem]);
+    void generateLibraryPreviewRef.current(selectedLibraryItem, false, { allowGenerate: false });
+  }, [activeTabId, selectedLibraryItem]);
 
   return {
     findExistingMineruJson,

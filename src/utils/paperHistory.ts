@@ -4,10 +4,15 @@ import type {
   DocumentChatSession,
   PaperAnnotation,
   PaperHistoryRecord,
+  PdfReadingHeatmap,
+  PdfScrollPosition,
 } from '../types/reader';
 
 const PAPER_HISTORY_STORAGE_KEY = 'paper-reader-paper-history-v1';
-const PAPER_HISTORY_VERSION = 4;
+const PAPER_HISTORY_VERSION = 6;
+const PDF_READING_HEATMAP_BIN_COUNT = 120;
+
+export const PAPER_READING_HEATMAP_UPDATED_EVENT = 'paperquay:reading-heatmap-updated';
 
 function stripAttachmentForHistory(
   attachment: DocumentChatAttachment,
@@ -87,6 +92,122 @@ function stripAnnotationForHistory(annotation: PaperAnnotation): PaperAnnotation
   };
 }
 
+function normalizePdfScrollPositions(value: unknown): Record<string, PdfScrollPosition> {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+
+  const positions: Record<string, PdfScrollPosition> = {};
+
+  for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+    if (!candidate || typeof candidate !== 'object') {
+      continue;
+    }
+
+    const position = candidate as Partial<PdfScrollPosition>;
+    const sourceKey =
+      typeof position.sourceKey === 'string' && position.sourceKey.trim()
+        ? position.sourceKey
+        : key;
+
+    if (
+      !sourceKey ||
+      typeof position.top !== 'number' ||
+      !Number.isFinite(position.top) ||
+      typeof position.left !== 'number' ||
+      !Number.isFinite(position.left) ||
+      typeof position.page !== 'number' ||
+      !Number.isFinite(position.page) ||
+      typeof position.pageOffsetTop !== 'number' ||
+      !Number.isFinite(position.pageOffsetTop) ||
+      typeof position.updatedAt !== 'number' ||
+      !Number.isFinite(position.updatedAt)
+    ) {
+      continue;
+    }
+
+    const nextPosition: PdfScrollPosition = {
+      sourceKey,
+      top: Math.max(0, position.top),
+      left: Math.max(0, position.left),
+      page: Math.max(1, Math.round(position.page)),
+      pageOffsetTop: Math.max(0, position.pageOffsetTop),
+      updatedAt: position.updatedAt,
+    };
+
+    if (typeof position.pageOffsetRatio === 'number' && Number.isFinite(position.pageOffsetRatio)) {
+      nextPosition.pageOffsetRatio = Math.min(1, Math.max(0, position.pageOffsetRatio));
+    }
+
+    if (typeof position.pageHeight === 'number' && Number.isFinite(position.pageHeight) && position.pageHeight > 0) {
+      nextPosition.pageHeight = position.pageHeight;
+    }
+
+    positions[sourceKey] = nextPosition;
+  }
+
+  return Object.fromEntries(
+    Object.entries(positions)
+      .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
+      .slice(0, 12),
+  );
+}
+
+function normalizePdfReadingHeatmaps(value: unknown): Record<string, PdfReadingHeatmap> {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+
+  const heatmaps: Record<string, PdfReadingHeatmap> = {};
+
+  for (const [key, candidate] of Object.entries(value as Record<string, unknown>)) {
+    if (!candidate || typeof candidate !== 'object') {
+      continue;
+    }
+
+    const heatmap = candidate as Partial<PdfReadingHeatmap>;
+    const sourceKey =
+      typeof heatmap.sourceKey === 'string' && heatmap.sourceKey.trim()
+        ? heatmap.sourceKey
+        : key;
+    const rawBins = Array.isArray(heatmap.bins) ? heatmap.bins : [];
+
+    if (
+      !sourceKey ||
+      rawBins.length === 0 ||
+      typeof heatmap.updatedAt !== 'number' ||
+      !Number.isFinite(heatmap.updatedAt)
+    ) {
+      continue;
+    }
+
+    const bins = Array.from({ length: PDF_READING_HEATMAP_BIN_COUNT }, (_, index) => {
+      const value = rawBins[index];
+
+      return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.round(value)
+        : 0;
+    });
+    const totalMs =
+      typeof heatmap.totalMs === 'number' && Number.isFinite(heatmap.totalMs)
+        ? Math.max(0, Math.round(heatmap.totalMs))
+        : bins.reduce((sum, value) => sum + value, 0);
+
+    heatmaps[sourceKey] = {
+      sourceKey,
+      bins,
+      totalMs,
+      updatedAt: heatmap.updatedAt,
+    };
+  }
+
+  return Object.fromEntries(
+    Object.entries(heatmaps)
+      .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
+      .slice(0, 12),
+  );
+}
+
 function isRecordShape(value: unknown): value is PaperHistoryRecord {
   return Boolean(
     value &&
@@ -157,6 +278,12 @@ export function loadPaperHistoryMap(): Record<string, PaperHistoryRecord> {
             ? 'pdf-only'
             : 'dual-pane',
         selectedQaSessionId,
+        pdfScrollPositions: normalizePdfScrollPositions(
+          (value as { pdfScrollPositions?: unknown }).pdfScrollPositions,
+        ),
+        pdfReadingHeatmaps: normalizePdfReadingHeatmaps(
+          (value as { pdfReadingHeatmaps?: unknown }).pdfReadingHeatmaps,
+        ),
         workspaceNoteMarkdown,
         annotations,
         qaSessions,
@@ -187,6 +314,8 @@ export function savePaperHistory(record: PaperHistoryRecord): PaperHistoryRecord
     ...record,
     version: PAPER_HISTORY_VERSION,
     selectedQaSessionId,
+    pdfScrollPositions: normalizePdfScrollPositions(record.pdfScrollPositions),
+    pdfReadingHeatmaps: normalizePdfReadingHeatmaps(record.pdfReadingHeatmaps),
     workspaceNoteMarkdown: record.workspaceNoteMarkdown,
     annotations: normalizedAnnotations,
     qaSessions: normalizedSessions,

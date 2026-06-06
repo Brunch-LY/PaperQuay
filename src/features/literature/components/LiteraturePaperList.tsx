@@ -1,5 +1,7 @@
 import clsx from 'clsx';
 import {
+  useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
@@ -15,14 +17,20 @@ import {
   Search,
   Star,
 } from 'lucide-react';
-import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type { LiteraturePaper } from '../../../types/library';
+import type { PdfReadingHeatmap } from '../../../types/reader';
+import {
+  loadPaperHistoryMap,
+  PAPER_READING_HEATMAP_UPDATED_EVENT,
+} from '../../../utils/paperHistory';
 import { truncateMiddle } from '../../../utils/text';
 import {
   paperAuthors,
   paperPdfPath,
 } from '../literatureUi';
+import LiteratureReadingHeatmapPreview from './LiteratureReadingHeatmapPreview';
 
 export interface LiteraturePaperListStatus {
   mineruParsed: boolean;
@@ -35,6 +43,7 @@ interface LiteraturePaperListProps {
   working: boolean;
   papers: LiteraturePaper[];
   paperStatuses: Record<string, LiteraturePaperListStatus>;
+  showReadingHeatmap?: boolean;
   selectedPaper: LiteraturePaper | null;
   searchQuery: string;
   statusMessage: string;
@@ -66,6 +75,7 @@ export default function LiteraturePaperList({
   working,
   papers,
   paperStatuses,
+  showReadingHeatmap = true,
   selectedPaper,
   searchQuery,
   statusMessage,
@@ -82,6 +92,7 @@ export default function LiteraturePaperList({
   onPaperContextMenu,
 }: LiteraturePaperListProps) {
   const l = useLocaleText();
+  const locale = useAppLocale();
   const rootRef = useRef<HTMLElement | null>(null);
   const handleWheelCapture = useWheelScrollDelegate({ rootRef });
   const [dropIndicator, setDropIndicator] = useState<{
@@ -105,6 +116,42 @@ export default function LiteraturePaperList({
   const [sortDraggingPaperId, setSortDraggingPaperId] = useState<string | null>(null);
   const [categoryDraggingPaperId, setCategoryDraggingPaperId] = useState<string | null>(null);
   const [suppressClickPaperId, setSuppressClickPaperId] = useState<string | null>(null);
+  const [heatmapRevision, setHeatmapRevision] = useState(0);
+  const heatmapsByPaperId = useMemo(() => {
+    if (!showReadingHeatmap || papers.length === 0) {
+      return {} as Record<string, PdfReadingHeatmap | null>;
+    }
+
+    const historyMap = loadPaperHistoryMap();
+    const nextHeatmaps: Record<string, PdfReadingHeatmap | null> = {};
+
+    for (const paper of papers) {
+      const history = historyMap[`native-library:${paper.id}`];
+      const latestHeatmap = Object.values(history?.pdfReadingHeatmaps ?? {})
+        .filter((heatmap) => heatmap.totalMs > 0)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
+
+      nextHeatmaps[paper.id] = latestHeatmap;
+    }
+
+    return nextHeatmaps;
+  }, [heatmapRevision, papers, showReadingHeatmap]);
+
+  useEffect(() => {
+    if (!showReadingHeatmap) {
+      return undefined;
+    }
+
+    const handleHeatmapUpdated = () => {
+      setHeatmapRevision((current) => current + 1);
+    };
+
+    window.addEventListener(PAPER_READING_HEATMAP_UPDATED_EVENT, handleHeatmapUpdated);
+
+    return () => {
+      window.removeEventListener(PAPER_READING_HEATMAP_UPDATED_EVENT, handleHeatmapUpdated);
+    };
+  }, [showReadingHeatmap]);
 
   const findPointerDropTarget = (
     clientX: number,
@@ -354,17 +401,17 @@ export default function LiteraturePaperList({
     <section
       ref={rootRef}
       onWheelCapture={handleWheelCapture}
-      className="flex h-full min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-[#121212]"
+      className="pq-library-pane flex h-full min-h-0 flex-col overflow-hidden border-r"
     >
-      <header className="border-b border-slate-200 bg-white/82 px-5 py-4 dark:border-white/10 dark:bg-[#181818]">
-        <div className="flex flex-wrap items-center gap-3">
+      <header className="pq-toolbar px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <div className="relative min-w-[260px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" strokeWidth={1.8} />
             <input
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.target.value)}
               placeholder={l('搜索标题、作者、摘要、DOI...', 'Search title, author, abstract, DOI...')}
-              className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-400/10 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:placeholder:text-[#a0a0a0]"
+              className="pq-input h-9 w-full pl-9 pr-3 text-sm placeholder:text-[var(--pq-text-faint)]"
             />
           </div>
 
@@ -372,7 +419,7 @@ export default function LiteraturePaperList({
             type="button"
             onClick={onImportPdfs}
             disabled={working}
-            className="inline-flex h-11 items-center rounded-2xl bg-[#2f7f85] px-4 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(47,127,133,0.24)] transition hover:bg-[#286f75] disabled:opacity-60"
+            className="pq-button-primary h-9 px-3 text-sm"
           >
             <FilePlus2 className="mr-2 h-4 w-4" strokeWidth={1.9} />
             {l('导入 PDF', 'Import PDF')}
@@ -382,36 +429,36 @@ export default function LiteraturePaperList({
             type="button"
             onClick={onRefresh}
             disabled={working}
-            className="inline-flex h-11 items-center rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:hover:bg-[#2b2b2b]"
+            className="pq-button h-9 px-3 text-sm"
           >
             <RefreshCw className="mr-2 h-4 w-4" strokeWidth={1.9} />
             {l('刷新', 'Refresh')}
           </button>
         </div>
 
-        <div className="mt-3 text-xs text-slate-500 dark:text-[#a0a0a0]">
-          {error || statusMessage || l('拖动条目前面的把手可手动排序；拖动条目本身到左侧分类可归类。', 'Drag the handle to reorder papers; drag the row onto a category to classify it.')}
+        <div className="mt-2 text-xs text-[var(--pq-text-muted)]">
+          {error || statusMessage || l('拖动把手可调整排序；拖动条目到分类可归类。', 'Drag the handle to reorder papers; drag the row onto a category to classify it.')}
         </div>
       </header>
 
       <div
         data-wheel-scroll-target
-        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4"
+        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3"
       >
         {loading ? (
-          <div className="rounded-3xl border border-slate-200 bg-white p-8 text-sm text-slate-500 dark:border-white/10 dark:bg-[#1e1e1e] dark:text-[#a0a0a0]">
+          <div className="pq-card p-6 text-sm text-[var(--pq-text-muted)]">
             {l('正在加载文献库...', 'Loading library...')}
           </div>
         ) : papers.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-white/10 dark:bg-[#1e1e1e]">
+          <div className="rounded-2xl border border-dashed border-[var(--pq-border)] bg-white/58 p-8 text-center dark:bg-white/5">
             <BookOpenText className="mx-auto h-9 w-9 text-slate-400 dark:text-[#a0a0a0]" strokeWidth={1.7} />
             <div className="mt-4 text-lg font-semibold">
               {l('还没有文献', 'No papers yet')}
             </div>
             <div className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500 dark:text-[#a0a0a0]">
               {l(
-                '点击“导入 PDF”选择一个或多个文件，软件会把路径、附件和基础信息写入本地 SQLite 文献库。',
-                'Click "Import PDF" to select one or more files. The app will save paths, attachments, and basic metadata into the local SQLite library.',
+                '点击“导入 PDF”选择一个或多个文件。应用会把路径、附件和基础元数据保存到本地文库。',
+                'Click "Import PDF" to select one or more files. The app will save paths, attachments, and basic metadata into the local library.',
               )}
             </div>
           </div>
@@ -432,7 +479,7 @@ export default function LiteraturePaperList({
               return (
                 <div key={paper.id} className="relative">
                   {showBeforeIndicator ? (
-                    <div className="pointer-events-none absolute -top-1 left-4 right-4 z-10 h-0.5 rounded-full bg-teal-400 shadow-[0_0_16px_rgba(45,212,191,0.55)]" />
+                    <div className="pointer-events-none absolute -top-1 left-3 right-3 z-10 h-0.5 rounded-full bg-[#2f7f85]" />
                   ) : null}
                   <div
                     role="button"
@@ -465,12 +512,15 @@ export default function LiteraturePaperList({
                     onDoubleClick={() => onOpenPaper(paper)}
                     onKeyDown={(event) => handleRowKeyDown(event, paper)}
                     className={clsx(
-                      'grid w-full cursor-grab grid-cols-[28px_minmax(0,1fr)_100px_110px] gap-4 rounded-3xl border px-4 py-3 text-left transition active:cursor-grabbing',
+                      'pq-card grid w-full cursor-grab gap-3 px-3 py-3 text-left transition active:cursor-grabbing',
+                      showReadingHeatmap
+                        ? 'grid-cols-[28px_minmax(0,1fr)_minmax(128px,160px)_72px_96px] max-[900px]:grid-cols-[28px_minmax(0,1fr)_64px_86px]'
+                        : 'grid-cols-[28px_minmax(0,1fr)_100px_110px]',
                       active
-                        ? 'border-teal-400 bg-white shadow-[0_18px_46px_rgba(15,23,42,0.12)] dark:border-[#4fa3a8] dark:bg-[#1e1e1e]'
+                        ? 'border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-soft)] ring-1 ring-[var(--pq-accent-ring)]'
                         : dropIndicator?.paperId === paper.id
-                          ? 'border-teal-300 bg-teal-50/60 dark:border-teal-300/40 dark:bg-teal-300/10'
-                          : 'border-slate-200 bg-white/82 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-[#1e1e1e] dark:hover:bg-[#242424]',
+                          ? 'border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-soft)]'
+                          : 'hover:border-[var(--pq-accent-border)] hover:bg-white/92',
                       sortDraggingPaperId === paper.id && 'opacity-60 ring-2 ring-teal-300/60',
                       categoryDraggingPaperId === paper.id && 'opacity-70 ring-2 ring-teal-300/70',
                     )}
@@ -478,12 +528,12 @@ export default function LiteraturePaperList({
                     <span
                       data-paper-sort-handle
                       draggable={false}
-                      title={l('拖动排序', 'Drag to reorder')}
+                      title={l('拖拽排序', 'Drag to reorder')}
                       onPointerDown={(event) => handleSortPointerDown(event, paper)}
                       onPointerMove={handleSortPointerMove}
                       onPointerUp={handleSortPointerUp}
                       onPointerCancel={resetSortDrag}
-                      className="mt-0.5 flex h-9 w-7 cursor-grab items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-teal-600 active:cursor-grabbing dark:text-[#8d8d8d] dark:hover:bg-white/[0.06] dark:hover:text-teal-200"
+                      className="mt-0.5 flex h-8 w-7 cursor-grab items-center justify-center rounded-lg text-[var(--pq-text-faint)] transition hover:bg-[var(--pq-accent-soft)] hover:text-[var(--pq-accent)] active:cursor-grabbing"
                     >
                       <GripVertical className="h-4 w-4" strokeWidth={1.8} />
                     </span>
@@ -497,7 +547,7 @@ export default function LiteraturePaperList({
                         </span>
                       </span>
                       <span className="mt-1 block truncate text-xs text-slate-500 dark:text-[#a0a0a0]">
-                        {paperAuthors(paper)}
+                        {paperAuthors(paper, locale)}
                       </span>
                       <span className="mt-2 flex flex-wrap gap-1.5">
                         <span
@@ -550,6 +600,13 @@ export default function LiteraturePaperList({
                         {pdfPath ? truncateMiddle(pdfPath, 68) : l('缺少 PDF 附件', 'Missing PDF attachment')}
                       </span>
                     </span>
+                    {showReadingHeatmap ? (
+                      <span className="min-w-0 self-center max-[900px]:hidden">
+                        <LiteratureReadingHeatmapPreview
+                          heatmap={heatmapsByPaperId[paper.id] ?? null}
+                        />
+                      </span>
+                    ) : null}
                     <span className="text-sm text-slate-500 dark:text-[#a0a0a0]">
                       {paper.year ?? 'n.d.'}
                     </span>
@@ -558,7 +615,7 @@ export default function LiteraturePaperList({
                     </span>
                   </div>
                   {showAfterIndicator ? (
-                    <div className="pointer-events-none absolute -bottom-1 left-4 right-4 z-10 h-0.5 rounded-full bg-teal-400 shadow-[0_0_16px_rgba(45,212,191,0.55)]" />
+                    <div className="pointer-events-none absolute -bottom-1 left-3 right-3 z-10 h-0.5 rounded-full bg-[#2f7f85]" />
                   ) : null}
                 </div>
               );
@@ -569,3 +626,4 @@ export default function LiteraturePaperList({
     </section>
   );
 }
+

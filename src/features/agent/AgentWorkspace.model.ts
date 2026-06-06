@@ -118,6 +118,29 @@ function sessionStatusFromMessages(messages: AgentChatMessage[]): AgentStepStatu
   return latestTraceStatus ?? 'success';
 }
 
+export function hasAgentConversationHistory(messages: AgentChatMessage[]): boolean {
+  return messages.some((message) => {
+    if (message.role === 'user') {
+      return Boolean(message.content.trim() || message.attachments?.length);
+    }
+
+    const isWelcomeMessage = message.trace?.some((step) => step.id === 'welcome-intent');
+
+    return Boolean(
+      !isWelcomeMessage &&
+      (
+        message.content.trim() ||
+        message.thinking?.trim() ||
+        message.plan ||
+        message.toolCall ||
+        message.choices?.length ||
+        message.paperSelectionRequest ||
+        message.error
+      ),
+    );
+  });
+}
+
 export function buildAgentHistorySession({
   id,
   messages,
@@ -177,6 +200,7 @@ export function loadAgentHistorySessions(): AgentHistorySession[] {
 
     return parsed
       .filter((item): item is AgentHistorySession => Boolean(item && typeof item === 'object' && item.id))
+      .filter((item) => hasAgentConversationHistory(item.messages ?? []))
       .slice(0, MAX_AGENT_HISTORY_SESSIONS);
   } catch {
     return [];
@@ -185,6 +209,7 @@ export function loadAgentHistorySessions(): AgentHistorySession[] {
 
 export function saveAgentHistorySessions(sessions: AgentHistorySession[]) {
   const normalized = sessions
+    .filter((session) => hasAgentConversationHistory(session.messages))
     .slice()
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, MAX_AGENT_HISTORY_SESSIONS);

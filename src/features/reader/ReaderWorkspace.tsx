@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Minimize2 } from 'lucide-react';
 import BlockViewer from '../blocks/BlockViewer';
 import PdfViewer from '../pdf/PdfViewer';
 import { useLocaleText } from '../../i18n/uiLanguage';
@@ -16,14 +17,25 @@ import {
   type ReaderWorkspaceDocument,
 } from './readerWorkspaceShared';
 import type {
+  CreateNoteRequest,
+  Note,
+  NoteAnchor,
+  NoteAnchorInsertRequest,
+  UpdateNoteRequest,
+} from '../../types/notes';
+import type {
   AssistantPanelKey,
   DocumentChatAttachment,
   DocumentChatCitation,
   DocumentChatMessage,
+  DocumentChatRenderMode,
   DocumentChatSession,
+  ModelReasoningEffort,
   PaperAnnotation,
   PaperSummary,
   PdfHighlightTarget,
+  PdfReadingHeatmap,
+  PdfScrollPosition,
   PdfSource,
   PositionedMineruBlock,
   QaModelPreset,
@@ -68,6 +80,10 @@ interface ReaderWorkspaceProps {
   originalPdfPath: string;
   pdfSource: PdfSource;
   pdfData: Uint8Array | null;
+  pdfScrollPosition: PdfScrollPosition | null;
+  pdfReadingHeatmap: PdfReadingHeatmap | null;
+  onPdfScrollPositionChange: (position: PdfScrollPosition) => void;
+  onPdfReadingHeatmapChange: (heatmap: PdfReadingHeatmap) => void;
   blocks: PositionedMineruBlock[];
   translations: TranslationMap;
   translationDisplayMode: TranslationDisplayMode;
@@ -75,8 +91,10 @@ interface ReaderWorkspaceProps {
   activeBlockId: string | null;
   hoveredBlockId: string | null;
   activePdfHighlight: PdfHighlightTarget | null;
+  pdfHighlightSignal: number;
   blockScrollSignal: number;
   smoothScroll: boolean;
+  enablePdfReadingHeatmap: boolean;
   softPageShadow: boolean;
   compactReading: boolean;
   showBlockMeta: boolean;
@@ -95,6 +113,24 @@ interface ReaderWorkspaceProps {
   onCloudParse: () => void;
   onTranslateDocument: () => void;
   onOpenPreferences: () => void;
+  notes: Note[];
+  activeNoteId: string | null;
+  notesLoading: boolean;
+  notesSaving: boolean;
+  notesError: string;
+  pendingAnchorInsert?: NoteAnchorInsertRequest | null;
+  onPendingAnchorInsertHandled?: (requestId: string) => void;
+  noteEditorSourceId?: string;
+  externalUpdateNote?: Note | null;
+  onExternalUpdateApply?: (note: Note) => void;
+  onCreateNote: (request: CreateNoteRequest) => void;
+  onCreateStandaloneNote: () => void;
+  onSelectNote: (note: Note) => void;
+  onUpdateNote: (noteId: string, patch: UpdateNoteRequest, options?: { sourceId?: string }) => void;
+  onDeleteNote: (noteId: string) => void;
+  onJumpToNote: (note: Note) => void;
+  onJumpToNoteAnchor: (note: Note, anchor: NoteAnchor) => void;
+  onAddSelectionToNote: () => void;
   workspaceNoteMarkdown: string;
   annotations: PaperAnnotation[];
   selectedAnnotationId: string | null;
@@ -118,11 +154,15 @@ interface ReaderWorkspaceProps {
   qaModelPresets: QaModelPreset[];
   selectedQaPresetId: string;
   qaRagEnabled: boolean;
+  qaAnswerRenderMode: DocumentChatRenderMode;
+  qaReasoningEffort: ModelReasoningEffort;
   screenshotLoading: boolean;
   onQaInputChange: (value: string) => void;
   onQaSubmit: () => void;
   onQaPresetChange: (presetId: string) => void;
   onQaRagEnabledChange: (value: boolean) => void;
+  onQaAnswerRenderModeChange: (mode: DocumentChatRenderMode) => void;
+  onQaReasoningEffortChange: (reasoningEffort: ModelReasoningEffort) => void;
   onQaSessionCreate: () => void;
   onQaSessionSelect: (sessionId: string) => void;
   onQaSessionDelete: (sessionId: string) => void;
@@ -131,6 +171,7 @@ interface ReaderWorkspaceProps {
   onCaptureScreenshot: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
   onCitationClick: (citation: DocumentChatCitation) => void;
+  onSaveAssistantMessageAsNote: (message: DocumentChatMessage) => void;
   qaLoading: boolean;
   qaError: string;
   selectedExcerpt: SelectedExcerpt | null;
@@ -153,7 +194,7 @@ interface ReaderWorkspaceProps {
   showLibraryToggle?: boolean;
 }
 
-function ReadingStage(props: ReaderWorkspaceProps) {
+function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean }) {
   const l = useLocaleText();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const {
@@ -164,8 +205,11 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     activeBlockId,
     hoveredBlockId,
     activePdfHighlight,
+    pdfHighlightSignal,
+    immersiveReading,
     blockScrollSignal,
     smoothScroll,
+    enablePdfReadingHeatmap,
     softPageShadow,
     compactReading,
     showBlockMeta,
@@ -174,6 +218,8 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     layoutRef,
     pdfSource,
     pdfData,
+    pdfScrollPosition,
+    pdfReadingHeatmap,
     currentPdfName,
     currentJsonName,
     mineruPath,
@@ -186,6 +232,8 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     statusMessage,
     pdfAnnotationSaveDirectory,
     originalPdfPath,
+    onPdfScrollPositionChange,
+    onPdfReadingHeatmapChange,
     onStartResize,
     onResetLayout,
     onPdfBlockHover,
@@ -200,6 +248,8 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     qaModelPresets,
     selectedQaPresetId,
     qaRagEnabled,
+    qaAnswerRenderMode,
+    qaReasoningEffort,
     qaLoading,
     qaError,
     screenshotLoading,
@@ -207,6 +257,16 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     selectedExcerptTranslation,
     selectedExcerptTranslating,
     selectedExcerptError,
+    notes,
+    activeNoteId,
+    notesLoading,
+    notesSaving,
+    notesError,
+    pendingAnchorInsert,
+    onPendingAnchorInsertHandled,
+    noteEditorSourceId,
+    externalUpdateNote,
+    onExternalUpdateApply,
     workspaceNoteMarkdown,
     annotations,
     selectedAnnotationId,
@@ -217,6 +277,8 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onQaSubmit,
     onQaPresetChange,
     onQaRagEnabledChange,
+    onQaAnswerRenderModeChange,
+    onQaReasoningEffortChange,
     onQaSessionCreate,
     onQaSessionSelect,
     onQaSessionDelete,
@@ -225,6 +287,15 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onCaptureScreenshot,
     onRemoveAttachment,
     onCitationClick,
+    onCreateNote,
+    onCreateStandaloneNote,
+    onSelectNote,
+    onUpdateNote,
+    onDeleteNote,
+    onJumpToNote,
+    onJumpToNoteAnchor,
+    onAddSelectionToNote,
+    onSaveAssistantMessageAsNote,
     onAppendSelectedExcerptToQa,
     onAppendSelectedExcerptToNote,
     onTranslateSelectedExcerpt,
@@ -245,6 +316,53 @@ function ReadingStage(props: ReaderWorkspaceProps) {
   const hasBlocks = blocks.length > 0;
   const showDualPane = hasBlocks && readingViewMode === 'dual-pane';
   const showAssistantSidebar = !assistantDetached;
+  const matchesCurrentDocument = useCallback(
+    (paperId?: string | null) => {
+      const value = paperId?.trim();
+
+      if (!value) {
+        return true;
+      }
+
+      return value === currentDocument.workspaceId || value === currentDocument.itemKey;
+    },
+    [currentDocument.itemKey, currentDocument.workspaceId],
+  );
+  const notePdfAnnotations = useMemo<PaperAnnotation[]>(() => {
+    const output: PaperAnnotation[] = [];
+
+    for (const note of notes) {
+      for (const anchor of note.anchors) {
+        if (!matchesCurrentDocument(anchor.paperId || note.paperId)) {
+          continue;
+        }
+
+        const location = anchor.pdfLocation;
+        if (!location?.bbox || !location.pageNumber) continue;
+
+        output.push({
+          id: `note-anchor:${note.id}:${anchor.id}`,
+          blockId: `note-anchor:${note.id}:${anchor.id}`,
+          blockType: 'note-anchor',
+          pageIndex: Math.max(0, location.pageNumber - 1),
+          bbox: location.bbox,
+          bboxCoordinateSystem: location.bboxCoordinateSystem,
+          bboxPageSize: location.bboxPageSize,
+          note: anchor.label || note.title || note.content,
+          quote: anchor.excerpt,
+          createdAt: anchor.createdAt,
+          updatedAt: note.updatedAt,
+        });
+      }
+    }
+
+    return output;
+  }, [matchesCurrentDocument, notes]);
+  const pdfAnnotations = useMemo(
+    () => [...notePdfAnnotations, ...annotations],
+    [annotations, notePdfAnnotations],
+  );
+  const activeNoteAnnotationId = null;
   const [assistantPanelWidth, setAssistantPanelWidth] = useState(() =>
     loadStoredNumber(ASSISTANT_PANEL_WIDTH_STORAGE_KEY, 408),
   );
@@ -283,7 +401,7 @@ function ReadingStage(props: ReaderWorkspaceProps) {
 
       const boundedMaxWidth = Math.min(
         MAX_ASSISTANT_PANEL_WIDTH,
-        Math.max(MIN_ASSISTANT_PANEL_WIDTH, stageRect.width - 320),
+        Math.max(MIN_ASSISTANT_PANEL_WIDTH, stageRect.width - 120),
       );
       const nextWidth = Math.round(
         Math.min(
@@ -329,6 +447,16 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     statusMessage,
     hasBlocks,
     aiConfigured,
+    paperId: currentDocument.workspaceId,
+    notes,
+    activeNoteId,
+    notesLoading,
+    notesSaving,
+    notesError,
+    pendingAnchorInsert,
+    noteEditorSourceId,
+    externalUpdateNote,
+    onExternalUpdateApply,
     qaSessions,
     selectedQaSessionId,
     qaMessages,
@@ -337,6 +465,8 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     qaModelPresets,
     selectedQaPresetId,
     qaRagEnabled,
+    qaAnswerRenderMode,
+    qaReasoningEffort,
     qaLoading,
     qaError,
     screenshotLoading,
@@ -344,6 +474,8 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onQaSubmit,
     onQaPresetChange,
     onQaRagEnabledChange,
+    onQaAnswerRenderModeChange,
+    onQaReasoningEffortChange,
     onQaSessionCreate,
     onQaSessionSelect,
     onQaSessionDelete,
@@ -352,6 +484,16 @@ function ReadingStage(props: ReaderWorkspaceProps) {
     onCaptureScreenshot,
     onRemoveAttachment,
     onCitationClick,
+    onCreateNote,
+    onCreateStandaloneNote,
+    onSelectNote,
+    onUpdateNote,
+    onDeleteNote,
+    onJumpToNote,
+    onJumpToNoteAnchor,
+    onAddSelectionToNote,
+    onPendingAnchorInsertHandled,
+    onSaveAssistantMessageAsNote,
     selectedExcerpt,
     selectedExcerptTranslation,
     selectedExcerptTranslating,
@@ -386,25 +528,32 @@ function ReadingStage(props: ReaderWorkspaceProps) {
             <PdfViewer
               source={pdfSource}
               pdfData={pdfData}
+              scrollPosition={pdfScrollPosition}
+              readingHeatmap={pdfReadingHeatmap}
               currentPdfName={currentPdfName}
               defaultSaveDirectory={pdfAnnotationSaveDirectory}
               originalPdfPath={originalPdfPath}
               translating={translating}
               translationProgressCompleted={translationProgressCompleted}
               translationProgressTotal={translationProgressTotal}
+              hideToolbar={immersiveReading}
               blocks={blocks}
               activeBlockId={activeBlockId}
               hoveredBlockId={hoveredBlockId}
               activeHighlight={activePdfHighlight}
+              highlightScrollSignal={pdfHighlightSignal}
               smoothScroll={smoothScroll}
+              enableReadingHeatmap={enablePdfReadingHeatmap}
               softPageShadow={softPageShadow}
-              annotations={annotations}
-              selectedAnnotationId={selectedAnnotationId}
+              annotations={pdfAnnotations}
+              selectedAnnotationId={activeNoteAnnotationId ?? selectedAnnotationId}
               onBlockHover={onPdfBlockHover}
               onBlockSelect={onPdfBlockSelect}
               onAnnotationSelect={onSelectAnnotation}
               onAnnotationCreate={onCreateAnnotation}
               onTextSelect={handlePdfTextSelect}
+              onScrollPositionChange={onPdfScrollPositionChange}
+              onReadingHeatmapChange={onPdfReadingHeatmapChange}
               onSaveSuccess={onPdfAnnotationSaveSuccess}
             />
           </section>
@@ -489,6 +638,7 @@ function ReadingStage(props: ReaderWorkspaceProps) {
         aiConfigured={aiConfigured}
         autoTranslateSelection={props.autoTranslateSelection}
         onAppendSelectedExcerptToQa={onAppendSelectedExcerptToQa}
+        onAddSelectionToNote={onAddSelectionToNote}
         onTranslateSelectedExcerpt={onTranslateSelectedExcerpt}
         onClearSelectedExcerpt={onClearSelectedExcerpt}
       />
@@ -523,6 +673,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
   } = props;
   const sourceLabel =
     formatReaderDocumentSource(l, currentDocument, selectedSectionTitle);
+  const [immersiveReading, setImmersiveReading] = useState(false);
   const floatingAssistantChatProps = {
     sessions: props.qaSessions,
     selectedSessionId: props.selectedQaSessionId,
@@ -536,11 +687,15 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     qaModelPresets: props.qaModelPresets,
     selectedQaPresetId: props.selectedQaPresetId,
     qaRagEnabled: props.qaRagEnabled,
+    qaAnswerRenderMode: props.qaAnswerRenderMode,
+    qaReasoningEffort: props.qaReasoningEffort,
     screenshotLoading: props.screenshotLoading,
     onInputChange: props.onQaInputChange,
     onSubmit: props.onQaSubmit,
     onQaPresetChange: props.onQaPresetChange,
     onQaRagEnabledChange: props.onQaRagEnabledChange,
+    onQaAnswerRenderModeChange: props.onQaAnswerRenderModeChange,
+    onQaReasoningEffortChange: props.onQaReasoningEffortChange,
     onSessionCreate: props.onQaSessionCreate,
     onSessionSelect: props.onQaSessionSelect,
     onSessionDelete: props.onQaSessionDelete,
@@ -550,31 +705,56 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     onCaptureScreenshot: props.onCaptureScreenshot,
     onRemoveAttachment: props.onRemoveAttachment,
     onCitationClick: props.onCitationClick,
+    onSaveAssistantMessageAsNote: props.onSaveAssistantMessageAsNote,
   };
+
+  useEffect(() => {
+    if (workspaceStage !== 'reading') {
+      setImmersiveReading(false);
+    }
+  }, [workspaceStage]);
+
+  useEffect(() => {
+    if (!immersiveReading) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setImmersiveReading(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [immersiveReading]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[linear-gradient(180deg,#f8fafc,#f1f5f9)] dark:bg-[linear-gradient(180deg,#0f1a2e,#0c1525)]">
-      <ReaderWorkspaceHeader
-        sourceLabel={sourceLabel}
-        documentTitle={currentDocument.title}
-        documentCreators={currentDocument.creators}
-        documentYear={currentDocument.year}
-        currentPdfName={currentPdfName}
-        currentPdfVariantLabel={currentPdfVariantLabel}
-        currentPdfPath={currentPdfPath}
-        availablePdfOptions={availablePdfOptions}
-        workspaceStage={workspaceStage}
-        readingViewMode={readingViewMode}
-        loading={loading}
-        translating={translating}
-        onStageChange={onStageChange}
-        onReadingViewModeChange={onReadingViewModeChange}
-        onCurrentPdfPathChange={onCurrentPdfPathChange}
-        onOpenMineruJson={onOpenMineruJson}
-        onCloudParse={onCloudParse}
-        onTranslateDocument={onTranslateDocument}
-        onOpenPreferences={onOpenPreferences}
-      />
+      {!immersiveReading ? (
+        <ReaderWorkspaceHeader
+          sourceLabel={sourceLabel}
+          documentTitle={currentDocument.title}
+          documentCreators={currentDocument.creators}
+          documentYear={currentDocument.year}
+          currentPdfName={currentPdfName}
+          currentPdfVariantLabel={currentPdfVariantLabel}
+          currentPdfPath={currentPdfPath}
+          availablePdfOptions={availablePdfOptions}
+          workspaceStage={workspaceStage}
+          readingViewMode={readingViewMode}
+          loading={loading}
+          translating={translating}
+          onStageChange={onStageChange}
+          onReadingViewModeChange={onReadingViewModeChange}
+          onCurrentPdfPathChange={onCurrentPdfPathChange}
+          onOpenMineruJson={onOpenMineruJson}
+          onCloudParse={onCloudParse}
+          onTranslateDocument={onTranslateDocument}
+          onOpenPreferences={onOpenPreferences}
+          onEnterImmersive={() => setImmersiveReading(true)}
+        />
+      ) : null}
 
       {error ? (
         <div className="border-b border-rose-200 bg-rose-50 px-6 py-3 text-sm text-rose-600 dark:border-rose-400/30 dark:bg-rose-400/10 dark:text-rose-400">
@@ -604,8 +784,21 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
           aiConfigured={props.aiConfigured}
         />
       ) : (
-        <ReadingStage {...props} />
+        <ReadingStage {...props} immersiveReading={immersiveReading} />
       )}
+
+      {immersiveReading ? (
+        <button
+          type="button"
+          onClick={() => setImmersiveReading(false)}
+          className="fixed bottom-14 right-5 z-[120] inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white/92 px-3 text-sm font-medium text-slate-700 shadow-[0_14px_34px_rgba(15,23,42,0.16)] backdrop-blur-xl transition hover:bg-white dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text)] dark:hover:bg-[var(--pq-surface-2)]"
+          title={l('退出沉浸', 'Exit Immersive')}
+          aria-label={l('退出沉浸', 'Exit Immersive')}
+        >
+          <Minimize2 className="h-4 w-4" strokeWidth={1.8} />
+          {l('退出沉浸', 'Exit')}
+        </button>
+      ) : null}
 
       {assistantDetached ? (
         <FloatingAssistantPanel
@@ -615,7 +808,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
         />
       ) : null}
 
-      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200/80 bg-white/70 px-6 py-2.5 text-xs text-slate-500 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-400">
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200/80 bg-white/70 px-6 py-2.5 text-xs text-slate-500 backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-bg-primary)] dark:text-[var(--pq-text-faint)]">
         <div className="min-w-0 truncate">
           {loading || translating ? l('正在处理中...', 'Processing...') : statusMessage}
         </div>

@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 
 import type {
+  OpenAICompatibleModelListResult,
   OpenAICompatibleTestResult,
   QaModelPreset,
   ReaderSettings,
 } from '../../types/reader';
+import type { LibrarySettings } from '../../types/library';
 import type { BatchProgressState, PreferencesSectionKey } from './readerShared';
 
 export type ReaderPreferencesLocalizer = <T>(zh: T, en: T) => T;
@@ -26,6 +28,7 @@ export interface ReaderPreferencesWindowProps {
   onClose: () => void;
   preferredSection?: PreferencesSectionKey;
   settings: ReaderSettings;
+  librarySettings: LibrarySettings | null;
   zoteroLocalDataDir: string;
   mineruApiToken: string;
   translationApiKey: string;
@@ -38,6 +41,8 @@ export interface ReaderPreferencesWindowProps {
   translating?: boolean;
   translatedCount?: number;
   onSettingChange: ReaderSettingsChangeHandler;
+  onNativeLibrarySettingsChange: (patch: Partial<LibrarySettings>) => void;
+  onSelectLibraryStorageDir: () => void;
   onZoteroLocalDataDirChange: (value: string) => void;
   onMineruApiTokenChange: (value: string) => void;
   onTranslationApiKeyChange: (value: string) => void;
@@ -49,8 +54,10 @@ export interface ReaderPreferencesWindowProps {
   onSelectLocalZoteroDir: () => void;
   onReloadLocalZotero: () => void;
   onImportLocalZotero: () => void;
+  onEnrichAllLibraryMetadata: () => void;
   onSelectMineruCacheDir: () => void;
   onSelectRemotePdfDownloadDir: () => void;
+  onListLlmModels: (preset: QaModelPreset) => Promise<OpenAICompatibleModelListResult>;
   onTestLlmConnection: (preset?: QaModelPreset) => Promise<OpenAICompatibleTestResult>;
   onQaModelPresetAdd: () => void;
   onQaModelPresetRemove: (presetId: string) => void;

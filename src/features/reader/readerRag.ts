@@ -1,4 +1,3 @@
-import { SentenceSplitter } from 'llamaindex';
 import type {
   DocumentChatCitation,
   PositionedMineruBlock,
@@ -34,6 +33,7 @@ const DEFAULT_CHUNK_OVERLAP = 120;
 const MAX_HEADING_NEIGHBOR_BLOCKS = 3;
 const MAX_HEADING_SECTION_CHARS = 2_400;
 const MAX_HEADING_LENGTH = 140;
+const MIN_SOFT_BREAK_RATIO = 0.58;
 
 function normalizeChunkText(value: string): string {
   return value
@@ -42,11 +42,62 @@ function normalizeChunkText(value: string): string {
     .trim();
 }
 
-function buildSplitter() {
-  return new SentenceSplitter({
-    chunkSize: DEFAULT_CHUNK_SIZE,
-    chunkOverlap: DEFAULT_CHUNK_OVERLAP,
-  });
+function findChunkEnd(text: string, start: number, hardEnd: number): number {
+  if (hardEnd >= text.length) {
+    return text.length;
+  }
+
+  const minEnd = start + Math.floor(DEFAULT_CHUNK_SIZE * MIN_SOFT_BREAK_RATIO);
+  const window = text.slice(start, hardEnd);
+  const breakPatterns = [
+    /\n{2,}(?![\s\S]*\n{2,})/,
+    /[。！？.!?]\s+(?![\s\S]*[。！？.!?]\s+)/,
+    /[；;]\s+(?![\s\S]*[；;]\s+)/,
+    /\s+(?![\s\S]*\s+)/,
+  ];
+
+  for (const pattern of breakPatterns) {
+    const match = window.match(pattern);
+    if (!match || match.index === undefined) continue;
+
+    const nextEnd = start + match.index + match[0].length;
+    if (nextEnd >= minEnd) {
+      return nextEnd;
+    }
+  }
+
+  return hardEnd;
+}
+
+function findNextChunkStart(text: string, previousStart: number, previousEnd: number): number {
+  const overlapStart = Math.max(previousStart + 1, previousEnd - DEFAULT_CHUNK_OVERLAP);
+  const nextWhitespace = text.slice(overlapStart).search(/\S/);
+
+  return nextWhitespace < 0 ? previousEnd : overlapStart + nextWhitespace;
+}
+
+function splitTextWithOverlap(text: string): string[] {
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    const hardEnd = Math.min(text.length, start + DEFAULT_CHUNK_SIZE);
+    const end = findChunkEnd(text, start, hardEnd);
+    const chunk = normalizeChunkText(text.slice(start, end));
+
+    if (chunk) {
+      chunks.push(chunk);
+    }
+
+    if (end >= text.length) {
+      break;
+    }
+
+    const nextStart = findNextChunkStart(text, start, end);
+    start = nextStart > start ? nextStart : end;
+  }
+
+  return chunks;
 }
 
 function splitTextIntoChunks(
@@ -61,10 +112,7 @@ function splitTextIntoChunks(
     return [];
   }
 
-  const splitter = buildSplitter();
-
-  return splitter
-    .splitText(normalized)
+  return splitTextWithOverlap(normalized)
     .map((chunkText, index) => ({
       chunkId: `${prefix}:${index}`,
       chunkIndex: index,

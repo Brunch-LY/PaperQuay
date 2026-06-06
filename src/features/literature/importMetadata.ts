@@ -35,6 +35,10 @@ function hasValue(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function draftText(value: string | null | undefined): string {
+  return typeof value === 'string' ? value : '';
+}
+
 function titleLooksGeneric(title: string): boolean {
   const normalized = normalizeWhitespace(title).toLocaleLowerCase();
 
@@ -115,5 +119,10 @@ export function mergeRemoteMetadataIntoDraft(
       normalizeWhitespace(metadata.publication ?? '') ||
       draft.publication,
     doi: draft.doi.trim() || normalizeWhitespace(metadata.doi ?? '') || draft.doi,
+    url: draftText(draft.url).trim() || normalizeWhitespace(metadata.url ?? '') || draftText(draft.url),
+    abstractText:
+      draftText(draft.abstractText).trim() ||
+      normalizeWhitespace(metadata.abstractText ?? '') ||
+      draftText(draft.abstractText),
   };
 }

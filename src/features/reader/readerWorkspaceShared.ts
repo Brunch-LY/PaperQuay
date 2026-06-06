@@ -1,9 +1,10 @@
 export const WORKSPACE_HEADER_COLLAPSED_STORAGE_KEY = 'paper-reader-workspace-header-collapsed-v1';
 export const ASSISTANT_PANEL_WIDTH_STORAGE_KEY = 'paper-reader-assistant-panel-width-v1';
-export const MIN_ASSISTANT_PANEL_WIDTH = 336;
-export const MAX_ASSISTANT_PANEL_WIDTH = 720;
+export const MIN_ASSISTANT_PANEL_WIDTH = 280;
+export const MAX_ASSISTANT_PANEL_WIDTH = 9999;
 
 export interface ReaderWorkspaceDocument {
+  workspaceId: string;
   itemKey: string;
   title: string;
   creators: string;

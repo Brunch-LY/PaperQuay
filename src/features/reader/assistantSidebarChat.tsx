@@ -1,32 +1,43 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp,
   Bot,
   Camera,
+  ChevronDown,
+  Code2,
   Database,
   ExternalLink,
+  FilePlus2,
   ImagePlus,
   Loader2,
   MessageSquare,
   MessageSquareText,
+  MoreHorizontal,
   Paperclip,
+  PanelRightClose,
   PanelRightOpen,
+  Pin,
   Plus,
   Quote,
   X,
 } from 'lucide-react';
 import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import { useLocaleText } from '../../i18n/uiLanguage';
+import { ModelPresetPicker } from '../../components/ModelPresetPicker';
+import { ReasoningEffortPicker } from '../../components/ReasoningEffortPicker';
 import type {
   DocumentChatAttachment,
   DocumentChatCitation,
   DocumentChatMessage,
+  DocumentChatRenderMode,
   DocumentChatSession,
+  ModelReasoningEffort,
   QaModelPreset,
   SelectedExcerpt,
 } from '../../types/reader';
 import { cn } from '../../utils/cn';
 import { formatFileSize } from '../../utils/files';
+import { cleanQaAssistantOutput } from '../../utils/qaOutput';
 import { MarkdownPreview, SectionCard } from './assistantSidebarPrimitives';
 import {
   formatQaContextBadge,
@@ -59,9 +70,9 @@ function injectCitationLinks(
 
   const labels = new Set(citations.map((citation) => citation.label));
   const normalizedContent = content
-    .replace(/\[(\d+(?:\s*[,，]\s*\d+)+)\]/g, (_match, group: string) =>
+    .replace(/\[(\d+(?:\s*[,?]\s*\d+)+)\]/g, (_match, group: string) =>
       group
-        .split(/\s*[,，]\s*/)
+        .split(/\s*[,?]\s*/)
         .map((label) => `[${label}]`)
         .join(' '),
     )
@@ -130,13 +141,437 @@ function hasInlineCitationLinks(content: string): boolean {
   return /\[\d+\]\(#cite-\d+\)/.test(content);
 }
 
+function stripHtmlFences(content: string): string {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:html)?\s*([\s\S]*?)\s*```$/i);
+
+  if (fenced) {
+    return fenced[1].trim();
+  }
+
+  const firstFence = trimmed.match(/```(?:html)?\s*([\s\S]*?)```/i);
+
+  if (firstFence && trimmed.replace(firstFence[0], '').trim().length === 0) {
+    return firstFence[1].trim();
+  }
+
+  return trimmed
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+function findRawHtmlFragmentBounds(content: string): { start: number; end: number } | null {
+  const startMatch = content.match(
+    /<(div|section|article|main|aside|figure|figcaption|details|summary|svg|table|ul|ol|p|h[1-6])(?=[\s>/]|(?:style|id|role|aria-|data-|class|width|height|viewBox)=)[^>]*>/i,
+  );
+
+  if (!startMatch || startMatch.index === undefined) {
+    return null;
+  }
+
+  const tagName = startMatch[1].toLowerCase();
+  const tagPattern = new RegExp(
+    `</?${tagName}(?=[\\s>/]|(?:style|id|role|aria-|data-|class|width|height|viewBox)=)[^>]*>`,
+    'gi',
+  );
+  tagPattern.lastIndex = startMatch.index;
+
+  let depth = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagPattern.exec(content)) !== null) {
+    const tag = match[0];
+    const closing = /^<\s*\//.test(tag);
+    const selfClosing = /\/\s*>$/.test(tag);
+
+    if (closing) {
+      depth -= 1;
+    } else if (!selfClosing) {
+      depth += 1;
+    }
+
+    if (depth <= 0) {
+      return {
+        start: startMatch.index,
+        end: match.index + tag.length,
+      };
+    }
+  }
+
+  return {
+    start: startMatch.index,
+    end: content.length,
+  };
+}
+
+type HtmlAnswerSegment =
+  | {
+      kind: 'markdown';
+      content: string;
+    }
+  | {
+      kind: 'html';
+      content: string;
+    };
+
+function appendMarkdownSegment(segments: HtmlAnswerSegment[], content: string) {
+  const trimmed = content.trim();
+
+  if (trimmed) {
+    segments.push({ kind: 'markdown', content: trimmed });
+  }
+}
+
+function appendHtmlSegment(segments: HtmlAnswerSegment[], content: string) {
+  const trimmed = normalizeHtmlFragment(content);
+
+  if (trimmed) {
+    segments.push({ kind: 'html', content: trimmed });
+  }
+}
+
+function normalizeHtmlFragment(content: string): string {
+  let html = stripHtmlFences(content)
+    .replace(/^(?:html|htm)\s*(?=<)/i, '')
+    .trim();
+
+  html = html.replace(
+    /<(\/?)(div|section|article|main|aside|figure|figcaption|details|summary|svg|table|thead|tbody|tr|td|th|ul|ol|li|p|h[1-6]|span|strong|em|small)(?=(?:style|id|role|aria-|data-|class|width|height|viewBox)=)/gi,
+    '<$1$2 ',
+  );
+
+  return html;
+}
+
+function parseCodeFence(content: string): {
+  fenceStart: number;
+  contentStart: number;
+  contentEnd: number;
+  fenceEnd: number;
+  language: string;
+} | null {
+  const fenceMatch = content.match(/```+/);
+
+  if (!fenceMatch || fenceMatch.index === undefined) {
+    return null;
+  }
+
+  const fence = fenceMatch[0];
+  const fenceStart = fenceMatch.index;
+  let cursor = fenceStart + fence.length;
+
+  while (content[cursor] === ' ' || content[cursor] === '\t') {
+    cursor += 1;
+  }
+
+  const languageMatch = content.slice(cursor).match(/^([a-zA-Z0-9_-]+)/);
+  const language = (languageMatch?.[1] ?? '').trim().toLowerCase();
+
+  if (languageMatch) {
+    cursor += languageMatch[0].length;
+  }
+
+  while (content[cursor] === ' ' || content[cursor] === '\t') {
+    cursor += 1;
+  }
+
+  let contentStart = cursor;
+  const newlineMatch = content.slice(cursor).match(/^\r?\n/);
+
+  if (newlineMatch) {
+    contentStart = cursor + newlineMatch[0].length;
+  }
+
+  const closingIndex = content.indexOf(fence, contentStart);
+  const contentEnd = closingIndex >= 0 ? closingIndex : content.length;
+  const fenceEnd = closingIndex >= 0 ? closingIndex + fence.length : content.length;
+
+  return {
+    fenceStart,
+    contentStart,
+    contentEnd,
+    fenceEnd,
+    language,
+  };
+}
+
+function isHtmlFence(language: string, content: string): boolean {
+  if (language === 'html' || language === 'htm') {
+    return true;
+  }
+
+  if (language) {
+    return false;
+  }
+
+  return Boolean(findRawHtmlFragmentBounds(content.trim()));
+}
+
+function parseHtmlAnswerSegments(content: string): HtmlAnswerSegment[] {
+  const segments: HtmlAnswerSegment[] = [];
+  let rest = content.trim();
+
+  while (rest) {
+    const fence = parseCodeFence(rest);
+    const fenceIndex = fence?.fenceStart ?? -1;
+    const rawHtmlBounds = findRawHtmlFragmentBounds(rest);
+    const rawHtmlIndex = rawHtmlBounds?.start ?? -1;
+
+    if (fence && fenceIndex >= 0 && (rawHtmlIndex < 0 || fenceIndex <= rawHtmlIndex)) {
+      appendMarkdownSegment(segments, rest.slice(0, fenceIndex));
+
+      if (isHtmlFence(fence.language, rest.slice(fence.contentStart, fence.contentEnd))) {
+        appendHtmlSegment(segments, rest.slice(fence.contentStart, fence.contentEnd));
+      } else {
+        appendMarkdownSegment(segments, rest.slice(fence.fenceStart, fence.fenceEnd));
+      }
+
+      rest = rest.slice(fence.fenceEnd).trimStart();
+      continue;
+    }
+
+    if (rawHtmlBounds) {
+      appendMarkdownSegment(segments, rest.slice(0, rawHtmlBounds.start));
+      appendHtmlSegment(segments, rest.slice(rawHtmlBounds.start, rawHtmlBounds.end));
+      rest = rest.slice(rawHtmlBounds.end).trimStart();
+      continue;
+    }
+
+    appendMarkdownSegment(segments, rest);
+    break;
+  }
+
+  return segments;
+}
+
+function containsRenderableHtml(content: string): boolean {
+  return parseHtmlAnswerSegments(content).some((segment) => segment.kind === 'html');
+}
+
+function shouldRenderHtmlAnswerPreview(content: string): boolean {
+  const trimmed = content.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  return (
+    containsRenderableHtml(trimmed) ||
+    /```+[ \t]*(?:html|htm)\b/i.test(trimmed) ||
+    /```+[ \t]*<(?:div|section|article|main|aside|figure|details|summary|svg|table|ul|ol|p|h[1-6])(?=[\s>/]|(?:style|id|role|aria-|data-|class|width|height|viewBox)=)/i.test(
+      trimmed,
+    )
+  );
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [delayMs, value]);
+
+  return debouncedValue;
+}
+
+function buildSandboxHtml(fragment: string): string {
+  const html = normalizeHtmlFragment(fragment);
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:;" />
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.65;
+        color: #0f172a;
+        background: transparent;
+      }
+      * { box-sizing: border-box; }
+      html {
+        margin: 0;
+        padding: 0;
+        min-width: 0;
+        overflow: hidden;
+        background: transparent;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        min-width: 0;
+        overflow: hidden;
+        overflow-wrap: break-word;
+        word-break: normal;
+        background: transparent;
+      }
+      body > * {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      body > *:first-child { margin-top: 0 !important; }
+      body > *:last-child { margin-bottom: 0 !important; }
+      div, section, article, aside, figure, figcaption, details, summary {
+        min-width: 0;
+      }
+      [style*="display:flex"],
+      [style*="display: flex"],
+      [style*="display:inline-flex"],
+      [style*="display: inline-flex"] {
+        max-width: 100%;
+        min-width: 0;
+        flex-wrap: wrap !important;
+      }
+      [style*="display:flex"] > *,
+      [style*="display: flex"] > *,
+      [style*="display:inline-flex"] > *,
+      [style*="display: inline-flex"] > * {
+        min-width: min(100%, 180px);
+        max-width: 100%;
+      }
+      [style*="display:grid"],
+      [style*="display: grid"] {
+        max-width: 100%;
+        min-width: 0;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)) !important;
+      }
+      h1, h2, h3, h4 { margin: 1.1em 0 0.55em; line-height: 1.25; color: #0f172a; }
+      h1 { font-size: 1.35rem; }
+      h2 { font-size: 1.15rem; }
+      h3 { font-size: 1rem; }
+      p, ul, ol, blockquote, table, pre { margin: 0.75em 0; }
+      ul, ol { padding-left: 1.35rem; }
+      a { color: #0d9488; }
+      table { width: 100%; border-collapse: collapse; overflow: hidden; }
+      th, td { border: 1px solid #e7e5e4; padding: 8px 10px; vertical-align: top; }
+      th { background: #f5f5f4; text-align: left; font-weight: 650; }
+      code { border-radius: 6px; background: #f5f5f4; padding: 0.1rem 0.35rem; color: #0f766e; }
+      pre {
+        max-width: 100%;
+        overflow-x: auto;
+        border-radius: 14px;
+        background: #0f172a;
+        padding: 12px;
+        color: #e2e8f0;
+      }
+      pre code { background: transparent; color: inherit; padding: 0; }
+      blockquote {
+        border-left: 4px solid #99f6e4;
+        background: #f0fdfa;
+        padding: 10px 12px;
+        color: #334155;
+      }
+      img, svg, canvas, video { max-width: 100%; height: auto; }
+    </style>
+  </head>
+  <body>${html}</body>
+</html>`;
+}
+
+function HtmlAnswerFrame({ content }: { content: string }) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [height, setHeight] = useState(180);
+  const debouncedContent = useDebouncedValue(content, 80);
+  const srcDoc = useMemo(() => buildSandboxHtml(debouncedContent), [debouncedContent]);
+
+  const resizeFrame = () => {
+    const iframe = iframeRef.current;
+    const documentElement = iframe?.contentDocument?.documentElement;
+    const body = iframe?.contentDocument?.body;
+
+    if (!documentElement || !body) {
+      return;
+    }
+
+    const nextHeight = Math.ceil(
+      Math.max(documentElement.scrollHeight, body.scrollHeight, documentElement.offsetHeight, body.offsetHeight) + 4,
+    );
+
+    if (Number.isFinite(nextHeight)) {
+      const clampedHeight = Math.max(120, nextHeight);
+      setHeight((currentHeight) =>
+        Math.abs(currentHeight - clampedHeight) > 2 ? clampedHeight : currentHeight,
+      );
+    }
+  };
+
+  useEffect(() => {
+    const firstFrame = window.requestAnimationFrame(resizeFrame);
+    const secondFrame = window.setTimeout(resizeFrame, 80);
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.clearTimeout(secondFrame);
+    };
+  }, [debouncedContent]);
+
+  return (
+    <div className="w-full overflow-x-auto overscroll-x-contain">
+      <iframe
+        ref={iframeRef}
+        title="HTML answer preview"
+        sandbox="allow-same-origin"
+        scrolling="no"
+        srcDoc={srcDoc}
+        onLoad={resizeFrame}
+        className="block w-full border-0 bg-transparent"
+        style={{
+          height,
+          width: '100%',
+          overflow: 'hidden',
+        }}
+      />
+    </div>
+  );
+}
+
+function HtmlAnswerPreview({ content }: { content: string }) {
+  const l = useLocaleText();
+  const segments = useMemo(() => parseHtmlAnswerSegments(content), [content]);
+
+  if (segments.length === 0) {
+    return (
+      <div className="rounded-2xl border border-[var(--pq-accent-border)] bg-[var(--pq-accent-bg)] px-3 py-2 text-xs leading-5 text-[var(--pq-accent)]">
+        {l('正在生成可视化回答...', 'Generating visual preview...')}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full min-w-0 space-y-3">
+      {segments.map((segment, index) =>
+        segment.kind === 'html' ? (
+          <HtmlAnswerFrame key={`html-${index}`} content={segment.content} />
+        ) : (
+          <MarkdownPreview
+            key={`markdown-${index}`}
+            content={segment.content}
+            className="text-sm leading-7"
+          />
+        ),
+      )}
+    </div>
+  );
+}
+
 const CHAT_HISTORY_PANEL_WIDTH_STORAGE_KEY = 'paperquay.chat-history-panel-width';
-const MIN_CHAT_HISTORY_PANEL_WIDTH = 180;
-const MAX_CHAT_HISTORY_PANEL_WIDTH = 320;
-const MIN_CHAT_CONTENT_PANEL_WIDTH = 250;
+const MIN_CHAT_HISTORY_PANEL_WIDTH = 120;
+const MAX_CHAT_HISTORY_PANEL_WIDTH = 520;
+const MIN_CHAT_CONTENT_PANEL_WIDTH = 160;
 const CHAT_COMPOSER_COMPACT_WIDTH = 540;
-const CHAT_COMPOSER_WRAP_MODEL_WIDTH = 680;
+const CHAT_COMPOSER_ULTRA_COMPACT_WIDTH = 360;
 const CHAT_COMPOSER_MAX_TEXTAREA_HEIGHT = 240;
+const CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD = 96;
+
+function isNearScrollBottom(element: HTMLElement, threshold = CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
 
 function loadStoredPanelWidth(key: string, fallback: number) {
   if (typeof window === 'undefined') {
@@ -162,6 +597,8 @@ export interface ChatWorkspacePanelProps {
   qaModelPresets: QaModelPreset[];
   selectedQaPresetId: string;
   qaRagEnabled: boolean;
+  qaAnswerRenderMode: DocumentChatRenderMode;
+  qaReasoningEffort: ModelReasoningEffort;
   screenshotLoading: boolean;
   assistantDetached?: boolean;
   layoutMode?: 'compact' | 'workspace';
@@ -169,6 +606,8 @@ export interface ChatWorkspacePanelProps {
   onSubmit: () => void;
   onQaPresetChange: (presetId: string) => void;
   onQaRagEnabledChange: (value: boolean) => void;
+  onQaAnswerRenderModeChange: (mode: DocumentChatRenderMode) => void;
+  onQaReasoningEffortChange: (reasoningEffort: ModelReasoningEffort) => void;
   onSessionCreate: () => void;
   onSessionSelect: (sessionId: string) => void;
   onSessionDelete: (sessionId: string) => void;
@@ -179,7 +618,9 @@ export interface ChatWorkspacePanelProps {
   onRemoveAttachment: (attachmentId: string) => void;
   onDetachAssistant?: () => void;
   onAttachAssistant?: () => void;
+  onCollapseSidebar?: () => void;
   onCitationClick?: (citation: DocumentChatCitation) => void;
+  onSaveAssistantMessageAsNote?: (message: DocumentChatMessage) => void;
 }
 
 export function ChatWorkspacePanel({
@@ -195,6 +636,8 @@ export function ChatWorkspacePanel({
   qaModelPresets,
   selectedQaPresetId,
   qaRagEnabled,
+  qaAnswerRenderMode,
+  qaReasoningEffort,
   screenshotLoading,
   assistantDetached = false,
   layoutMode = 'compact',
@@ -202,6 +645,8 @@ export function ChatWorkspacePanel({
   onSubmit,
   onQaPresetChange,
   onQaRagEnabledChange,
+  onQaAnswerRenderModeChange,
+  onQaReasoningEffortChange,
   onSessionCreate,
   onSessionSelect,
   onSessionDelete,
@@ -212,17 +657,22 @@ export function ChatWorkspacePanel({
   onRemoveAttachment,
   onDetachAssistant,
   onAttachAssistant,
+  onCollapseSidebar,
   onCitationClick,
+  onSaveAssistantMessageAsNote,
 }: ChatWorkspacePanelProps) {
   const l = useLocaleText();
   const locale = l('zh-CN', 'en-US') as 'zh-CN' | 'en-US';
   const panelRef = useRef<HTMLDivElement | null>(null);
   const historyRootRef = useRef<HTMLElement | null>(null);
   const chatRootRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const compactActionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const previousLastMessageIdRef = useRef<string | null>(null);
   const handleHistoryWheelCapture = useWheelScrollDelegate({ rootRef: historyRootRef });
   const handleChatWheelCapture = useWheelScrollDelegate({ rootRef: chatRootRef });
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
@@ -242,10 +692,15 @@ export function ChatWorkspacePanel({
   );
   const activeSession =
     orderedSessions.find((session) => session.id === selectedSessionId) ?? orderedSessions[0] ?? null;
+  const handleCreateSessionClick = useCallback(() => {
+    onSessionCreate();
+    setHistoryCollapsed(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [onSessionCreate]);
   const suggestionPrompts = [
-    l('请用三点总结这篇论文的核心贡献。', 'Summarize the core contributions of this paper in three points.'),
-    l('这篇论文的方法相比基线模型有哪些优势？', 'What advantages does this method have over the baseline models?'),
-    l('请解释实验设置与最关键的结果。', 'Explain the experimental setup and the most important results.'),
+    l('Summarize the core contributions of this paper in three points.', 'Summarize the core contributions of this paper in three points.'),
+    l('What advantages does this method have over the baseline models?', 'What advantages does this method have over the baseline models?'),
+    l('Explain the experimental setup and the most important results.', 'Explain the experimental setup and the most important results.'),
   ];
   const canSubmit = input.trim().length > 0 && !loading;
   const composerActions = [
@@ -278,17 +733,81 @@ export function ChatWorkspacePanel({
       disabled: !selectedExcerpt,
     },
   ] as const;
+  const qaModeActions = [
+    {
+      key: 'rag',
+      icon: Database,
+      label: qaRagEnabled
+        ? l('关闭本次问答 RAG', 'Turn off RAG for this chat')
+        : l('开启本次问答 RAG', 'Turn on RAG for this chat'),
+      onClick: () => onQaRagEnabledChange(!qaRagEnabled),
+      active: qaRagEnabled,
+    },
+    {
+      key: 'html',
+      icon: Code2,
+      label: qaAnswerRenderMode === 'html'
+        ? l('关闭 HTML 预览回答', 'Turn off HTML preview replies')
+        : l('开启 HTML 预览回答', 'Turn on HTML preview replies'),
+      onClick: () => onQaAnswerRenderModeChange(qaAnswerRenderMode === 'html' ? 'markdown' : 'html'),
+      active: qaAnswerRenderMode === 'html',
+    },
+  ] as const;
   const compactComposer = composerWidth > 0 && composerWidth <= CHAT_COMPOSER_COMPACT_WIDTH;
-  const wrapModelSelector = composerWidth > 0 && composerWidth <= CHAT_COMPOSER_WRAP_MODEL_WIDTH;
-  const primaryComposerActions = compactComposer
+  const ultraCompactComposer =
+    composerWidth > 0 && composerWidth <= CHAT_COMPOSER_ULTRA_COMPACT_WIDTH;
+  const reasoningAction = {
+    key: 'reasoning',
+    icon: Bot,
+    label: l('思考强度', 'Reasoning effort'),
+    onClick: () => {
+      const order: ModelReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'xhigh'];
+      const currentIndex = order.indexOf(qaReasoningEffort);
+      onQaReasoningEffortChange(order[(currentIndex + 1) % order.length] ?? 'auto');
+    },
+    active: qaReasoningEffort !== 'auto',
+  } as const;
+  const primaryComposerActions = ultraCompactComposer
+    ? []
+    : compactComposer
     ? composerActions.filter((action) => action.key === 'image' || action.key === 'file')
     : composerActions;
-  const secondaryComposerActions = compactComposer
+  const secondaryComposerActions = ultraCompactComposer
+    ? composerActions
+    : compactComposer
     ? composerActions.filter((action) => action.key !== 'image' && action.key !== 'file')
     : [];
 
   useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ block: 'end' });
+    const scrollElement = chatScrollRef.current;
+
+    if (!scrollElement) {
+      return;
+    }
+
+    const lastMessageId = messages[messages.length - 1]?.id ?? null;
+    const lastMessageChanged = previousLastMessageIdRef.current !== lastMessageId;
+
+    previousLastMessageIdRef.current = lastMessageId;
+
+    if (lastMessageChanged) {
+      shouldStickToBottomRef.current = true;
+    }
+
+    if (!shouldStickToBottomRef.current && !isNearScrollBottom(scrollElement)) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = true;
+    window.requestAnimationFrame(() => {
+      const nextScrollElement = chatScrollRef.current;
+
+      if (!nextScrollElement || (!shouldStickToBottomRef.current && !isNearScrollBottom(nextScrollElement))) {
+        return;
+      }
+
+      nextScrollElement.scrollTop = nextScrollElement.scrollHeight;
+    });
   }, [loading, messages]);
 
   useEffect(() => {
@@ -416,7 +935,7 @@ export function ChatWorkspacePanel({
     <div
       ref={panelRef}
       className={cn(
-        'paperquay-assistant flex h-full min-h-0 overflow-hidden bg-transparent',
+        'pq-saas-scope pq-chat-workspace paperquay-assistant flex h-full min-h-0 overflow-hidden bg-transparent',
         workspaceMode && 'min-h-[520px]',
       )}
     >
@@ -424,35 +943,36 @@ export function ChatWorkspacePanel({
         <aside
           ref={historyRootRef}
           onWheelCapture={handleHistoryWheelCapture}
-          className="flex min-h-0 shrink-0 flex-col border-r border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(244,247,251,0.92))]"
+          className="pq-chat-pane flex min-h-0 shrink-0 flex-col border-r"
           style={{ width: historyPanelWidth }}
         >
-          <div className="border-b border-slate-200/70 px-3 py-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                  {l('历史记录', 'History')}
-                </div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
-                  {l(`${orderedSessions.length} 个会话`, `${orderedSessions.length} chats`)}
-                </div>
-              </div>
+          <div className="px-4 pb-2 pt-5">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                className="inline-flex min-w-0 items-center gap-1.5 rounded-lg text-left text-base font-semibold tracking-tight text-[var(--pq-text)]"
+              >
+                <span className="truncate">{l('最近', 'Recent')}</span>
+                <ChevronDown className="h-4 w-4 shrink-0 text-[var(--pq-text-faint)]" strokeWidth={1.9} />
+              </button>
               <button
                 type="button"
                 onClick={() => setHistoryCollapsed(true)}
-                className="inline-flex h-8 shrink-0 items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                title={l('收起历史记录', 'Collapse history')}
+                aria-label={l('收起历史记录', 'Collapse history')}
+                className="pq-icon-button h-7 w-7 shrink-0 border border-transparent bg-transparent text-[var(--pq-text-faint)]"
               >
-                {l('隐藏', 'Hide')}
+                <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.8} />
               </button>
             </div>
           </div>
 
           <div
             data-wheel-scroll-target
-            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-2"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 pb-3 pt-1"
           >
             {orderedSessions.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-0.5">
                 {orderedSessions.map((session) => {
                   const active = session.id === selectedSessionId;
 
@@ -460,51 +980,40 @@ export function ChatWorkspacePanel({
                     <div
                       key={session.id}
                       className={cn(
-                        'group flex items-start gap-2 rounded-2xl border p-2 transition',
+                        'group flex items-center gap-1 rounded-xl px-2 py-1.5 transition',
                         active
-                          ? 'border-indigo-200 bg-indigo-50/80 shadow-[0_12px_28px_rgba(79,70,229,0.10)]'
-                          : 'border-transparent bg-white/80 hover:border-slate-200 hover:bg-white',
+                          ? 'bg-[var(--pq-surface-2)]'
+                          : 'hover:bg-[var(--pq-hover)]',
                       )}
                     >
                       <button
                         type="button"
                         onClick={() => onSessionSelect(session.id)}
-                        className="min-w-0 flex-1 text-left"
+                        className="min-w-0 flex-1 rounded-lg px-1 py-1 text-left"
                       >
-                        <div
-                          className={cn(
-                            'truncate text-sm font-medium',
-                            active ? 'text-indigo-700' : 'text-slate-700',
-                          )}
-                        >
-                          {session.title || l('未命名会话', 'Untitled Chat')}
-                        </div>
-                        <div
-                          className={cn(
-                            'mt-1 text-[11px]',
-                            active ? 'text-indigo-500' : 'text-slate-400',
-                          )}
-                        >
-                          {formatChatSessionTime(session.updatedAt, locale)}
+                        <div className="truncate text-sm font-medium text-[var(--pq-text)]">
+                          {session.title || l('Untitled Chat', 'Untitled Chat')}
                         </div>
                       </button>
+                      {active ? (
+                        <Pin className="h-3.5 w-3.5 shrink-0 text-[var(--pq-text-faint)]" strokeWidth={1.8} />
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => onSessionDelete(session.id)}
-                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                        className="pq-icon-button h-7 w-7 shrink-0 rounded-lg border border-transparent bg-transparent text-[var(--pq-text-faint)] opacity-0 transition group-hover:opacity-100 focus:opacity-100"
                         aria-label={l('删除会话', 'Delete chat')}
+                        title={l('删除会话', 'Delete chat')}
                       >
-                        <X className="h-3.5 w-3.5" />
+                        <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-5 text-sm leading-6 text-slate-500">
-                {l(
-                  '还没有历史会话，先创建一个新的问答会话。',
-                  'No chat history yet. Create a new chat to get started.',
+              <div className="rounded-xl border border-dashed border-[var(--pq-border)] bg-white/58 px-4 py-5 text-sm leading-6 text-[var(--pq-text-muted)]">
+                {l('No chat history yet. Create a new chat to get started.', 'No chat history yet. Create a new chat to get started.',
                 )}
               </div>
             )}
@@ -534,46 +1043,42 @@ export function ChatWorkspacePanel({
         onWheelCapture={handleChatWheelCapture}
         className="flex min-h-0 min-w-0 flex-1 flex-col"
       >
-        <div className="border-b border-slate-200/70 bg-white/84 px-4 py-3 backdrop-blur-xl">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
+        <div className="pq-toolbar px-3 py-3 sm:px-4">
+          <div
+            className={cn(
+              'grid min-h-10 items-center gap-2 sm:gap-3',
+              workspaceMode
+                ? 'grid-cols-[minmax(0,1fr)_minmax(0,auto)_auto]'
+                : 'grid-cols-[minmax(0,1fr)_auto]',
+            )}
+          >
+            <div className={cn('min-w-0 pr-1', !workspaceMode && 'hidden')}>
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                {l('会话', 'Chat')}
+                SESSION
               </div>
               <div className="mt-1 truncate text-sm font-semibold text-slate-900">
-                {activeSession?.title || l('文档问答', 'Document Chat')}
+                {activeSession?.title || l('新会话', 'New Chat')}
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onQaRagEnabledChange(!qaRagEnabled)}
-                title={
-                  qaRagEnabled
-                    ? l('关闭本次问答 RAG', 'Turn off RAG for this chat')
-                    : l('开启本次问答 RAG', 'Turn on RAG for this chat')
-                }
-                aria-label={
-                  qaRagEnabled
-                    ? l('关闭本次问答 RAG', 'Turn off RAG for this chat')
-                    : l('开启本次问答 RAG', 'Turn on RAG for this chat')
-                }
-                className={cn(
-                  'inline-flex h-8 w-8 items-center justify-center rounded-full border transition',
-                  qaRagEnabled
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900',
-                )}
-              >
-                <Database className="h-3.5 w-3.5" strokeWidth={1.9} />
-              </button>
+
+            <ModelPresetPicker
+              l={l}
+              presets={qaModelPresets}
+              selectedPresetId={selectedQaPresetId}
+              onChange={onQaPresetChange}
+              title={l('选择问答模型', 'Choose QA model')}
+              className="min-w-0"
+              pill
+            />
+
+            <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5 sm:gap-2">
               {assistantDetached && onAttachAssistant ? (
                 <button
                   type="button"
                   onClick={onAttachAssistant}
                   title={l('停靠回侧边栏', 'Dock back to sidebar')}
                   aria-label={l('停靠回侧边栏', 'Dock back to sidebar')}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                  className="pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/60"
                 >
                   <PanelRightOpen className="h-3.5 w-3.5" strokeWidth={1.9} />
                 </button>
@@ -582,9 +1087,9 @@ export function ChatWorkspacePanel({
                 <button
                   type="button"
                   onClick={onDetachAssistant}
-                  title={l('弹出为窗口', 'Open as floating window')}
-                  aria-label={l('弹出为窗口', 'Open as floating window')}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
+                  title={l('Open as floating window', 'Open as floating window')}
+                  aria-label={l('Open as floating window', 'Open as floating window')}
+                  className="pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/60"
                 >
                   <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.9} />
                 </button>
@@ -593,43 +1098,63 @@ export function ChatWorkspacePanel({
                 <button
                   type="button"
                   onClick={() => setHistoryCollapsed(false)}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                  title={l('历史记录', 'History')}
+                  aria-label={l('历史记录', 'History')}
+                  className="pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/60"
                 >
                   <MessageSquareText className="h-3.5 w-3.5" strokeWidth={1.9} />
-                  {l('历史记录', 'History')}
                 </button>
               ) : null}
               <button
                 type="button"
-                onClick={onSessionCreate}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                onClick={handleCreateSessionClick}
+                title={l('新建会话', 'New Chat')}
+                aria-label={l('新建会话', 'New Chat')}
+                className="pq-icon-button h-8 w-8 shrink-0 border border-[var(--pq-border)] bg-slate-950 text-white shadow-[0_8px_18px_rgba(15,23,42,0.14)] hover:bg-slate-800 dark:bg-white dark:text-slate-950"
               >
                 <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
-                {l('新建会话', 'New Chat')}
               </button>
+              {onCollapseSidebar ? (
+                <button
+                  type="button"
+                  onClick={onCollapseSidebar}
+                  title={l('收起侧边栏', 'Collapse sidebar')}
+                  aria-label={l('收起侧边栏', 'Collapse sidebar')}
+                  className="pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/60"
+                >
+                  <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
 
         <div
+          ref={chatScrollRef}
           data-wheel-scroll-target
-          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain bg-[radial-gradient(circle_at_top,#ffffff,#f8fafc_35%,#f3f6fb_100%)] px-4 py-5 dark:bg-chrome-950"
+          onScroll={(event) => {
+            shouldStickToBottomRef.current = isNearScrollBottom(event.currentTarget);
+          }}
+          onWheelCapture={(event) => {
+            if (event.deltaY < 0) {
+              shouldStickToBottomRef.current = false;
+            }
+          }}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain bg-transparent px-4 py-5"
         >
           {messages.length === 0 ? (
             <div className="flex min-h-full items-center justify-center">
-              <div className="w-full space-y-4 rounded-[28px] border border-white/80 bg-white/86 p-5 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800 dark:shadow-none">
+              <div className="pq-card w-full space-y-4 p-5">
                 <div className="flex items-start gap-3">
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-[0_12px_28px_rgba(15,23,42,0.14)]">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--pq-accent)] text-white shadow-[0_12px_28px_var(--pq-accent-ring)]">
                     <MessageSquareText className="h-4.5 w-4.5" strokeWidth={1.8} />
                   </span>
                   <div className="space-y-1.5">
                     <div className="text-base font-semibold text-slate-900">
-                      {l('开始文档问答', 'Start document chat')}
+                      {l('Start document chat', 'Start document chat')}
                     </div>
                     <div className="text-sm leading-6 text-slate-500">
-                      {l(
-                        '可以直接提问，也可以先附加选中文本、图片、文件或截图再继续追问。',
-                        'Ask directly, or attach selected text, images, files, or screenshots first.',
+                      {l('Ask directly, or attach selected text, images, files, or screenshots first.', 'Ask directly, or attach selected text, images, files, or screenshots first.',
                       )}
                     </div>
                   </div>
@@ -641,7 +1166,7 @@ export function ChatWorkspacePanel({
                       key={prompt}
                       type="button"
                       onClick={() => onInputChange(prompt)}
-                      className="block w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-sm text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300 dark:hover:bg-chrome-600 dark:hover:text-chrome-100"
+                      className="block w-full rounded-xl border border-[var(--pq-border)] bg-white/62 px-4 py-3 text-left text-sm text-[var(--pq-text-muted)] transition hover:border-[var(--pq-border-strong)] hover:bg-white hover:text-[var(--pq-text)]"
                     >
                       {prompt}
                     </button>
@@ -650,49 +1175,64 @@ export function ChatWorkspacePanel({
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="mx-auto max-w-3xl space-y-5">
               {messages.map((message) => {
                 const assistantMessage = message.role === 'assistant';
+                const rawMessageContent = (
+                  assistantMessage ? cleanQaAssistantOutput(message.content) : message.content
+                ).trim();
+                const htmlAnswer = assistantMessage && message.renderMode === 'html';
+                const renderHtmlPreview = htmlAnswer && shouldRenderHtmlAnswerPreview(rawMessageContent);
                 const qaContextBadge = assistantMessage ? formatQaContextBadge(message.qaContext, l) : null;
                 const qaContextHint = assistantMessage ? formatQaContextHint(message.qaContext, l) : null;
                 const qaContextBadgeTone = assistantMessage
                   ? getQaContextBadgeTone(message.qaContext)
                   : 'neutral';
-                const renderedMessageContent = assistantMessage
-                  ? injectCitationLinks(message.content.trim(), message.citations)
-                  : message.content.trim();
+                const renderedMessageContent = assistantMessage && !renderHtmlPreview
+                  ? injectCitationLinks(rawMessageContent, message.citations)
+                  : rawMessageContent;
 
                 return (
                   <div
                     key={message.id}
-                    className={cn('flex gap-3', assistantMessage ? 'items-start' : 'justify-end')}
+                    className={cn(
+                       'flex gap-3',
+                      assistantMessage ? 'items-start' : 'justify-end',
+                      renderHtmlPreview && 'w-full',
+                    )}
                   >
                     {assistantMessage ? (
-                      <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]">
+                      <span className="hidden">
                         <Bot className="h-4 w-4" strokeWidth={1.9} />
                       </span>
                     ) : null}
 
                     <div
                       className={cn(
-                        'max-w-[92%] rounded-[24px] px-4 py-3 shadow-[0_14px_38px_rgba(15,23,42,0.05)]',
+                        'min-w-0 px-4 py-3',
+                        renderHtmlPreview ? 'flex-1 max-w-none px-3' : 'max-w-[90%]',
                         assistantMessage
-                          ? 'border border-white/80 bg-white text-slate-900'
-                          : 'bg-slate-900 text-slate-50',
+                          ? 'pq-chat-bubble-assistant rounded-none text-[var(--pq-text)]'
+                          : 'pq-chat-bubble-user rounded-2xl text-[var(--pq-text)]',
                       )}
                     >
                       <div
                         className={cn(
                           'mb-2 flex items-center gap-2 text-[11px]',
-                          assistantMessage ? 'text-slate-400' : 'text-slate-300',
+                          'text-[var(--pq-text-faint)]',
                         )}
                       >
                         <span className="font-semibold">
-                          {assistantMessage ? l('助手', 'Assistant') : l('你', 'You')}
+                          {assistantMessage ? l('助手', 'Assistant') : l('You', 'You')}
                         </span>
                         {assistantMessage && message.modelLabel ? (
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500">
+                          <span className="pq-chip px-2 py-0.5 text-[10px]">
                             {message.modelLabel}
+                          </span>
+                        ) : null}
+                        {htmlAnswer ? (
+                          <span className="rounded-full border border-[var(--pq-accent-border)] bg-[var(--pq-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--pq-accent)]">
+                            HTML
                           </span>
                         ) : null}
                         {assistantMessage && qaContextBadge ? (
@@ -711,9 +1251,33 @@ export function ChatWorkspacePanel({
                           </span>
                         ) : null}
                         <span>{formatChatSessionTime(message.createdAt, locale)}</span>
+                        {assistantMessage && rawMessageContent ? (
+                          <button
+                            type="button"
+                            onClick={() => onSaveAssistantMessageAsNote?.({
+                              ...message,
+                              content: rawMessageContent,
+                            })}
+                            disabled={!onSaveAssistantMessageAsNote}
+                            className="ml-auto inline-flex h-6 items-center gap-1 rounded-lg border border-[var(--pq-border)] bg-white/64 px-2 text-[10px] font-medium text-[var(--pq-text-muted)] transition hover:border-[var(--pq-border-strong)] hover:bg-white hover:text-[var(--pq-text)] disabled:cursor-not-allowed disabled:opacity-50"
+                            title={l('保存为笔记', 'Save as note')}
+                          >
+                            <FilePlus2 className="h-3 w-3" strokeWidth={1.8} />
+                            {l('保存', 'Save')}
+                          </button>
+                        ) : null}
                       </div>
 
-                      <MarkdownPreview
+                      {renderHtmlPreview ? (
+                        rawMessageContent ? (
+                          <HtmlAnswerPreview content={rawMessageContent} />
+                        ) : (
+                          <div className="text-sm leading-7 text-slate-400">
+                            {loading ? l('正在思考...', 'Thinking...') : ''}
+                          </div>
+                        )
+                      ) : (
+                        <MarkdownPreview
                         content={
                           renderedMessageContent ||
                           (assistantMessage && loading ? l('正在思考...', 'Thinking...') : '')
@@ -753,16 +1317,15 @@ export function ChatWorkspacePanel({
                             );
                           },
                         }}
-                        className={cn(
-                          'text-sm leading-7',
-                          assistantMessage && !message.content.trim() && loading && 'text-slate-400',
-                          !assistantMessage &&
-                            '!text-slate-50 prose-p:text-slate-50 prose-strong:text-white prose-li:text-slate-100 prose-headings:text-white prose-code:bg-white/10 prose-code:text-white [&_.katex]:text-white',
-                        )}
-                      />
+                          className={cn(
+                            'text-sm leading-7',
+                          assistantMessage && !rawMessageContent && loading && 'text-slate-400',
+                          )}
+                        />
+                      )}
 
                       {assistantMessage && qaContextHint ? (
-                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                        <div className="mt-3 rounded-xl border border-[var(--pq-border)] bg-white/56 px-3 py-2 text-xs leading-5 text-[var(--pq-text-muted)]">
                           {qaContextHint}
                         </div>
                       ) : null}
@@ -770,7 +1333,7 @@ export function ChatWorkspacePanel({
                       {assistantMessage &&
                       message.citations &&
                       message.citations.length > 0 &&
-                      !hasInlineCitationLinks(renderedMessageContent) ? (
+                      (renderHtmlPreview || !hasInlineCitationLinks(renderedMessageContent)) ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {message.citations.map((citation) => (
                             <button
@@ -782,7 +1345,7 @@ export function ChatWorkspacePanel({
                                 citation.previewText
                                   ? `${
                                       citation.pageIndex !== null && citation.pageIndex !== undefined
-                                        ? l(`第 ${citation.pageIndex + 1} 页`, `Page ${citation.pageIndex + 1}`)
+                                        ? l(`Page ${citation.pageIndex + 1}`, `Page ${citation.pageIndex + 1}`)
                                         : citation.sourceType
                                     }\n${citation.previewText}`
                                   : undefined
@@ -831,10 +1394,10 @@ export function ChatWorkspacePanel({
 
               {loading && !streamingAssistantMessage ? (
                 <div className="flex items-start gap-3">
-                  <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]">
+                  <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--pq-accent)] text-white shadow-[0_10px_24px_var(--pq-accent-shadow)]">
                     <Bot className="h-4 w-4" strokeWidth={1.9} />
                   </span>
-                  <div className="max-w-[92%] rounded-[24px] border border-white/80 bg-white px-4 py-3 shadow-[0_14px_38px_rgba(15,23,42,0.05)]">
+                  <div className="pq-chat-bubble-assistant max-w-[92%] rounded-2xl px-4 py-3">
                     <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
                       <Loader2 className="h-4 w-4 animate-spin text-indigo-500" strokeWidth={1.9} />
                       {l('模型回复中...', 'Model is replying...')}
@@ -842,9 +1405,7 @@ export function ChatWorkspacePanel({
                     <div className="mt-2 text-xs text-slate-400">
                       {activePreset
                         ? l(`当前模型：${activePreset.label}`, `Current model: ${activePreset.label}`)
-                        : l(
-                            '正在基于当前文档内容生成回复。',
-                            'Generating a response grounded in the current document.',
+                        : l('Generating a response grounded in the current document.', 'Generating a response grounded in the current document.',
                           )}
                     </div>
                   </div>
@@ -862,7 +1423,7 @@ export function ChatWorkspacePanel({
           ) : null}
         </div>
 
-        <div className="border-t border-slate-200/70 bg-white/88 px-4 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-900">
+        <div className="border-t border-[var(--pq-border)] bg-white/62 px-4 py-4 backdrop-blur-xl dark:bg-white/5">
           {attachments.length > 0 ? (
             <div className="mb-3 flex flex-wrap gap-2">
               {attachments.map((attachment) => {
@@ -876,17 +1437,17 @@ export function ChatWorkspacePanel({
                 return (
                   <div
                     key={attachment.id}
-                    className="group inline-flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.04)]"
+                    className="pq-card group inline-flex items-center gap-3 rounded-xl px-3 py-2 text-xs text-[var(--pq-text-muted)]"
                   >
                     {attachment.dataUrl &&
                     (attachment.kind === 'image' || attachment.kind === 'screenshot') ? (
                       <img
                         src={attachment.dataUrl}
                         alt={attachment.name}
-                        className="h-10 w-10 rounded-xl border border-slate-200 object-cover"
+                        className="h-10 w-10 rounded-xl border border-[var(--pq-border)] object-cover"
                       />
                     ) : (
-                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--pq-accent-soft)] text-[var(--pq-accent)]">
                         <AttachmentIcon className="h-4 w-4" strokeWidth={1.8} />
                       </span>
                     )}
@@ -901,7 +1462,7 @@ export function ChatWorkspacePanel({
                     <button
                       type="button"
                       onClick={() => onRemoveAttachment(attachment.id)}
-                      className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                      className="pq-icon-button h-7 w-7 rounded-lg"
                       aria-label={l('移除附件', 'Remove attachment')}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -914,7 +1475,7 @@ export function ChatWorkspacePanel({
 
           <div
             ref={composerRef}
-            className="rounded-[28px] border border-slate-200 bg-white p-3 shadow-[0_20px_44px_rgba(15,23,42,0.07)] dark:border-white/10 dark:bg-chrome-800 dark:shadow-none"
+            className="pq-chat-composer pq-assistant-composer p-3"
           >
             <textarea
               ref={textareaRef}
@@ -930,20 +1491,16 @@ export function ChatWorkspacePanel({
               }}
               placeholder={
                 hasBlocks
-                  ? l(
-                      '输入你的问题，Enter 发送，Shift+Enter 换行。',
-                      'Ask a question. Press Enter to send and Shift+Enter for a new line.',
+                  ? l('Ask a question. Press Enter to send and Shift+Enter for a new line.', 'Ask a question. Press Enter to send and Shift+Enter for a new line.',
                     )
-                  : l(
-                      '建议先加载论文结构块后再提问，回答会更准确。',
-                      'Load document blocks before asking questions for more accurate answers.',
+                  : l('Load document blocks before asking questions for more accurate answers.', 'Load document blocks before asking questions for more accurate answers.',
                     )
               }
-              className="min-h-[96px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-slate-700 outline-none dark:text-chrome-100 dark:placeholder:text-chrome-400"
+              className="min-h-[80px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-[var(--pq-text)] outline-none placeholder:text-[var(--pq-text-faint)]"
             />
 
-            <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-nowrap items-end justify-between gap-3">
+              <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-visible pb-1">
                 {primaryComposerActions.map((action) => {
                   const Icon = action.icon;
 
@@ -955,7 +1512,7 @@ export function ChatWorkspacePanel({
                       disabled={action.disabled}
                       title={action.label}
                       aria-label={action.label}
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="pq-icon-button h-10 w-10 shrink-0 border border-[var(--pq-border)] bg-white/60 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {action.key === 'screenshot' && screenshotLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
@@ -971,7 +1528,8 @@ export function ChatWorkspacePanel({
                     <button
                       type="button"
                       onClick={() => setCompactActionsOpen((open) => !open)}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900"
+                      title={l('更多操作', 'More actions')}
+                      className="pq-icon-button h-10 w-10 border border-[var(--pq-border)] bg-white/60"
                       aria-label={l('更多操作', 'More actions')}
                       aria-expanded={compactActionsOpen}
                     >
@@ -979,9 +1537,18 @@ export function ChatWorkspacePanel({
                     </button>
 
                     {compactActionsOpen ? (
-                      <div className="absolute bottom-full left-0 z-20 mb-2 min-w-[180px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
-                        {secondaryComposerActions.map((action) => {
+                      <div className="pq-card absolute bottom-full left-0 z-50 mb-2 min-w-[180px] p-2">
+                        {[
+                          ...secondaryComposerActions,
+                          ...(compactComposer
+                            ? [
+                                ...qaModeActions,
+                                ...(ultraCompactComposer ? [] : [reasoningAction]),
+                              ]
+                            : []),
+                        ].map((action) => {
                           const Icon = action.icon;
+                          const active = 'active' in action ? action.active : false;
 
                           return (
                             <button
@@ -991,10 +1558,15 @@ export function ChatWorkspacePanel({
                                 setCompactActionsOpen(false);
                                 action.onClick();
                               }}
-                              disabled={action.disabled}
-                              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={'disabled' in action ? action.disabled : false}
+                              className={cn(
+                                'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50',
+                                active
+                                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-400/12 dark:text-emerald-200'
+                                  : 'text-[var(--pq-text-muted)] hover:bg-white/70 hover:text-[var(--pq-text)]',
+                              )}
                             >
-                              {action.key === 'screenshot' && screenshotLoading ? (
+                              {'key' in action && action.key === 'screenshot' && screenshotLoading ? (
                                 <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
                               ) : (
                                 <Icon className="h-4 w-4" strokeWidth={1.8} />
@@ -1008,61 +1580,76 @@ export function ChatWorkspacePanel({
                   </div>
                 ) : null}
 
-                <label
-                  className={cn(
-                    'flex h-10 w-[184px] shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600',
-                    wrapModelSelector && 'basis-full',
-                  )}
-                >
-                  <Bot className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.8} />
-                  <select
-                    value={selectedQaPresetId}
-                    onChange={(event) => onQaPresetChange(event.target.value)}
-                    className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none"
-                    title={l('选择问答模型', 'Choose QA model')}
-                  >
-                    {qaModelPresets.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {!compactComposer ? (
+                  qaModeActions.map((action) => {
+                    const Icon = action.icon;
+
+                    return (
+                      <button
+                        key={action.key}
+                        type="button"
+                        onClick={action.onClick}
+                        title={action.label}
+                        aria-label={action.label}
+                        className={cn(
+                          'pq-icon-button h-10 w-10 shrink-0 border transition-all',
+                          action.active
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-[0_0_0_3px_rgba(16,185,129,0.12)] dark:border-emerald-400/40 dark:bg-emerald-400/12 dark:text-emerald-200'
+                            : 'border-[var(--pq-border)] bg-white/60',
+                        )}
+                      >
+                        <Icon className="h-4 w-4" strokeWidth={1.8} />
+                      </button>
+                    );
+                  })
+                ) : null}
+
+                {!compactComposer || ultraCompactComposer ? (
+                  <ReasoningEffortPicker
+                    l={l}
+                    value={qaReasoningEffort}
+                    onChange={onQaReasoningEffortChange}
+                    title={l('问答思考强度', 'QA reasoning effort')}
+                    compact={ultraCompactComposer}
+                  />
+                ) : null}
               </div>
 
               <button
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-full bg-slate-900 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                title={loading ? l('回复中', 'Replying') : l('发送', 'Send')}
+                aria-label={loading ? l('回复中', 'Replying') : l('发送', 'Send')}
+                className={cn(
+                  'pq-button-primary shrink-0 text-sm disabled:cursor-not-allowed',
+                  compactComposer ? 'h-10 w-10 rounded-full px-0' : 'h-11 px-4',
+                )}
               >
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.9} />
                 ) : (
                   <ArrowUp className="h-4 w-4" strokeWidth={1.9} />
                 )}
-                <span className="hidden sm:inline">
-                  {loading ? l('回复中', 'Replying') : l('发送', 'Send')}
+                <span className={cn(compactComposer ? 'hidden' : 'hidden sm:inline')}>
+                  {loading ? l('Replying', 'Replying') : l('Send', 'Send')}
                 </span>
               </button>
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-[var(--pq-text-faint)]">
             <span>
               {hasBlocks
                 ? l(
                     qaRagEnabled
-                      ? '当前回复会先尝试本地 RAG，再回退到文档内容。'
-                      : '当前回复会直接参考文档内容。',
+                      ? 'Responses try local RAG first, then fall back to document content.'
+                      : 'Responses use the document content directly.',
                     qaRagEnabled
                       ? 'Responses try local RAG first, then fall back to document content.'
                       : 'Responses use the document content directly.',
                   )
-                : l(
-                    '建议先加载结构块再提问，回答会更准确。',
-                    'Load structured blocks first for better answers.',
-                  )}
+                : l('Load structured blocks first for better answers.', 'Load structured blocks first for better answers.')}
             </span>
             <span>
               {loading
@@ -1082,9 +1669,7 @@ export function ChatPanel(props: ChatWorkspacePanelProps) {
   return (
     <SectionCard
       title={l('文档问答', 'Document Chat')}
-      description={l(
-        '基于当前论文内容进行多轮问答。',
-        'Run multi-turn QA grounded in the current paper.',
+      description={l('Run multi-turn QA grounded in the current paper.', 'Run multi-turn QA grounded in the current paper.',
       )}
       icon={<MessageSquare className="h-4 w-4" strokeWidth={1.8} />}
       contentClassName="p-0"

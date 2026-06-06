@@ -1,6 +1,7 @@
 # Package managers
 node_modules/
 .npm-cache/
+.npm/
 .pnpm-store/
 .yarn/
 !.yarn/releases/
@@ -11,28 +12,46 @@ node_modules/
 # Frontend build output and caches
 dist/
 build/
+release/
+out/
+dist-electron/
+dist_electron/
+electron-dist/
 coverage/
 .vite/
+.cache/
+.parcel-cache/
+.rollup.cache/
+.turbo/
 *.tsbuildinfo
 
-# Tauri / Rust build output
-target/
+# Electron / desktop packaging output
+builder-debug.yml
+builder-effective-config.yaml
+*.asar
+*.blockmap
+
+# Tauri / Rust build output kept out if legacy files are restored locally
 src-tauri/target/
-src-tauri/gen/schemas/
 
 # Local application runtime data
 .appdata/
 .localappdata/
+userData/
 *.sqlite
 *.sqlite3
 *.db
 *.db-shm
 *.db-wal
+paperquay-library.json
 
 # Secrets and local-only configuration
 .env
 .env.*
 !.env.example
+*.env
+.envrc
+.npmrc
 apikey.txt
 *apikey*
 *api-key*
@@ -40,8 +59,37 @@ apikey.txt
 credentials*.json
 secrets*.json
 token*.json
+oauth*.json
+auth*.json
+service-account*.json
+firebase-adminsdk*.json
+aws-credentials*
+*.secret
+*.secrets
+*.credential
+*.credentials
+*.token
+*.tokens
 *.pem
 *.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.cert
+*.p7b
+*.p8
+*.jks
+*.keystore
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+.ssh/
+.aws/
+.azure/
+.gcloud/
+.kube/
 
 # Logs
 *.log
@@ -49,13 +97,23 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.pid
+*.pid.lock
+
+# Test reports and browser automation artifacts
+test-results/
+playwright-report/
+.nyc_output/
 
 # Backups, archives, and scratch work
+.codex-tmp/
 .backups/
 .mojibake-backup/
 .tmp/
 .tmp-*/
 .tmp*/
+tmp/
+temp/
 backup*/
 backup*.zip
 backup*.tar
@@ -109,6 +167,8 @@ backup*.tar.gz
 .DS_Store
 Thumbs.db
 desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
 .idea/
 .vscode/
 *.swp
@@ -116,6 +176,3 @@ desktop.ini
 
 # Local AI assistant instructions
 AGENTS.md
-
-# Local accidental folders
-新建文件夹/

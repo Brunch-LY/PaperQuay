@@ -1,5 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../platform/electron/core';
 import type {
+  OpenAICompatibleModelListOptions,
+  OpenAICompatibleModelListResult,
   OpenAICompatibleTestOptions,
   OpenAICompatibleTestResult,
 } from '../types/reader';
@@ -25,5 +27,17 @@ export async function testOpenAICompatibleChat(
     });
   } catch (error) {
     throw new Error(toErrorMessage(error, '测试 OpenAI 兼容接口失败'));
+  }
+}
+
+export async function listOpenAICompatibleModels(
+  options: OpenAICompatibleModelListOptions,
+): Promise<OpenAICompatibleModelListResult> {
+  try {
+    return await invoke<OpenAICompatibleModelListResult>('list_openai_compatible_models', {
+      options,
+    });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '读取 OpenAI 兼容模型列表失败'));
   }
 }

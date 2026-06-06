@@ -9,12 +9,11 @@ import {
   Loader2,
   Pencil,
   Save,
-  Settings2,
   Sparkles,
   Star,
   X,
 } from 'lucide-react';
-import { useLocaleText } from '../../../i18n/uiLanguage';
+import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import type {
   LiteraturePaper,
@@ -35,7 +34,6 @@ interface LiteraturePaperDetailsProps {
   selectedPaper: LiteraturePaper | null;
   saving: boolean;
   onOpenPaper: (paper: LiteraturePaper) => void;
-  onOpenSettings: () => void;
   onSavePaper: (request: UpdatePaperRequest) => void;
   actionState?: LiteraturePaperTaskState | null;
   onRunMineruParse?: (paper: LiteraturePaper) => void;
@@ -81,39 +79,39 @@ function resolveOverviewSectionKey(title: string): OverviewSectionKey {
     .toLocaleLowerCase()
     .replace(/[：:]/g, '');
 
-  if (/keyword|关键词/.test(normalized)) {
+  if (/keyword|keywords/.test(normalized)) {
     return 'keywords';
   }
 
-  if (/finding|发现|要点|结论点/.test(normalized)) {
+  if (/finding|result/.test(normalized)) {
     return 'findings';
   }
 
-  if (/takeaway|阅读建议|启示|要记住/.test(normalized)) {
+  if (/takeaway|insight|contribution/.test(normalized)) {
     return 'takeaways';
   }
 
-  if (/limitation|局限|限制|不足/.test(normalized)) {
+  if (/limitation|weakness|constraint/.test(normalized)) {
     return 'limitations';
   }
 
-  if (/conclusion|结论|总结/.test(normalized)) {
+  if (/conclusion|summary/.test(normalized)) {
     return 'conclusion';
   }
 
-  if (/experiment|validation|evaluation|setup|实验|验证|评估/.test(normalized)) {
+  if (/experiment|validation|evaluation|setup/.test(normalized)) {
     return 'experiment';
   }
 
-  if (/approach|method|方法|模型|框架/.test(normalized)) {
+  if (/approach|method|model|framework/.test(normalized)) {
     return 'approach';
   }
 
-  if (/problem|question|问题|研究问题/.test(normalized)) {
+  if (/problem|question/.test(normalized)) {
     return 'problem';
   }
 
-  if (/background|背景|动机/.test(normalized)) {
+  if (/background|motivation/.test(normalized)) {
     return 'background';
   }
 
@@ -211,14 +209,14 @@ function splitOverviewListItems(content: string, key: OverviewSectionKey): strin
 
   if (key === 'keywords') {
     return normalized
-      .split(/[,\n，;；]/)
-      .map((item) => item.replace(/^[-*•·]\s*/, '').trim())
+      .split(/[,;\n]/)
+      .map((item) => item.replace(/^[-*\s]*/, '').trim())
       .filter(Boolean);
   }
 
   return normalized
     .split(/\n+/)
-    .map((item) => item.replace(/^(\d+[.)、]\s*|[-*•·]\s*)/, '').trim())
+    .map((item) => item.replace(/^(\d+[.)]\s*|[-*\s]*)/, '').trim())
     .filter(Boolean);
 }
 
@@ -272,7 +270,7 @@ function TextInput({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
-      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-400/10 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:placeholder:text-[#8d8d8d]"
+      className="pq-input h-10 w-full px-3 text-sm placeholder:text-[var(--pq-text-faint)]"
     />
   );
 }
@@ -294,7 +292,7 @@ function TextArea({
       rows={rows}
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
-      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-800 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-400/10 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:placeholder:text-[#8d8d8d]"
+      className="pq-input w-full resize-none px-3 py-2 text-sm leading-6 placeholder:text-[var(--pq-text-faint)]"
     />
   );
 }
@@ -319,8 +317,8 @@ function ActionButton({
       disabled={disabled}
       className={
         primary
-          ? 'inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#2f7f85] dark:hover:bg-[#286f75]'
-          : 'inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:hover:border-teal-300/20 dark:hover:bg-teal-300/10 dark:hover:text-teal-100'
+          ? 'pq-button-primary w-full px-4 py-2.5 text-sm'
+          : 'pq-button px-3 py-2.5 text-sm'
       }
     >
       <span className="mr-2">{icon}</span>
@@ -355,13 +353,13 @@ function ProcessingActionTile({
       onClick={onClick}
       disabled={disabled}
       className={[
-        'group flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left shadow-[0_10px_24px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-teal-200 hover:bg-teal-50/70 hover:shadow-[0_16px_34px_rgba(15,118,110,0.10)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 dark:shadow-none dark:hover:border-teal-300/25 dark:hover:bg-teal-300/10',
+        'group flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition hover:border-[var(--pq-accent-border)] hover:bg-white/88 disabled:cursor-not-allowed disabled:opacity-55',
         active
-          ? 'border-teal-300 bg-teal-50/80 ring-4 ring-teal-400/10 dark:border-teal-300/35 dark:bg-teal-300/10'
-          : 'border-slate-200/80 bg-white dark:border-white/10 dark:bg-[#242424]',
+          ? 'border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-soft)] ring-1 ring-[var(--pq-accent-ring)]'
+          : 'border-[var(--pq-border)] bg-white/72 dark:bg-white/6',
       ].join(' ')}
     >
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-teal-100 bg-teal-50 text-teal-700 transition group-hover:border-teal-200 group-hover:bg-white dark:border-teal-300/15 dark:bg-teal-300/10 dark:text-teal-100 dark:group-hover:bg-teal-300/14">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--pq-accent-ring)] bg-[var(--pq-accent-soft)] text-[var(--pq-accent)] transition group-hover:bg-white/80">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} /> : icon}
       </span>
       <span className="min-w-0 flex-1">
@@ -372,7 +370,7 @@ function ProcessingActionTile({
           {description}
         </span>
       </span>
-      <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-teal-500 dark:text-[#666] dark:group-hover:text-teal-200" strokeWidth={2} />
+      <ChevronRight className="h-4 w-4 shrink-0 text-[var(--pq-text-faint)] transition group-hover:translate-x-0.5 group-hover:text-[var(--pq-accent)]" strokeWidth={2} />
     </button>
   );
 }
@@ -402,7 +400,7 @@ function TaskStatusPanel({
   return (
     <div
       className={[
-        'rounded-2xl border px-3.5 py-3',
+        'rounded-lg border px-3.5 py-3',
         tone === 'rose'
           ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-300/25 dark:bg-rose-300/10 dark:text-rose-200'
           : '',
@@ -415,7 +413,7 @@ function TaskStatusPanel({
       ].join(' ')}
     >
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/80 dark:bg-white/10">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/80 dark:bg-white/10">
           <StatusIcon
             className={['h-4 w-4', state.status === 'running' ? 'animate-spin' : ''].join(' ')}
             strokeWidth={2}
@@ -433,7 +431,7 @@ function TaskStatusPanel({
           <div className="mt-1 line-clamp-2 text-xs leading-5 opacity-80">
             {state.message}
           </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/8 dark:bg-white/10">
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/10">
             <div
               className={[
                 'h-full rounded-full transition-all duration-300',
@@ -455,7 +453,6 @@ export default function LiteraturePaperDetails({
   selectedPaper,
   saving,
   onOpenPaper,
-  onOpenSettings,
   onSavePaper,
   actionState,
   onRunMineruParse,
@@ -463,6 +460,7 @@ export default function LiteraturePaperDetails({
   onGenerateSummary,
 }: LiteraturePaperDetailsProps) {
   const l = useLocaleText();
+  const locale = useAppLocale();
   const rootRef = useRef<HTMLElement | null>(null);
   const handleWheelCapture = useWheelScrollDelegate({ rootRef });
   const [editing, setEditing] = useState(false);
@@ -535,40 +533,32 @@ export default function LiteraturePaperDetails({
     <aside
       ref={rootRef}
       onWheelCapture={handleWheelCapture}
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-white dark:bg-[#181818]"
+      className="pq-library-pane flex h-full min-h-0 flex-col overflow-hidden border-l"
     >
-      <header className="border-b border-slate-200 px-5 py-4 dark:border-white/10">
+      <header className="pq-toolbar px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-[#a0a0a0]">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8a8f94] dark:text-[#a0a0a0]">
               {l('文献详情', 'Paper Details')}
             </div>
-            <div className="mt-1 text-lg font-semibold">
+            <div className="mt-0.5 text-base font-semibold">
               {selectedPaper ? l('已选择文献', 'Selected Paper') : l('未选择', 'No Selection')}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 dark:border-white/10 dark:bg-[#242424] dark:text-[#a0a0a0] dark:hover:bg-[#2b2b2b]"
-            title={l('设置', 'Settings')}
-          >
-            <Settings2 className="h-4 w-4" strokeWidth={1.9} />
-          </button>
         </div>
       </header>
 
       <div
         data-wheel-scroll-target
-        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-5"
+        className="h-0 min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4"
       >
         {selectedPaper ? (
           <div className="space-y-5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="text-xl font-semibold leading-7">{selectedPaper.title}</h2>
+                <h2 className="text-lg font-semibold leading-7">{selectedPaper.title}</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[#a0a0a0]">
-                  {paperAuthors(selectedPaper)}
+                  {paperAuthors(selectedPaper, locale)}
                 </p>
               </div>
 
@@ -579,8 +569,8 @@ export default function LiteraturePaperDetails({
                   disabled={saving}
                   className={
                     selectedPaper.isFavorite
-                      ? 'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-amber-300/70 bg-amber-100 text-amber-700 transition hover:bg-amber-200 disabled:opacity-60 dark:border-amber-300/25 dark:bg-amber-300/14 dark:text-amber-200'
-                      : 'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-amber-600 disabled:opacity-60 dark:border-white/10 dark:bg-[#242424] dark:text-[#8d8d8d] dark:hover:bg-[#2b2b2b] dark:hover:text-amber-200'
+                      ? 'pq-icon-button h-9 w-9 border border-amber-300/70 bg-amber-100 text-amber-700 disabled:opacity-60 dark:border-amber-300/25 dark:bg-amber-300/14 dark:text-amber-200'
+                      : 'pq-icon-button h-9 w-9 border border-[var(--pq-border)] bg-white/65 text-[var(--pq-text-faint)] disabled:opacity-60'
                   }
                   title={selectedPaper.isFavorite ? l('取消收藏', 'Remove from favorites') : l('加入收藏', 'Add to favorites')}
                   aria-label={selectedPaper.isFavorite ? l('取消收藏', 'Remove from favorites') : l('加入收藏', 'Add to favorites')}
@@ -592,7 +582,7 @@ export default function LiteraturePaperDetails({
                   type="button"
                   onClick={() => setEditing((current) => !current)}
                   disabled={saving}
-                  className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:hover:bg-[#2b2b2b]"
+                  className="pq-button px-3 py-2 text-xs"
                 >
                   {editing ? (
                     <X className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.9} />
@@ -614,7 +604,7 @@ export default function LiteraturePaperDetails({
                 {l('打开阅读', 'Open Reader')}
               </ActionButton>
 
-              <section className="rounded-3xl border border-slate-200 bg-slate-50/75 p-3 shadow-inner shadow-white/70 dark:border-white/10 dark:bg-[#1e1e1e] dark:shadow-none">
+              <section className="pq-card p-3">
                 <div className="mb-2.5 flex items-center justify-between gap-3 px-1">
                   <div>
                     <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400 dark:text-[#8d8d8d]">
@@ -639,7 +629,7 @@ export default function LiteraturePaperDetails({
                     icon={<Sparkles className="h-4 w-4" strokeWidth={1.9} />}
                     onClick={() => onRunMineruParse?.(selectedPaper)}
                     title={l('MinerU 解析', 'MinerU Parse')}
-                    description={l('提取结构化正文和版面块', 'Extract structured text and layout blocks')}
+                    description={l('提取结构化文本和版面块', 'Extract structured text and layout blocks')}
                   />
                   <ProcessingActionTile
                     dataTour="overview-translate-document"
@@ -653,7 +643,7 @@ export default function LiteraturePaperDetails({
                     icon={<Languages className="h-4 w-4" strokeWidth={1.9} />}
                     onClick={() => onTranslatePaper?.(selectedPaper)}
                     title={l('全文翻译', 'Full Translation')}
-                    description={l('基于结构块生成双语译文', 'Translate structured blocks into bilingual text')}
+                    description={l('将结构化内容翻译为双语文本', 'Translate structured blocks into bilingual text')}
                   />
                   <ProcessingActionTile
                     dataTour="generate-summary"
@@ -680,7 +670,7 @@ export default function LiteraturePaperDetails({
             </div>
 
             {editing ? (
-              <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-[#1e1e1e]">
+              <div className="pq-card space-y-4 p-4">
                 <label>
                   <FieldLabel>{l('标题', 'Title')}</FieldLabel>
                   <TextInput
@@ -780,7 +770,7 @@ export default function LiteraturePaperDetails({
                     type="button"
                     onClick={handleSave}
                     disabled={saving}
-                    className="inline-flex items-center rounded-2xl bg-[#2f7f85] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#286f75] disabled:opacity-60"
+                    className="pq-button-primary px-4 py-2.5 text-sm disabled:opacity-60"
                   >
                     <Save className="mr-2 h-4 w-4" strokeWidth={1.9} />
                     {saving ? l('正在保存...', 'Saving...') : l('保存修改', 'Save Changes')}
@@ -792,7 +782,7 @@ export default function LiteraturePaperDetails({
                       setEditing(false);
                     }}
                     disabled={saving}
-                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-[#242424] dark:text-[#e0e0e0] dark:hover:bg-[#2b2b2b]"
+                    className="pq-button px-4 py-2.5 text-sm disabled:opacity-60"
                   >
                     {l('放弃', 'Discard')}
                   </button>
@@ -800,13 +790,13 @@ export default function LiteraturePaperDetails({
               </div>
             ) : (
               <>
-                <dl className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-white/10 dark:bg-[#1e1e1e]">
+                <dl className="pq-card p-4 text-sm">
                   <div>
                     <dt className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-[#8d8d8d]">
                       {l('期刊 / 会议', 'Journal / Conference')}
                     </dt>
                     <dd className="mt-2 text-slate-700 dark:text-[#e0e0e0]">
-                      {selectedPaper.publication || l('未填写', 'Not set')}
+                      {selectedPaper.publication || l('未设置', 'Not set')}
                     </dd>
                   </div>
                 </dl>
@@ -816,7 +806,7 @@ export default function LiteraturePaperDetails({
                     {selectedPaper.keywords.map((keyword) => (
                       <span
                         key={keyword}
-                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-white/[0.06] dark:text-[#cfcfcf]"
+                        className="pq-chip px-3 py-1 text-xs font-medium"
                       >
                         {keyword}
                       </span>
@@ -833,7 +823,7 @@ export default function LiteraturePaperDetails({
                       {selectedPaper.tags.map((tag) => (
                         <span
                           key={tag.id}
-                          className="rounded-full border border-cyan-300/45 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700 dark:border-cyan-300/18 dark:bg-cyan-300/10 dark:text-cyan-100"
+                          className="rounded-full border border-[var(--pq-accent-ring)] bg-[var(--pq-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--pq-accent)]"
                         >
                           {tag.name}
                         </span>
@@ -842,14 +832,14 @@ export default function LiteraturePaperDetails({
                   </div>
                 ) : null}
 
-                <section className="rounded-3xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-[#1e1e1e]">
+                <section className="pq-card p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-[#8d8d8d]">
                       {l('AI 概览', 'AI Overview')}
                     </div>
                     {overviewSections.length > 0 ? (
-                      <span className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-teal-700 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-100">
-                        {l(`${overviewSections.length} 个模块`, `${overviewSections.length} sections`)}
+                      <span className="rounded-full border border-[var(--pq-accent-ring)] bg-[var(--pq-accent-soft)] px-2.5 py-1 text-[11px] font-semibold text-[var(--pq-accent)]">
+                        {l(`${overviewSections.length} 个部分`, `${overviewSections.length} sections`)}
                       </span>
                     ) : null}
                   </div>
@@ -866,8 +856,8 @@ export default function LiteraturePaperDetails({
                               onClick={() => setActiveOverviewKey(section.key)}
                               className={
                                 activeOverviewSection.key === section.key
-                                  ? 'rounded-full border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 transition dark:border-teal-300/25 dark:bg-teal-300/12 dark:text-teal-100'
-                                  : 'rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-white/10 dark:bg-[#242424] dark:text-[#a0a0a0] dark:hover:border-teal-300/20 dark:hover:bg-teal-300/10 dark:hover:text-teal-100'
+                                  ? 'rounded-full border border-[var(--pq-accent-border)] bg-[var(--pq-accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--pq-accent)] transition'
+                                  : 'rounded-full border border-[var(--pq-border)] bg-white/58 px-3 py-1.5 text-xs font-semibold text-[var(--pq-text-muted)] transition hover:border-[var(--pq-border-strong)] hover:bg-white hover:text-[var(--pq-text)]'
                               }
                             >
                               {label}
@@ -876,7 +866,7 @@ export default function LiteraturePaperDetails({
                         })}
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-white/10 dark:bg-[#242424]">
+                      <div className="rounded-xl border border-[var(--pq-border)] bg-white/54 px-4 py-4 dark:bg-white/5">
                         <div className="text-sm font-semibold text-slate-800 dark:text-[#e0e0e0]">
                           {overviewSectionLabel(
                             activeOverviewSection.key,
@@ -899,7 +889,7 @@ export default function LiteraturePaperDetails({
                               activeOverviewSection.key,
                             ).map((item) => (
                               <li key={item} className="flex gap-2">
-                                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-500 dark:bg-teal-300" />
+                                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--pq-accent)]" />
                                 <span>{item}</span>
                               </li>
                             ))}
@@ -912,8 +902,8 @@ export default function LiteraturePaperDetails({
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-500 dark:border-white/10 dark:bg-[#242424] dark:text-[#a0a0a0]">
-                      {l('点击“概览生成”后，生成结果会显示在这里。', 'After generating an overview, the result will appear here.')}
+                    <div className="mt-3 rounded-xl border border-dashed border-[var(--pq-border)] bg-white/48 px-4 py-4 text-sm leading-6 text-[var(--pq-text-muted)]">
+                      {l('生成概览后，结果会显示在这里。', 'After generating an overview, the result will appear here.')}
                     </div>
                   )}
                 </section>
@@ -932,7 +922,7 @@ export default function LiteraturePaperDetails({
             )}
           </div>
         ) : (
-          <div className="rounded-3xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-white/10 dark:text-[#a0a0a0]">
+          <div className="pq-card border-dashed p-8 text-center text-sm text-[var(--pq-text-muted)]">
             {l('选择一篇文献查看详情。', 'Select a paper to view details.')}
           </div>
         )}
@@ -940,3 +930,4 @@ export default function LiteraturePaperDetails({
     </aside>
   );
 }
+

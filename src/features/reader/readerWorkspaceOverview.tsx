@@ -173,7 +173,7 @@ export function ReaderWorkspaceOverview({
             contentClassName="space-y-4"
           >
             <div className="rounded-[22px] border border-slate-200/80 bg-white px-4 py-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-chrome-400">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-[var(--pq-text-faint)]">
                 {l('来源', 'Source')}
               </div>
               <div className="mt-2 text-sm leading-6 text-slate-700">{sourceLabel}</div>

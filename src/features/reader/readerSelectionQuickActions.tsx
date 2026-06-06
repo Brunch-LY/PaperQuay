@@ -1,11 +1,20 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type { SelectedExcerpt } from '../../types/reader';
 
 function clampSelectionPopoverPosition(value: number, min: number, max: number) {
+  if (max < min) {
+    return min;
+  }
+
   return Math.min(max, Math.max(min, value));
 }
+
+const POPOVER_VIEWPORT_MARGIN = 16;
+const POPOVER_ANCHOR_GAP = 12;
+const FALLBACK_POPOVER_WIDTH = 360;
+const FALLBACK_POPOVER_HEIGHT = 260;
 
 export interface SelectionQuickActionsProps {
   selectedExcerpt: SelectedExcerpt | null;
@@ -15,6 +24,7 @@ export interface SelectionQuickActionsProps {
   aiConfigured: boolean;
   autoTranslateSelection: boolean;
   onAppendSelectedExcerptToQa: () => void;
+  onAddSelectionToNote: () => void;
   onTranslateSelectedExcerpt: () => void;
   onClearSelectedExcerpt: () => void;
 }
@@ -27,11 +37,16 @@ export function SelectionQuickActions({
   aiConfigured,
   autoTranslateSelection,
   onAppendSelectedExcerptToQa,
+  onAddSelectionToNote,
   onTranslateSelectedExcerpt,
   onClearSelectedExcerpt,
 }: SelectionQuickActionsProps) {
   const l = useLocaleText();
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [popoverSize, setPopoverSize] = useState({
+    width: FALLBACK_POPOVER_WIDTH,
+    height: FALLBACK_POPOVER_HEIGHT,
+  });
 
   useEffect(() => {
     if (!selectedExcerpt) {
@@ -71,6 +86,48 @@ export function SelectionQuickActions({
     };
   }, [onClearSelectedExcerpt, selectedExcerpt]);
 
+  useLayoutEffect(() => {
+    if (!selectedExcerpt || !popoverRef.current) {
+      return undefined;
+    }
+
+    const updatePopoverSize = () => {
+      const rect = popoverRef.current?.getBoundingClientRect();
+
+      if (!rect) {
+        return;
+      }
+
+      const nextWidth = Math.ceil(rect.width);
+      const nextHeight = Math.ceil(rect.height);
+
+      setPopoverSize((current) =>
+        current.width === nextWidth && current.height === nextHeight
+          ? current
+          : {
+              width: nextWidth,
+              height: nextHeight,
+            },
+      );
+    };
+
+    updatePopoverSize();
+
+    const resizeObserver = new ResizeObserver(updatePopoverSize);
+    resizeObserver.observe(popoverRef.current);
+    window.addEventListener('resize', updatePopoverSize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updatePopoverSize);
+    };
+  }, [
+    selectedExcerpt,
+    selectedExcerptError,
+    selectedExcerptTranslation,
+    selectedExcerptTranslating,
+  ]);
+
   if (
     !selectedExcerpt ||
     selectedExcerpt.anchorClientX === undefined ||
@@ -81,13 +138,25 @@ export function SelectionQuickActions({
 
   const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1440;
   const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 900;
-  const panelHalfWidth = Math.min(180, Math.max((viewportWidth - 32) / 2, 120));
+  const panelWidth = Math.min(popoverSize.width, viewportWidth - POPOVER_VIEWPORT_MARGIN * 2);
+  const panelHeight = Math.min(popoverSize.height, viewportHeight - POPOVER_VIEWPORT_MARGIN * 2);
+  const availableBelow = viewportHeight - selectedExcerpt.anchorClientY - POPOVER_VIEWPORT_MARGIN;
+  const availableAbove = selectedExcerpt.anchorClientY - POPOVER_VIEWPORT_MARGIN;
+  const placeAbove =
+    availableBelow < panelHeight + POPOVER_ANCHOR_GAP &&
+    availableAbove > availableBelow;
   const left = clampSelectionPopoverPosition(
-    selectedExcerpt.anchorClientX,
-    16 + panelHalfWidth,
-    viewportWidth - 16 - panelHalfWidth,
+    selectedExcerpt.anchorClientX - panelWidth / 2,
+    POPOVER_VIEWPORT_MARGIN,
+    viewportWidth - POPOVER_VIEWPORT_MARGIN - panelWidth,
   );
-  const top = clampSelectionPopoverPosition(selectedExcerpt.anchorClientY, 84, viewportHeight - 84);
+  const top = clampSelectionPopoverPosition(
+    placeAbove
+      ? selectedExcerpt.anchorClientY - panelHeight - POPOVER_ANCHOR_GAP
+      : selectedExcerpt.anchorClientY + POPOVER_ANCHOR_GAP,
+    POPOVER_VIEWPORT_MARGIN,
+    viewportHeight - POPOVER_VIEWPORT_MARGIN - panelHeight,
+  );
   const sourceLabel =
     selectedExcerpt.source === 'pdf'
       ? l('PDF 划词', 'PDF Selection')
@@ -119,12 +188,15 @@ export function SelectionQuickActions({
       style={{
         left,
         top,
-        transform: 'translate(-50%, 14px)',
       }}
     >
       <div
         ref={popoverRef}
         className="pointer-events-auto w-[min(360px,calc(100vw-32px))] rounded-[20px] border border-slate-200/80 bg-white/96 p-3 shadow-[0_18px_48px_rgba(15,23,42,0.16)] backdrop-blur-xl"
+        style={{
+          maxHeight: `calc(100vh - ${POPOVER_VIEWPORT_MARGIN * 2}px)`,
+          overflowY: 'auto',
+        }}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -167,6 +239,13 @@ export function SelectionQuickActions({
             className="inline-flex items-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition-all duration-200 hover:bg-slate-800"
           >
             {l('加入问答', 'Add to QA')}
+          </button>
+          <button
+            type="button"
+            onClick={onAddSelectionToNote}
+            className="inline-flex items-center rounded-xl border border-[var(--pq-accent-border)] bg-[var(--pq-accent-bg)] px-3 py-2 text-sm font-medium text-[var(--pq-accent)] transition-all duration-200 hover:bg-[var(--pq-accent-bg-hover)]"
+          >
+            {l('加入笔记', 'Add to Note')}
           </button>
           <button
             type="button"

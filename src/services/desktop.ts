@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../platform/electron/core';
 import type { PdfSource } from '../types/reader';
 
 export interface AppDefaultPaths {
@@ -183,6 +183,14 @@ export async function readLocalTextFile(path: string): Promise<string> {
     return await invoke<string>('read_text_file', { path });
   } catch (error) {
     throw new Error(toErrorMessage(error, `读取文本文件失败: ${path}`));
+  }
+}
+
+export async function readLocalTextFileIfExists(path: string): Promise<string | null> {
+  try {
+    return await invoke<string | null>('read_text_file_if_exists', { path });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, `Failed to read text file: ${path}`));
   }
 }
 

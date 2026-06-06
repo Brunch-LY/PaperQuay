@@ -4,6 +4,7 @@ import type {
   LiteraturePaper,
 } from '../../types/library';
 import type { UiLanguage } from '../../types/reader';
+import { paperPdfPath as resolveLibraryPaperPdfPath } from '../../utils/libraryPaper';
 
 export interface FlatLiteratureCategory extends LiteratureCategory {
   depth: number;
@@ -66,32 +67,28 @@ export function categoryIcon(category: LiteratureCategory) {
 }
 
 export function categoryDisplayName(category: LiteratureCategory, locale: UiLanguage): string {
-  if (locale !== 'en-US') {
-    return category.name;
-  }
-
   switch (category.systemKey) {
     case 'all':
-      return 'All Papers';
+      return locale === 'en-US' ? 'All Papers' : '所有文献';
     case 'recent':
-      return 'Recently Imported';
+      return locale === 'en-US' ? 'Recently Imported' : '最近导入';
     case 'uncategorized':
-      return 'Uncategorized';
+      return locale === 'en-US' ? 'Uncategorized' : '未分类';
     case 'favorites':
-      return 'Favorites';
+      return locale === 'en-US' ? 'Favorites' : '收藏';
     default:
       return category.name;
   }
 }
 
-export function paperAuthors(paper: LiteraturePaper): string {
+export function paperAuthors(paper: LiteraturePaper, locale: UiLanguage = 'zh-CN'): string {
   if (paper.authors.length === 0) {
-    return 'Unknown Authors';
+    return locale === 'en-US' ? 'Unknown Authors' : '未知作者';
   }
 
   return paper.authors.map((author) => author.name).join(', ');
 }
 
 export function paperPdfPath(paper: LiteraturePaper): string | null {
-  return paper.attachments.find((attachment) => attachment.kind === 'pdf')?.storedPath ?? null;
+  return resolveLibraryPaperPdfPath(paper);
 }

@@ -1,0 +1,174 @@
+import type {
+  PaperAnnotation,
+  PdfHighlightTarget,
+  PdfScrollPosition,
+  PositionedMineruBlock,
+} from '../../types/reader';
+import { buildSiblingPath } from '../../utils/mineruCache.ts';
+import type { PageSize } from '../../utils/bbox';
+import { getFileNameFromPath } from '../../utils/text.ts';
+
+export const MAX_EAGER_THUMBNAILS = 36;
+export const THUMBNAIL_NEIGHBOR_RADIUS = 4;
+
+export type PdfAnnotationColorPresetId = 'yellow' | 'green' | 'blue' | 'pink' | 'red';
+type Localize = (zh: string, en: string) => string;
+
+export function getPercentProgress(completed: number, total: number): number {
+  if (total <= 0) {
+    return 0;
+  }
+
+  return Math.min(100, Math.max(0, (completed / total) * 100));
+}
+
+export function getPdfAnnotationColorLabel(
+  presetId: PdfAnnotationColorPresetId,
+  l: Localize,
+): string {
+  switch (presetId) {
+    case 'yellow':
+      return l('黄色', 'Yellow');
+    case 'green':
+      return l('绿色', 'Green');
+    case 'blue':
+      return l('蓝色', 'Blue');
+    case 'pink':
+      return l('粉色', 'Pink');
+    case 'red':
+      return l('红色', 'Red');
+  }
+}
+
+export function resolveBBoxBaseSize(
+  source: Pick<
+    PositionedMineruBlock | PdfHighlightTarget | PaperAnnotation,
+    'bboxCoordinateSystem' | 'bboxPageSize'
+  > | null,
+  originalPage: PageSize,
+): PageSize {
+  if (source?.bboxCoordinateSystem === 'normalized-1000') {
+    return { width: 1000, height: 1000 };
+  }
+
+  if (source?.bboxPageSize) {
+    return {
+      width: source.bboxPageSize[0],
+      height: source.bboxPageSize[1],
+    };
+  }
+
+  return originalPage;
+}
+
+export function buildAnnotatedFileName(fileName: string): string {
+  const trimmedName = fileName.trim() || 'document.pdf';
+  const lowerName = trimmedName.toLowerCase();
+
+  if (lowerName.endsWith('.annotated.pdf')) {
+    return trimmedName;
+  }
+
+  if (!lowerName.endsWith('.pdf')) {
+    return `${trimmedName}.annotated.pdf`;
+  }
+
+  return `${trimmedName.slice(0, -4)}.annotated.pdf`;
+}
+
+export function buildAnnotatedSiblingPath(path: string): string {
+  return buildSiblingPath(path, buildAnnotatedFileName(getFileNameFromPath(path) || 'document.pdf'));
+}
+
+export function loadStoredBoolean(key: string, fallback = false): boolean {
+  try {
+    const rawValue = localStorage.getItem(key);
+
+    return rawValue === null ? fallback : rawValue === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+export function buildThumbnailPageIndexes(pageCount: number, currentPage: number): number[] {
+  const indexes = new Set<number>();
+  const leadingCount = Math.min(pageCount, 12);
+
+  for (let pageIndex = 0; pageIndex < leadingCount; pageIndex += 1) {
+    indexes.add(pageIndex);
+  }
+
+  const currentPageIndex = Math.max(0, currentPage - 1);
+  const start = Math.max(0, currentPageIndex - THUMBNAIL_NEIGHBOR_RADIUS);
+  const end = Math.min(pageCount - 1, currentPageIndex + THUMBNAIL_NEIGHBOR_RADIUS);
+
+  for (let pageIndex = start; pageIndex <= end; pageIndex += 1) {
+    indexes.add(pageIndex);
+  }
+
+  return Array.from(indexes)
+    .sort((left, right) => left - right)
+    .slice(0, MAX_EAGER_THUMBNAILS);
+}
+
+export function releaseCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
+export function releasePdfDocument(pdfDocument: unknown): void {
+  const maybeDocument = pdfDocument as {
+    cleanup?: () => unknown;
+    destroy?: () => { catch?: (onRejected: () => undefined) => unknown } | unknown;
+  } | null | undefined;
+
+  try {
+    maybeDocument?.cleanup?.();
+  } catch {
+    // Best-effort PDF.js memory release.
+  }
+
+  try {
+    const destroyResult = maybeDocument?.destroy?.();
+    if (
+      destroyResult &&
+      typeof destroyResult === 'object' &&
+      'catch' in destroyResult &&
+      typeof destroyResult.catch === 'function'
+    ) {
+      void destroyResult.catch(() => undefined);
+    }
+  } catch {
+    // Best-effort PDF.js memory release.
+  }
+}
+
+export function isPdfLifecycleCancellation(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error ?? '');
+
+  return (
+    name === 'RenderingCancelledException' ||
+    /cancel|destroy|transport|sendWithPromise/i.test(message)
+  );
+}
+
+export function buildScrollRestoreKey(position: PdfScrollPosition): string {
+  return [
+    position.sourceKey,
+    Math.round(position.top),
+    Math.round(position.left),
+    position.page,
+    Math.round(position.pageOffsetTop),
+    Math.round((position.pageOffsetRatio ?? -1) * 100000),
+    Math.round(position.pageHeight ?? 0),
+  ].join(':');
+}
+
+export function clampScrollRatio(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.min(1, Math.max(0, value));
+}

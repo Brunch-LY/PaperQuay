@@ -8,12 +8,12 @@ function clampFloatingPosition(value: number, min: number, max: number) {
 
 function getInitialFloatingAssistantPosition() {
   if (typeof window === 'undefined') {
-    return { x: 960, y: 88 };
+    return { x: 720, y: 72 };
   }
 
   return {
-    x: Math.max(16, window.innerWidth - Math.min(1040, window.innerWidth - 32)),
-    y: 88,
+    x: Math.max(12, window.innerWidth - Math.min(1180, window.innerWidth - 24)),
+    y: 72,
   };
 }
 
@@ -59,11 +59,11 @@ export function FloatingAssistantPanel({
       const nextX = dragState.panelX + event.clientX - dragState.startX;
       const nextY = dragState.panelY + event.clientY - dragState.startY;
       const maxX = Math.max(12, window.innerWidth - panelWidth - 12);
-      const maxY = Math.max(64, window.innerHeight - panelHeight - 12);
+      const maxY = Math.max(12, window.innerHeight - panelHeight - 12);
 
       setPanelPosition({
         x: clampFloatingPosition(nextX, 12, maxX),
-        y: clampFloatingPosition(nextY, 64, maxY),
+        y: clampFloatingPosition(nextY, 12, maxY),
       });
     };
 
@@ -87,11 +87,11 @@ export function FloatingAssistantPanel({
       const panelWidth = panelRect?.width ?? 960;
       const panelHeight = panelRect?.height ?? 720;
       const maxX = Math.max(12, window.innerWidth - panelWidth - 12);
-      const maxY = Math.max(64, window.innerHeight - panelHeight - 12);
+      const maxY = Math.max(12, window.innerHeight - panelHeight - 12);
 
       setPanelPosition((current) => ({
         x: clampFloatingPosition(current.x, 12, maxX),
-        y: clampFloatingPosition(current.y, 64, maxY),
+        y: clampFloatingPosition(current.y, 12, maxY),
       }));
     };
 
@@ -106,14 +106,14 @@ export function FloatingAssistantPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-40 flex h-[min(820px,calc(100vh-72px))] min-h-[560px] w-[min(1040px,calc(100vw-32px))] min-w-[640px] resize flex-col overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/96 shadow-[0_30px_90px_rgba(15,23,42,0.22)] backdrop-blur-2xl"
+      className="fixed z-40 flex h-[min(900px,calc(100vh-20px))] min-h-[320px] w-[min(1320px,calc(100vw-20px))] min-w-[320px] max-h-[calc(100vh-20px)] max-w-[calc(100vw-20px)] resize flex-col overflow-hidden rounded-[var(--pq-radius-lg)] border border-[var(--pq-border)] bg-[var(--pq-bg-elevated)] shadow-[var(--pq-shadow-dialog)] backdrop-blur-xl"
       style={{
         left: panelPosition.x,
         top: panelPosition.y,
       }}
     >
       <div
-        className="flex cursor-move items-center justify-between gap-3 border-b border-slate-200/80 bg-slate-50/86 px-4 py-3"
+        className="flex cursor-move items-center justify-between gap-3 border-b border-[var(--pq-border)] bg-[var(--pq-surface-2)] px-4 py-3"
         onPointerDown={(event) => {
           if ((event.target as HTMLElement).closest('button')) {
             return;
@@ -130,21 +130,21 @@ export function FloatingAssistantPanel({
         }}
       >
         <div className="min-w-0">
-          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--pq-text-faint)]">
             {l('独立文档问答', 'Detached Document Chat')}
           </div>
-          <div className="mt-1 truncate text-sm font-semibold text-slate-900">{title}</div>
+          <div className="mt-1 truncate text-sm font-semibold text-[var(--pq-text)]">{title}</div>
         </div>
         <button
           type="button"
           onClick={onAttachAssistant}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition-all duration-200 hover:bg-slate-50"
+          className="pq-button px-3 py-2 text-xs"
         >
           {l('停靠回右侧', 'Dock Back')}
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 bg-[linear-gradient(180deg,#fbfdff,#f5f8fc)]">
+      <div className="min-h-0 flex-1 bg-[var(--pq-bg-primary)]">
         <ChatWorkspacePanel
           {...chatProps}
           assistantDetached

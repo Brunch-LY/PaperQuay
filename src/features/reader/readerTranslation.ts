@@ -1,30 +1,11 @@
-import {
-  readLocalTextFile,
-  writeLocalTextFile,
-} from '../../services/desktop';
-import { translateBlocksOpenAICompatible } from '../../services/translation';
 import type {
   OpenAICompatibleTranslateOptions,
   TranslationBlockInput,
   TranslationBlockOutput,
   TranslationMap,
-  WorkspaceItem,
 } from '../../types/reader';
-import {
-  buildMineruTranslationCachePath,
-  buildMineruTranslationCachePathCandidates,
-} from '../../utils/mineruCache';
-import type { TranslationCacheEnvelope } from './readerShared';
 
 export type TranslationTextFn = (zh: string, en: string) => string;
-
-export interface TranslationCacheReadResult {
-  path: string;
-  sourceLanguage: string;
-  targetLanguage: string;
-  translatedAt: string;
-  translations: TranslationMap;
-}
 
 export interface IncrementalTranslationProgress {
   failedBlockCount: number;
@@ -44,6 +25,7 @@ export interface IncrementalTranslationResult {
 
 export interface TranslateBlocksBestEffortOptions {
   apiKey: string;
+  apiMode?: OpenAICompatibleTranslateOptions['apiMode'];
   baseUrl: string;
   batchSize: number;
   blocks: TranslationBlockInput[];
@@ -56,7 +38,7 @@ export interface TranslateBlocksBestEffortOptions {
   sourceLanguage: string;
   targetLanguage: string;
   temperature?: number;
-  translateBatch?: (
+  translateBatch: (
     options: OpenAICompatibleTranslateOptions,
   ) => Promise<TranslationBlockOutput[]>;
 }
@@ -73,7 +55,7 @@ function toErrorMessage(error: unknown): string {
   return '';
 }
 
-function normalizeTranslationMap(translations: TranslationMap | null | undefined): TranslationMap {
+export function normalizeTranslationMap(translations: TranslationMap | null | undefined): TranslationMap {
   const normalized: TranslationMap = {};
 
   if (!translations) {
@@ -192,87 +174,9 @@ export function sanitizeTranslationErrorMessage(
   return message;
 }
 
-export async function readTranslationCache({
-  item,
-  mineruCacheDir,
-  targetLanguage,
-}: {
-  item: WorkspaceItem;
-  mineruCacheDir: string;
-  targetLanguage: string;
-}): Promise<TranslationCacheReadResult | null> {
-  if (!mineruCacheDir.trim()) {
-    return null;
-  }
-
-  const candidatePaths = buildMineruTranslationCachePathCandidates(
-    mineruCacheDir.trim(),
-    item,
-    targetLanguage,
-  );
-
-  for (const candidatePath of candidatePaths) {
-    try {
-      const raw = await readLocalTextFile(candidatePath);
-      const parsed = JSON.parse(raw) as Partial<TranslationCacheEnvelope>;
-      const translations = normalizeTranslationMap(parsed?.translations);
-
-      if (Object.keys(translations).length === 0) {
-        continue;
-      }
-
-      return {
-        path: candidatePath,
-        sourceLanguage: parsed?.sourceLanguage ?? '',
-        targetLanguage: parsed?.targetLanguage ?? targetLanguage,
-        translatedAt: parsed?.translatedAt ?? '',
-        translations,
-      };
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-}
-
-export async function writeTranslationCache({
-  item,
-  mineruCacheDir,
-  sourceLanguage,
-  targetLanguage,
-  translations,
-}: {
-  item: WorkspaceItem;
-  mineruCacheDir: string;
-  sourceLanguage: string;
-  targetLanguage: string;
-  translations: TranslationMap;
-}) {
-  if (!mineruCacheDir.trim()) {
-    return null;
-  }
-
-  const normalizedTranslations = normalizeTranslationMap(translations);
-  const cachePath = buildMineruTranslationCachePath(
-    mineruCacheDir.trim(),
-    item,
-    targetLanguage,
-  );
-  const payload: TranslationCacheEnvelope = {
-    version: 1,
-    sourceLanguage,
-    targetLanguage,
-    translatedAt: new Date().toISOString(),
-    translations: normalizedTranslations,
-  };
-
-  await writeLocalTextFile(cachePath, JSON.stringify(payload, null, 2));
-  return cachePath;
-}
-
 export async function translateBlocksBestEffort({
   apiKey,
+  apiMode,
   baseUrl,
   batchSize,
   blocks,
@@ -285,7 +189,7 @@ export async function translateBlocksBestEffort({
   sourceLanguage,
   targetLanguage,
   temperature,
-  translateBatch = translateBlocksOpenAICompatible,
+  translateBatch,
 }: TranslateBlocksBestEffortOptions): Promise<IncrementalTranslationResult> {
   const requestedBlocks = blocks.filter((block) => block.text.trim().length > 0);
   const requestedBlockIds = buildRequestedBlockIds(requestedBlocks);
@@ -361,6 +265,7 @@ export async function translateBlocksBestEffort({
       try {
         const outputs = await translateBatch({
           apiKey,
+          apiMode,
           baseUrl,
           batchSize: batch.length,
           blocks: batch,

@@ -5,15 +5,24 @@ import {
   useRef,
   useState,
 } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '../../platform/electron/window';
 
-import TabBar from '../../components/tabs/TabBar';
-import { OPEN_PREFERENCES_EVENT, type OpenPreferencesEventDetail } from '../../app/appEvents';
+import {
+  JUMP_TO_NOTE_ANCHOR_EVENT,
+  OPEN_ONBOARDING_EVENT,
+  OPEN_PREFERENCES_EVENT,
+  OPEN_STANDALONE_PDF_EVENT,
+  type JumpToNoteAnchorEventDetail,
+  type OpenPreferencesEventDetail,
+} from '../../app/appEvents';
+import { selectDirectory } from '../../services/desktop';
+import { listLibraryPapers } from '../../services/library';
 import { AppLocaleProvider } from '../../i18n/uiLanguage';
 import { getHomeTabTitle, HOME_TAB_ID, type ReaderTab, useTabsStore } from '../../stores/useTabsStore';
 import { useThemeStore } from '../../stores/useThemeStore';
-import type {
-  ReaderTabBridgeState,
+import {
+  createQaSession,
+  type ReaderTabBridgeState,
 } from './documentReaderShared';
 import type {
   LiteratureCategory,
@@ -22,14 +31,20 @@ import type {
   LiteraturePaperTaskState,
   LibrarySettings,
 } from '../../types/library';
+import type { Note } from '../../types/notes';
 import type {
+  AssistantPanelKey,
+  DocumentChatAttachment,
+  DocumentChatRenderMode,
+  DocumentChatSession,
+  ModelReasoningEffort,
   WorkspaceItem,
 } from '../../types/reader';
 import DocumentReaderTab from './DocumentReaderTab';
 import LiteratureLibraryView from '../literature/LiteratureLibraryView';
+import { emitLibraryMetadataEnrichRequest } from '../literature/libraryEvents';
 import OnboardingGuide from './OnboardingGuide';
 import ReaderPreferencesWindow from './ReaderPreferencesWindow';
-import ReaderShellHeader from './ReaderShellHeader';
 import { useReaderLibraryActions } from './useReaderLibraryActions';
 import { useReaderLibraryPreview } from './useReaderLibraryPreview';
 import { useReaderSettings } from './useReaderSettings';
@@ -53,6 +68,8 @@ import {
   ONBOARDING_SETTINGS_STEP,
   ONBOARDING_WELCOME_CACHE_DIR,
   ONBOARDING_WELCOME_ITEM,
+  createNativeLibraryWorkspaceItem,
+  getModelRuntimeConfig,
   resolveLanguageLabel,
   WELCOME_STANDALONE_ITEM,
   type OnboardingDemoRevealState,
@@ -64,12 +81,41 @@ interface ReaderProps {
   workspaceActive?: boolean;
 }
 
+function resolveNoteAnchorWorkspaceId(detail: JumpToNoteAnchorEventDetail) {
+  const rawTarget = (
+    detail.targetPaperId ||
+    detail.anchorPaperId ||
+    detail.notePaperId ||
+    ''
+  ).trim();
+
+  if (!rawTarget) {
+    return '';
+  }
+
+  if (
+    rawTarget.startsWith('native-library:') ||
+    rawTarget.startsWith('standalone:') ||
+    rawTarget.startsWith('onboarding:')
+  ) {
+    return rawTarget;
+  }
+
+  return `native-library:${rawTarget}`;
+}
+
+function isNoteAnchorJumpForWorkspace(
+  detail: JumpToNoteAnchorEventDetail | null,
+  workspaceId: string,
+) {
+  return Boolean(detail && resolveNoteAnchorWorkspaceId(detail) === workspaceId);
+}
+
 function Reader({ workspaceActive = true }: ReaderProps) {
   const appWindow = getCurrentWindow();
   const tabs = useTabsStore((state) => state.tabs);
   const activeTabId = useTabsStore((state) => state.activeTabId);
   const openTab = useTabsStore((state) => state.openTab);
-  const closeTab = useTabsStore((state) => state.closeTab);
   const setActiveTab = useTabsStore((state) => state.setActiveTab);
   const setHomeTabTitle = useTabsStore((state) => state.setHomeTabTitle);
 
@@ -78,6 +124,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
   const {
     configHydrated,
     l,
+    librarySettings,
     qaModelPresets,
     readerSecrets,
     settings,
@@ -86,6 +133,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     summaryModelPreset,
     syncNativeLibraryZoteroDir,
     translationModelPreset,
+    updateNativeLibrarySettings,
     updateQaModelPreset,
     updateReaderSecret,
     updateSetting,
@@ -111,6 +159,32 @@ function Reader({ workspaceActive = true }: ReaderProps) {
   const [selectedLibraryItemId, setSelectedLibraryItemId] = useState<string | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [readerBridges, setReaderBridges] = useState<Record<string, ReaderTabBridgeState>>({});
+  const [readerAssistantActivePanel, setReaderAssistantActivePanel] = useState<AssistantPanelKey>('chat');
+  const [readerAssistantDetached, setReaderAssistantDetached] = useState(false);
+  const [readerQaSessions, setReaderQaSessions] = useState<DocumentChatSession[]>(() => [
+    createQaSession(settings.uiLanguage),
+  ]);
+  const [readerSelectedQaSessionId, setReaderSelectedQaSessionId] = useState(
+    () => readerQaSessions[0]?.id ?? '',
+  );
+  const [readerQaInput, setReaderQaInput] = useState('');
+  const [readerQaAttachments, setReaderQaAttachments] = useState<DocumentChatAttachment[]>([]);
+  const [readerSelectedQaPresetId, setReaderSelectedQaPresetId] = useState(settings.qaActivePresetId);
+  const [readerQaRagEnabled, setReaderQaRagEnabled] = useState(true);
+  const [readerQaAnswerRenderMode, setReaderQaAnswerRenderMode] = useState<DocumentChatRenderMode>('markdown');
+  const [readerQaReasoningEffort, setReaderQaReasoningEffort] = useState<ModelReasoningEffort>(
+    () => getModelRuntimeConfig(settings, 'qa').reasoningEffort ?? 'auto',
+  );
+  const [readerQaLoading, setReaderQaLoading] = useState(false);
+  const [readerQaError, setReaderQaError] = useState('');
+  const [readerWorkspaceNoteMarkdown, setReaderWorkspaceNoteMarkdown] = useState('');
+  const [readerNotes, setReaderNotes] = useState<Note[]>([]);
+  const [readerActiveNoteId, setReaderActiveNoteId] = useState<string | null>(null);
+  const [readerNotesLoading, setReaderNotesLoading] = useState(false);
+  const [readerNotesSaving, setReaderNotesSaving] = useState(false);
+  const [readerNotesError, setReaderNotesError] = useState('');
+  const [pendingNoteAnchorJump, setPendingNoteAnchorJump] =
+    useState<JumpToNoteAnchorEventDetail | null>(null);
   const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
 
   const {
@@ -144,6 +218,40 @@ function Reader({ workspaceActive = true }: ReaderProps) {
   useEffect(() => {
     setHomeTabTitle(getHomeTabTitle(settings.uiLanguage));
   }, [setHomeTabTitle, settings.uiLanguage]);
+
+  useEffect(() => {
+    const fallbackPresetId =
+      qaModelPresets.find((preset) => preset.id === settings.qaActivePresetId)?.id ??
+      qaModelPresets[0]?.id ??
+      '';
+
+    if (!fallbackPresetId) {
+      return;
+    }
+
+    if (qaModelPresets.some((preset) => preset.id === readerSelectedQaPresetId)) {
+      return;
+    }
+
+    setReaderSelectedQaPresetId(fallbackPresetId);
+  }, [qaModelPresets, readerSelectedQaPresetId, settings.qaActivePresetId]);
+
+  useEffect(() => {
+    if (readerQaSessions.length === 0) {
+      const initialSession = createQaSession(settings.uiLanguage);
+
+      setReaderQaSessions([initialSession]);
+      setReaderSelectedQaSessionId(initialSession.id);
+      return;
+    }
+
+    if (
+      !readerSelectedQaSessionId ||
+      !readerQaSessions.some((session) => session.id === readerSelectedQaSessionId)
+    ) {
+      setReaderSelectedQaSessionId(readerQaSessions[0].id);
+    }
+  }, [readerQaSessions, readerSelectedQaSessionId, settings.uiLanguage]);
 
   const handleOpenPreferences = useCallback(() => {
     setPreferredPreferencesSection(undefined);
@@ -282,6 +390,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     handleOpenStandalonePdf,
     handleSelectMineruCacheDir,
     handleSelectRemotePdfDownloadDir,
+    handleListLlmModels,
     handleTestLlmConnection,
     handleToggleBatchMineruPause,
     handleToggleBatchSummaryPause,
@@ -336,6 +445,21 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     setStatusMessage,
     syncNativeLibraryZoteroDir,
   });
+
+  const handleSelectLibraryStorageDir = useCallback(async () => {
+    const directory = await selectDirectory(
+      l('选择默认文献存储文件夹', 'Select the default paper storage folder'),
+    );
+
+    if (!directory) {
+      return;
+    }
+
+    await updateNativeLibrarySettings(
+      { storageDir: directory },
+      'reader-library-storage-dir',
+    );
+  }, [l, updateNativeLibrarySettings]);
 
   const activeLibraryPreviewState = selectedLibraryItem
     ? libraryPreviewStates[selectedLibraryItem.workspaceId] ?? EMPTY_LIBRARY_PREVIEW_STATE
@@ -407,6 +531,9 @@ function Reader({ workspaceActive = true }: ReaderProps) {
       folderWatchEnabled: false,
       backupEnabled: false,
       preserveOriginalPath: true,
+      openAlexEnabled: true,
+      openAlexApiKey: '',
+      openAlexMailto: '',
     };
     const demoCategories: LiteratureCategory[] = [
       {
@@ -780,6 +907,70 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     void revealOnboardingWelcomeSummary();
   }, [revealOnboardingWelcomeSummary]);
 
+  const openNoteAnchorJump = useCallback(
+    async (detail: JumpToNoteAnchorEventDetail) => {
+      const workspaceId = resolveNoteAnchorWorkspaceId(detail);
+
+      if (!workspaceId) {
+        const message = l('该引用没有关联文献，无法定位', 'This reference is not linked to a paper.');
+        setError(message);
+        setStatusMessage(message);
+        return;
+      }
+
+      const pendingDetail: JumpToNoteAnchorEventDetail = {
+        ...detail,
+        targetPaperId: workspaceId,
+      };
+
+      const existingItem = workspaceItemMap.get(workspaceId);
+      if (existingItem) {
+        setSelectedLibraryItemId(existingItem.workspaceId);
+        openTab(existingItem.workspaceId, existingItem.title);
+        setPendingNoteAnchorJump(pendingDetail);
+        return;
+      }
+
+      if (!workspaceId.startsWith('native-library:')) {
+        const message = l('暂不支持自动打开该引用来源', 'This reference source cannot be opened automatically yet.');
+        setError(message);
+        setStatusMessage(message);
+        return;
+      }
+
+      const paperId = workspaceId.slice('native-library:'.length);
+
+      try {
+        const papers = await listLibraryPapers({ limit: 1000, sortBy: 'updatedAt', sortDirection: 'desc' });
+        const paper = papers.find((item) => item.id === paperId);
+        const workspaceItem = paper ? createNativeLibraryWorkspaceItem(paper) : null;
+
+        if (!workspaceItem) {
+          const message = l('没有找到该引用对应的可打开 PDF', 'No openable PDF was found for this reference.');
+          setError(message);
+          setStatusMessage(message);
+          return;
+        }
+
+        setNativeLibraryItems((current) => [
+          workspaceItem,
+          ...current.filter((item) => item.workspaceId !== workspaceItem.workspaceId),
+        ]);
+        setSelectedLibraryItemId(workspaceItem.workspaceId);
+        openTab(workspaceItem.workspaceId, workspaceItem.title);
+        setPendingNoteAnchorJump(pendingDetail);
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('打开引用来源失败', 'Failed to open the reference source.');
+        setError(message);
+        setStatusMessage(message);
+      }
+    },
+    [l, openTab, setError, setNativeLibraryItems, setSelectedLibraryItemId, setStatusMessage, workspaceItemMap],
+  );
+
   useEffect(() => {
     if (!configHydrated) {
       return undefined;
@@ -793,6 +984,33 @@ function Reader({ workspaceActive = true }: ReaderProps) {
       window.clearTimeout(timer);
     };
   }, [configHydrated, syncNativeLibraryZoteroDir, zoteroLocalDataDir]);
+
+  useEffect(() => {
+    const handleOpenStandalonePdfEvent = () => {
+      void handleOpenStandalonePdf();
+    };
+    const handleOpenOnboardingEvent = () => {
+      handleOpenOnboarding();
+    };
+    const handleJumpToNoteAnchorEvent = (event: Event) => {
+      const detail = (event as CustomEvent<JumpToNoteAnchorEventDetail>).detail;
+      if (!detail?.noteId || !detail.anchorId) {
+        return;
+      }
+
+      void openNoteAnchorJump(detail);
+    };
+
+    window.addEventListener(OPEN_STANDALONE_PDF_EVENT, handleOpenStandalonePdfEvent);
+    window.addEventListener(OPEN_ONBOARDING_EVENT, handleOpenOnboardingEvent);
+    window.addEventListener(JUMP_TO_NOTE_ANCHOR_EVENT, handleJumpToNoteAnchorEvent);
+
+    return () => {
+      window.removeEventListener(OPEN_STANDALONE_PDF_EVENT, handleOpenStandalonePdfEvent);
+      window.removeEventListener(OPEN_ONBOARDING_EVENT, handleOpenOnboardingEvent);
+      window.removeEventListener(JUMP_TO_NOTE_ANCHOR_EVENT, handleJumpToNoteAnchorEvent);
+    };
+  }, [handleOpenOnboarding, handleOpenStandalonePdf, openNoteAnchorJump]);
 
   useEffect(() => {
     if (!workspaceActive) {
@@ -812,36 +1030,8 @@ function Reader({ workspaceActive = true }: ReaderProps) {
 
   return (
     <AppLocaleProvider value={settings.uiLanguage}>
-      <div className="relative h-full min-h-0 overflow-hidden bg-[linear-gradient(180deg,#eef2f8,#e7edf5)] text-slate-900 dark:bg-chrome-950 dark:text-chrome-100">
-        <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-white/70 bg-white/55 shadow-[0_26px_70px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/8 dark:bg-chrome-950 dark:shadow-none">
-          <ReaderShellHeader
-            l={l}
-            themeMode={themeMode}
-            onOpenStandalonePdf={() => void handleOpenStandalonePdf()}
-            onOpenOnboarding={handleOpenOnboarding}
-            onOpenPreferences={handleOpenPreferences}
-            onCycleThemeMode={() => {
-              const next: Record<'light' | 'dark' | 'system', 'light' | 'dark' | 'system'> = {
-                light: 'dark',
-                dark: 'system',
-                system: 'light',
-              };
-              setThemeMode(next[themeMode]);
-            }}
-            onWindowMinimize={handleWindowMinimize}
-            onWindowToggleMaximize={handleWindowToggleMaximize}
-            onWindowClose={handleWindowClose}
-          />
-
-          <div data-tour="reader-tabs">
-            <TabBar
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onSelect={setActiveTab}
-              onClose={closeTab}
-            />
-          </div>
-
+      <div className="relative h-full min-h-0 overflow-hidden bg-[#f4f4f4] text-[#202124] dark:bg-[#121212] dark:text-[#e8e8e8]">
+        <div className="flex h-full min-h-0 flex-col bg-[#f7f7f7] dark:bg-[#181818]">
           <main className="relative min-h-0 flex-1 overflow-hidden">
             <div
               className="h-full min-h-0 overflow-hidden"
@@ -849,9 +1039,9 @@ function Reader({ workspaceActive = true }: ReaderProps) {
             >
               <LiteratureLibraryView
                 onOpenPaper={onboardingOpen ? handleOpenOnboardingDemoPaper : handleOpenNativeLibraryPaper}
-                onOpenSettings={handleOpenPreferences}
                 mineruCacheDir={settings.mineruCacheDir}
                 autoLoadSiblingJson={settings.autoLoadSiblingJson}
+                showReadingHeatmap={settings.showLibraryReadingHeatmap}
                 demoLibrary={onboardingOpen ? onboardingDemoLibrary : null}
                 onRunMineruParse={onboardingOpen ? revealOnboardingWelcomeParse : handleNativeLibraryMineruParse}
                 onTranslatePaper={onboardingOpen ? revealOnboardingWelcomeTranslation : handleNativeLibraryTranslate}
@@ -894,6 +1084,52 @@ function Reader({ workspaceActive = true }: ReaderProps) {
                       settings.uiLanguage,
                       settings.translationTargetLanguage,
                     )}
+                    assistantActivePanel={readerAssistantActivePanel}
+                    setAssistantActivePanel={setReaderAssistantActivePanel}
+                    assistantDetached={readerAssistantDetached}
+                    setAssistantDetached={setReaderAssistantDetached}
+                    qaSessions={readerQaSessions}
+                    setQaSessions={setReaderQaSessions}
+                    selectedQaSessionId={readerSelectedQaSessionId}
+                    setSelectedQaSessionId={setReaderSelectedQaSessionId}
+                    qaInput={readerQaInput}
+                    setQaInput={setReaderQaInput}
+                    qaAttachments={readerQaAttachments}
+                    setQaAttachments={setReaderQaAttachments}
+                    selectedQaPresetId={readerSelectedQaPresetId}
+                    setSelectedQaPresetId={setReaderSelectedQaPresetId}
+                    qaRagEnabled={readerQaRagEnabled}
+                    setQaRagEnabled={setReaderQaRagEnabled}
+                    qaAnswerRenderMode={readerQaAnswerRenderMode}
+                    setQaAnswerRenderMode={setReaderQaAnswerRenderMode}
+                    qaReasoningEffort={readerQaReasoningEffort}
+                    setQaReasoningEffort={setReaderQaReasoningEffort}
+                    qaLoading={readerQaLoading}
+                    setQaLoading={setReaderQaLoading}
+                    qaError={readerQaError}
+                    setQaError={setReaderQaError}
+                    workspaceNoteMarkdown={readerWorkspaceNoteMarkdown}
+                    setWorkspaceNoteMarkdown={setReaderWorkspaceNoteMarkdown}
+                    notes={readerNotes}
+                    setNotes={setReaderNotes}
+                    activeNoteId={readerActiveNoteId}
+                    setActiveNoteId={setReaderActiveNoteId}
+                    notesLoading={readerNotesLoading}
+                    setNotesLoading={setReaderNotesLoading}
+                    notesSaving={readerNotesSaving}
+                    setNotesSaving={setReaderNotesSaving}
+                    notesError={readerNotesError}
+                    setNotesError={setReaderNotesError}
+                    pendingNoteAnchorJump={
+                      isNoteAnchorJumpForWorkspace(pendingNoteAnchorJump, item.workspaceId)
+                        ? pendingNoteAnchorJump
+                        : null
+                    }
+                    onPendingNoteAnchorJumpHandled={(requestId) => {
+                      setPendingNoteAnchorJump((current) =>
+                        !requestId || current?.requestId === requestId ? null : current,
+                      );
+                    }}
                     translationSnapshot={libraryTranslationSnapshots[item.workspaceId] ?? null}
                     onboardingWorkspaceStage={
                       tab.id === activeTabId && tab.id === onboardingDemoTabId
@@ -924,6 +1160,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onClose={() => setPreferencesOpen(false)}
           preferredSection={preferredPreferencesSection}
           settings={settings}
+          librarySettings={librarySettings}
           zoteroLocalDataDir={zoteroLocalDataDir}
           mineruApiToken={mineruApiToken}
           translationApiKey={translationApiKey}
@@ -936,6 +1173,8 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           translating={activeReaderBridge?.translating ?? false}
           translatedCount={activeReaderBridge?.translatedCount ?? 0}
           onSettingChange={updateSetting}
+          onNativeLibrarySettingsChange={(patch) => void updateNativeLibrarySettings(patch)}
+          onSelectLibraryStorageDir={() => void handleSelectLibraryStorageDir()}
           onZoteroLocalDataDirChange={setZoteroLocalDataDir}
           onMineruApiTokenChange={(value) => updateReaderSecret('mineruApiToken', value)}
           onTranslationApiKeyChange={(value) => updateReaderSecret('translationApiKey', value)}
@@ -947,8 +1186,10 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onSelectLocalZoteroDir={() => void handleSelectLocalZoteroDir()}
           onReloadLocalZotero={() => void handleReloadLocalZotero()}
           onImportLocalZotero={() => void handleImportLocalZoteroToNativeLibrary()}
+          onEnrichAllLibraryMetadata={emitLibraryMetadataEnrichRequest}
           onSelectMineruCacheDir={() => void handleSelectMineruCacheDir()}
           onSelectRemotePdfDownloadDir={() => void handleSelectRemotePdfDownloadDir()}
+          onListLlmModels={handleListLlmModels}
           onTestLlmConnection={handleTestLlmConnection}
           onQaModelPresetAdd={addQaModelPreset}
           onQaModelPresetRemove={removeQaModelPreset}

@@ -14,6 +14,24 @@ export type PdfSource =
     }
   | null;
 
+export interface PdfScrollPosition {
+  sourceKey: string;
+  top: number;
+  left: number;
+  page: number;
+  pageOffsetTop: number;
+  pageOffsetRatio?: number;
+  pageHeight?: number;
+  updatedAt: number;
+}
+
+export interface PdfReadingHeatmap {
+  sourceKey: string;
+  bins: number[];
+  totalMs: number;
+  updatedAt: number;
+}
+
 export type MineruKnownBlockType =
   | "paragraph"
   | "title"
@@ -92,10 +110,13 @@ export type SummarySourceMode = "pdf-text" | "mineru-markdown";
 
 export type QaSourceMode = "pdf-text" | "mineru-markdown";
 
+export type OpenAICompatibleApiMode = "chat_completions" | "responses";
+
 export interface OpenAICompatibleTranslateOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode?: OpenAICompatibleApiMode;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
   sourceLanguage: string;
@@ -110,6 +131,7 @@ export interface OpenAICompatibleTranslateTextOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode?: OpenAICompatibleApiMode;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
   sourceLanguage: string;
@@ -122,6 +144,7 @@ export interface OpenAICompatibleTestOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode?: OpenAICompatibleApiMode;
 }
 
 export interface OpenAICompatibleTestResult {
@@ -131,6 +154,22 @@ export interface OpenAICompatibleTestResult {
   responseModel?: string;
   latencyMs: number;
   message: string;
+}
+
+export interface OpenAICompatibleModelListOptions {
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface OpenAICompatibleModelInfo {
+  id: string;
+  ownedBy?: string;
+  created?: number;
+}
+
+export interface OpenAICompatibleModelListResult {
+  endpoint: string;
+  models: OpenAICompatibleModelInfo[];
 }
 
 export type RagSourceMode = "off" | "mineru-markdown" | "pdf-text" | "hybrid";
@@ -202,10 +241,11 @@ export interface QaModelPreset {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode: OpenAICompatibleApiMode;
   labelCustomized?: boolean;
 }
 
-export type ModelReasoningEffort = "auto" | "low" | "medium" | "high";
+export type ModelReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ModelRuntimeRole =
   | "translation"
@@ -314,6 +354,8 @@ export interface DocumentChatCitation {
   previewText?: string;
 }
 
+export type DocumentChatRenderMode = "markdown" | "html";
+
 export interface DocumentChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -321,6 +363,7 @@ export interface DocumentChatMessage {
   createdAt: number;
   modelId?: string;
   modelLabel?: string;
+  renderMode?: DocumentChatRenderMode;
   qaContext?: DocumentChatQaContext;
   citations?: DocumentChatCitation[];
   attachments?: DocumentChatAttachment[];
@@ -355,6 +398,14 @@ export interface TextSelectionPayload {
   anchorClientX: number;
   anchorClientY: number;
   placement: TextSelectionPlacement;
+  pdfLocation?: {
+    pageNumber: number;
+    boundingRect?: { x: number; y: number; width: number; height: number };
+    bbox?: BBox;
+    bboxCoordinateSystem?: BBoxCoordinateSystem;
+    bboxPageSize?: BBoxPageSize;
+    highlightColor?: string;
+  };
 }
 
 export interface SelectedExcerpt {
@@ -364,12 +415,14 @@ export interface SelectedExcerpt {
   anchorClientX?: number;
   anchorClientY?: number;
   placement?: TextSelectionPlacement;
+  pdfLocation?: TextSelectionPayload["pdfLocation"];
 }
 
 export interface OpenAICompatibleSummaryOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode?: OpenAICompatibleApiMode;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
   responseLanguage?: string;
@@ -385,6 +438,8 @@ export interface OpenAICompatibleQaOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  apiMode?: OpenAICompatibleApiMode;
+  answerRenderMode?: DocumentChatRenderMode;
   temperature?: number;
   reasoningEffort?: ModelReasoningEffort;
   responseLanguage?: string;
@@ -447,6 +502,8 @@ export interface ReaderSettings {
   localRagTopK: number;
   ragSourceMode: RagSourceMode;
   libraryBatchConcurrency: number;
+  showLibraryReadingHeatmap: boolean;
+  enablePdfReadingHeatmap: boolean;
   autoTranslateSelection: boolean;
   smoothScroll: boolean;
   compactReading: boolean;
@@ -507,6 +564,8 @@ export interface PaperHistoryRecord {
   lastOpenedAt: number;
   lastUpdatedAt: number;
   lastPdfPath: string;
+  pdfScrollPositions: Record<string, PdfScrollPosition>;
+  pdfReadingHeatmaps: Record<string, PdfReadingHeatmap>;
   lastMineruPath: string;
   lastActiveBlockId: string | null;
   workspaceStage: WorkspaceStage;

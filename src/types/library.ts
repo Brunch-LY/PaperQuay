@@ -10,6 +10,9 @@ export interface LibrarySettings {
   folderWatchEnabled: boolean;
   backupEnabled: boolean;
   preserveOriginalPath: boolean;
+  openAlexEnabled: boolean;
+  openAlexApiKey: string;
+  openAlexMailto: string;
 }
 
 export interface LiteratureAuthor {

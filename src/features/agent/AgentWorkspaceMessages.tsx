@@ -1,20 +1,247 @@
+import { useMemo, useState } from 'react';
 import {
   Bot,
   Camera,
+  BookOpen,
+  ChevronDown,
+  Check,
   Clipboard,
   FileText,
   ImagePlus,
+  Loader2,
   Paperclip,
   PlayCircle,
   RotateCcw,
+  Search,
   User,
   X,
 } from 'lucide-react';
 import type { LibraryAgentPlan } from '../../services/libraryAgent';
+import type { LiteraturePaper } from '../../types/library';
+import type { UiLanguage } from '../../types/reader';
 import type { AgentChatMessage, AgentToolCallView } from './AgentWorkspace.types';
 import AgentMarkdown from './AgentMarkdown';
 import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
 import { formatFileSize } from '../../utils/files';
+
+function PaperSelectionRequestCard({
+  activeSessionRunning,
+  formatPaperMeta,
+  l,
+  loading,
+  locale,
+  message,
+  onContinueWithSelectedPapers,
+  papers,
+}: {
+  activeSessionRunning: boolean;
+  formatPaperMeta: (paper: LiteraturePaper, locale: UiLanguage) => string;
+  l: (zh: string, en: string) => string;
+  loading: boolean;
+  locale: UiLanguage;
+  message: AgentChatMessage;
+  onContinueWithSelectedPapers: (instruction: string, paperIds: string[]) => void;
+  papers: LiteraturePaper[];
+}) {
+  const request = message.paperSelectionRequest;
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const [localSelectedPaperIds, setLocalSelectedPaperIds] = useState<Set<string>>(() => new Set());
+  const visiblePapers = useMemo(() => {
+    const normalizedQuery = localSearchQuery.trim().toLocaleLowerCase();
+
+    if (!normalizedQuery) {
+      return papers;
+    }
+
+    return papers.filter((paper) =>
+      [
+        paper.title,
+        paper.year,
+        paper.publication,
+        paper.doi,
+        paper.url,
+        paper.abstractText,
+        paper.authors.map((author) => author.name).join(' '),
+        paper.keywords.join(' '),
+        paper.tags.map((tag) => tag.name).join(' '),
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    );
+  }, [localSearchQuery, papers]);
+
+  if (!request) {
+    return null;
+  }
+
+  const toggleLocalPaper = (paperId: string) => {
+    setLocalSelectedPaperIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(paperId)) {
+        next.delete(paperId);
+      } else {
+        next.add(paperId);
+      }
+
+      return next;
+    });
+  };
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-[var(--pq-radius-lg)] border border-[var(--pq-border)] bg-[var(--pq-surface-1)]">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--pq-border-subtle)] px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--pq-text)]">
+            <BookOpen className="h-4 w-4 text-[var(--pq-accent)]" strokeWidth={1.9} />
+            {l('选择要提供给模型的论文', 'Choose papers for the model')}
+            <span className="rounded-full bg-[var(--pq-accent-soft)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--pq-accent)]">
+              {request.mode === 'pdf-text' ? 'PDF text' : 'Summary'}
+            </span>
+          </div>
+          <div className="mt-1 max-w-2xl text-xs leading-5 text-[var(--pq-text-muted)]">
+            {request.reason}
+          </div>
+        </div>
+        <div className="text-xs font-semibold text-[var(--pq-text-faint)]">
+          {localSelectedPaperIds.size}/{papers.length}
+        </div>
+      </div>
+
+      <div className="p-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <label className="pq-input flex min-w-[220px] flex-1 items-center gap-2 px-3 py-2 text-sm text-[var(--pq-text-muted)]">
+            <Search className="h-4 w-4 shrink-0 text-[var(--pq-text-faint)]" strokeWidth={2} />
+            <input
+              value={localSearchQuery}
+              onChange={(event) => setLocalSearchQuery(event.target.value)}
+              placeholder={l('搜索标题、作者、年份、标签...', 'Search title, author, year, tags...')}
+              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--pq-text)] outline-none placeholder:text-[var(--pq-text-faint)]"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => setLocalSelectedPaperIds(new Set(visiblePapers.map((paper) => paper.id)))}
+            disabled={activeSessionRunning || visiblePapers.length === 0}
+            className="pq-button px-3 py-2 text-xs disabled:opacity-50"
+          >
+            {l('选择当前结果', 'Select Results')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setLocalSelectedPaperIds(new Set())}
+            disabled={activeSessionRunning || localSelectedPaperIds.size === 0}
+            className="pq-button px-3 py-2 text-xs disabled:opacity-50"
+          >
+            {l('清空', 'Clear')}
+          </button>
+        </div>
+
+        <div
+          data-wheel-scroll-target
+          className="max-h-72 overflow-y-auto overscroll-y-contain rounded-[var(--pq-radius-md)] border border-[var(--pq-border-subtle)] bg-[var(--pq-surface)]"
+        >
+          {loading ? (
+            <div className="flex h-32 items-center justify-center text-sm text-[var(--pq-text-muted)]">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={2} />
+              {l('正在加载文库...', 'Loading library...')}
+            </div>
+          ) : papers.length === 0 ? (
+            <div className="p-4 text-sm leading-6 text-[var(--pq-text-muted)]">
+              {l('当前文库为空。先导入 PDF 后，再把论文提供给 Agent。', 'The library is empty. Import PDFs before providing papers to the Agent.')}
+            </div>
+          ) : visiblePapers.length === 0 ? (
+            <div className="p-4 text-sm leading-6 text-[var(--pq-text-muted)]">
+              {l('没有匹配的论文。换一个关键词再试。', 'No matching papers. Try another keyword.')}
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--pq-border-subtle)]">
+              {visiblePapers.map((paper) => {
+                const selected = localSelectedPaperIds.has(paper.id);
+
+                return (
+                  <button
+                    key={paper.id}
+                    type="button"
+                    onClick={() => toggleLocalPaper(paper.id)}
+                    disabled={activeSessionRunning}
+                    className={[
+                      'flex w-full items-center gap-3 px-3 py-2.5 text-left transition disabled:opacity-60',
+                      selected ? 'bg-[var(--pq-accent-soft)]' : 'hover:bg-[var(--pq-surface-2)]',
+                    ].join(' ')}
+                  >
+                    <span
+                      className={[
+                        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                        selected
+                          ? 'border-[var(--pq-accent)] bg-[var(--pq-accent)] text-white'
+                          : 'border-[var(--pq-border-strong)] bg-[var(--pq-surface)] text-transparent',
+                      ].join(' ')}
+                    >
+                      <Check className="h-3.5 w-3.5" strokeWidth={2.2} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-[var(--pq-text)]">
+                        {paper.title}
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-[var(--pq-text-muted)]">
+                        {formatPaperMeta(paper, locale) || l('暂无元数据', 'No metadata')}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-[var(--pq-text-faint)]">
+            {l('选中后会继续同一条任务，不会立即修改本地文库。', 'After selection, the same task continues. Local library writes still require approval.')}
+          </div>
+          <button
+            type="button"
+            onClick={() => onContinueWithSelectedPapers(request.instruction, [...localSelectedPaperIds])}
+            disabled={activeSessionRunning || localSelectedPaperIds.size === 0}
+            className="pq-button-primary px-4 py-2 text-sm disabled:opacity-50"
+          >
+            <PlayCircle className="h-4 w-4" />
+            {l('继续', 'Continue')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssistantThinkingBlock({
+  l,
+  thinking,
+}: {
+  l: (zh: string, en: string) => string;
+  thinking: string;
+}) {
+  if (!thinking.trim()) {
+    return null;
+  }
+
+  return (
+    <details open className="group mt-3 rounded-2xl border border-[var(--pq-border-subtle)] bg-[var(--pq-surface-1)] px-3 py-2">
+      <summary className="flex select-none items-center gap-1.5 text-xs font-medium text-[var(--pq-text-muted)] outline-none">
+        <span>{l('思考过程', 'Reasoning')}</span>
+        <ChevronDown
+          className="h-3.5 w-3.5 text-[var(--pq-text-faint)] transition-transform group-open:rotate-180"
+          strokeWidth={2}
+        />
+      </summary>
+      <div className="mt-2 border-l border-[var(--pq-border)] pl-3 text-[13px] leading-6 text-[var(--pq-text-muted)]">
+        <div className="whitespace-pre-wrap">{thinking}</div>
+      </div>
+    </details>
+  );
+}
 
 export function UserMessageCard({ message }: { message: AgentChatMessage }) {
   return (
@@ -62,6 +289,7 @@ export function AssistantMessageCard({
   composerValue,
   expandedStepKeys,
   expandedToolIds,
+  formatPaperMeta,
   handleAgentChoice,
   handleModifyPreviousParameters,
   handlePreviewOnly,
@@ -69,15 +297,19 @@ export function AssistantMessageCard({
   isActivePlan,
   l,
   lastInstruction,
+  loading,
+  locale,
   localizedToolLabel,
   message,
   onApplyPlan,
   onCancelPlan,
   onCopyToolParameters,
+  onContinueWithSelectedPapers,
   onInspectPlanItem,
   onTogglePlanItem,
   onToggleStep,
   onToggleTool,
+  papers,
   setStatusMessage,
 }: {
   activeSessionRunning: boolean;
@@ -86,22 +318,27 @@ export function AssistantMessageCard({
   composerValue: string;
   expandedStepKeys: Set<string>;
   expandedToolIds: Set<string>;
-  handleAgentChoice: (instruction: string) => void;
+  formatPaperMeta: (paper: LiteraturePaper, locale: UiLanguage) => string;
+  handleAgentChoice: (instruction: string, paperScopeIds?: string[]) => void;
   handleModifyPreviousParameters: () => void;
   handlePreviewOnly: () => void;
   handleRetryAgent: (instruction: string) => void;
   isActivePlan: boolean;
   l: (zh: string, en: string) => string;
   lastInstruction: string;
+  loading: boolean;
+  locale: UiLanguage;
   localizedToolLabel: (tool: LibraryAgentPlan['tool']) => string;
   message: AgentChatMessage;
   onApplyPlan: () => void;
   onCancelPlan: () => void;
   onCopyToolParameters: (toolCall: AgentToolCallView) => void;
+  onContinueWithSelectedPapers: (instruction: string, paperIds: string[]) => void;
   onInspectPlanItem: (itemId: string, paperTitle: string) => void;
   onTogglePlanItem: (itemId: string) => void;
   onToggleStep: (stepKey: string) => void;
   onToggleTool: (toolCallId: string) => void;
+  papers: LiteraturePaper[];
   setStatusMessage: (message: string) => void;
 }) {
   const messagePlan = message.plan;
@@ -125,6 +362,9 @@ export function AssistantMessageCard({
                 </span>
               ) : null}
             </div>
+            {message.thinking ? (
+              <AssistantThinkingBlock l={l} thinking={message.thinking} />
+            ) : null}
             <div className="mt-3">
               <AgentMarkdown content={message.content} />
             </div>
@@ -134,7 +374,7 @@ export function AssistantMessageCard({
                   <button
                     key={choice.id}
                     type="button"
-                    onClick={() => handleAgentChoice(choice.instruction)}
+                    onClick={() => handleAgentChoice(choice.instruction, message.paperScopeIds)}
                     disabled={activeSessionRunning}
                     className="group rounded-[20px] border border-slate-200 bg-slate-50/80 px-4 py-3 text-left transition hover:border-teal-200 hover:bg-teal-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-950/70 dark:hover:border-teal-300/30 dark:hover:bg-teal-300/10"
                   >
@@ -168,6 +408,19 @@ export function AssistantMessageCard({
             </div>
           ) : null}
         </div>
+
+        {message.paperSelectionRequest ? (
+          <PaperSelectionRequestCard
+            activeSessionRunning={activeSessionRunning}
+            formatPaperMeta={formatPaperMeta}
+            l={l}
+            loading={loading}
+            locale={locale}
+            message={message}
+            onContinueWithSelectedPapers={onContinueWithSelectedPapers}
+            papers={papers}
+          />
+        ) : null}
 
         {message.trace ? (
           <div className="mt-5">

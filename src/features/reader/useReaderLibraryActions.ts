@@ -9,12 +9,17 @@ import {
   selectDirectory,
   selectLocalPdfSource,
 } from '../../services/desktop';
-import { testOpenAICompatibleChat } from '../../services/llm';
+import {
+  listOpenAICompatibleModels,
+  testOpenAICompatibleChat,
+} from '../../services/llm';
 import {
   extractTranslatableMarkdownFromMineruBlock,
 } from '../../services/mineru';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
+import { translateBlocksOpenAICompatible } from '../../services/translation';
 import type {
+  OpenAICompatibleModelListResult,
   OpenAICompatibleTestResult,
   QaModelPreset,
   TranslationMap,
@@ -39,10 +44,10 @@ import {
 } from './readerLibraryPreview';
 import {
   mergeReaderTranslations,
-  readTranslationCache,
   sanitizeTranslationErrorMessage,
   translateBlocksBestEffort,
 } from './readerTranslation';
+import { readTranslationCache } from './readerTranslationCache';
 import type { UseReaderLibraryActionsOptions } from './readerLibraryActionTypes';
 import { useReaderLibraryBatchActions } from './useReaderLibraryBatchActions';
 
@@ -64,6 +69,7 @@ export interface UseReaderLibraryActionsResult {
   handleOpenStandalonePdf: () => Promise<void>;
   handleSelectMineruCacheDir: () => Promise<void>;
   handleSelectRemotePdfDownloadDir: () => Promise<void>;
+  handleListLlmModels: (preset: QaModelPreset) => Promise<OpenAICompatibleModelListResult>;
   handleTestLlmConnection: (preset?: QaModelPreset) => Promise<OpenAICompatibleTestResult>;
   handleToggleBatchMineruPause: () => void;
   handleToggleBatchSummaryPause: () => void;
@@ -508,6 +514,7 @@ export function useReaderLibraryActions({
 
         const result = await translateBlocksBestEffort({
           apiKey: translationModelPreset.apiKey.trim(),
+          apiMode: translationModelPreset.apiMode,
           baseUrl: translationModelPreset.baseUrl,
           batchSize,
           blocks: blocksToTranslate,
@@ -559,6 +566,7 @@ export function useReaderLibraryActions({
           sourceLanguage: settings.translationSourceLanguage,
           targetLanguage: settings.translationTargetLanguage,
           temperature: getModelRuntimeConfig(settings, 'translation').temperature,
+          translateBatch: translateBlocksOpenAICompatible,
         });
         const translations = result.translations;
 
@@ -945,6 +953,7 @@ export function useReaderLibraryActions({
           baseUrl: targetPreset.baseUrl,
           apiKey: targetPreset.apiKey.trim(),
           model: targetPreset.model,
+          apiMode: targetPreset.apiMode,
         });
 
         if (result.ok) {
@@ -977,6 +986,49 @@ export function useReaderLibraryActions({
     [l, setError, setStatusMessage, translationModelPreset],
   );
 
+  const handleListLlmModels = useCallback(
+    async (preset: QaModelPreset): Promise<OpenAICompatibleModelListResult> => {
+      setError('');
+      setStatusMessage(l('正在读取模型列表...', 'Loading model list...'));
+
+      try {
+        if (!preset.baseUrl.trim()) {
+          throw new Error(
+            l(
+              '请先填写模型服务 Base URL，再读取模型列表。',
+              'Fill in the model service Base URL before loading the model list.',
+            ),
+          );
+        }
+
+        const result = await listOpenAICompatibleModels({
+          baseUrl: preset.baseUrl,
+          apiKey: preset.apiKey.trim(),
+        });
+
+        setError('');
+        setStatusMessage(
+          l(
+            `已读取 ${result.models.length} 个模型`,
+            `Loaded ${result.models.length} models`,
+          ),
+        );
+
+        return result;
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('读取模型列表失败', 'Failed to load the model list');
+
+        setError(message);
+        setStatusMessage(message);
+        throw nextError;
+      }
+    },
+    [l, setError, setStatusMessage],
+  );
+
   return {
     batchMineruPaused,
     batchMineruProgress,
@@ -995,6 +1047,7 @@ export function useReaderLibraryActions({
     handleOpenStandalonePdf,
     handleSelectMineruCacheDir,
     handleSelectRemotePdfDownloadDir,
+    handleListLlmModels,
     handleTestLlmConnection,
     handleToggleBatchMineruPause,
     handleToggleBatchSummaryPause,

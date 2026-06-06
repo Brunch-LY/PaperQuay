@@ -8,9 +8,10 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
-import { localPathExists, selectDirectory } from '../../services/desktop';
+import { localPathExists } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
 import { extractLocalPdfMetadataPreview } from '../../services/pdfMetadata';
 import {
@@ -34,10 +35,9 @@ import {
   detectLocalZoteroDataDir,
   listLocalZoteroCollectionItems,
   listLocalZoteroCollections,
-  selectLocalZoteroDataDir,
+  listLocalZoteroLibraryItems,
 } from '../../services/zotero';
 import type {
-  ImportPdfMetadata,
   LibrarySettings,
   LiteratureCategory,
   LiteraturePaper,
@@ -45,25 +45,14 @@ import type {
   UpdatePaperRequest,
 } from '../../types/library';
 import type {
-  MetadataLookupResult,
-} from '../../types/metadata';
-import type {
   ZoteroCollection,
   ZoteroLibraryItem,
-  WorkspaceItem,
 } from '../../types/reader';
-import {
-  buildMineruCachePathCandidates,
-  guessSiblingJsonPath,
-  guessSiblingMarkdownPath,
-} from '../../utils/mineruCache';
 import { getFileNameFromPath } from '../../utils/text';
 import ImportConfirmationDialog from './components/ImportConfirmationDialog';
 import LibraryConfirmDialog from './components/LibraryConfirmDialog';
-import LibrarySettingsDialog from './components/LibrarySettingsDialog';
 import LibraryTextInputDialog from './components/LibraryTextInputDialog';
 import {
-  canAutoReplaceTitle,
   mergeLocalPdfMetadataIntoDraft,
   mergeRemoteMetadataIntoDraft,
   titleFromPdfPath,
@@ -76,32 +65,50 @@ import LiteraturePaperList, {
 } from './components/LiteraturePaperList';
 import { flattenCategories, paperPdfPath } from './literatureUi';
 import {
+  filterZoteroItemsOutsideCollections,
+  uniqueZoteroItems,
+} from './zoteroImport';
+import {
   emitLibrarySettingsUpdated,
+  LIBRARY_METADATA_ENRICH_REQUEST_EVENT,
   LIBRARY_SETTINGS_UPDATED_EVENT,
   ZOTERO_IMPORT_REQUEST_EVENT,
   type LibrarySettingsUpdatedEventDetail,
   type ZoteroImportRequestEventDetail,
 } from './libraryEvents';
-import { useTauriPdfDrop } from './useTauriPdfDrop';
+import { useDesktopPdfDrop } from './useDesktopPdfDrop';
+import {
+  categorySignature,
+  clampDetailsPanelWidth,
+  clampFloatingMenuPosition,
+  DETAILS_PANEL_DEFAULT_WIDTH,
+  DETAILS_PANEL_WIDTH_STORAGE_KEY,
+  applyPaperMineruStatusUpdate,
+  applyPaperSummaryStatusUpdate,
+  buildImportDraftsFromPdfPaths,
+  buildInitialPaperStatuses,
+  filterDemoPapers,
+  hasMineruOutputForPaper,
+  loadDetailsPanelWidth,
+  markPaperStatusesCheckingMineru,
+  metadataFromDraft,
+  metadataFromZoteroItem,
+  metadataUpdateForPaper,
+  reorderPaperList,
+  resolveSelectedPaperId,
+  type LiteratureLibraryDemoState,
+} from './literatureLibraryUtils';
 
 interface LiteratureLibraryViewProps {
   onOpenPaper: (paper: LiteraturePaper) => void;
-  onOpenSettings: () => void;
   mineruCacheDir?: string;
   autoLoadSiblingJson?: boolean;
+  showReadingHeatmap?: boolean;
   demoLibrary?: LiteratureLibraryDemoState | null;
   paperActionStates?: Record<string, LiteraturePaperTaskState | null | undefined>;
   onRunMineruParse?: (paper: LiteraturePaper) => void;
   onTranslatePaper?: (paper: LiteraturePaper) => void;
   onGenerateSummary?: (paper: LiteraturePaper) => void;
-}
-
-interface LiteratureLibraryDemoState {
-  settings: LibrarySettings;
-  categories: LiteratureCategory[];
-  papers: LiteraturePaper[];
-  statusMessage: string;
-  paperStatuses?: Record<string, LiteraturePaperListStatus>;
 }
 
 interface NativeSummaryUpdatedEventDetail {
@@ -114,67 +121,10 @@ interface NativeMineruStatusUpdatedEventDetail {
   mineruParsed: boolean;
 }
 
-function filterDemoPapers(
-  demoLibrary: LiteratureLibraryDemoState,
-  categoryId: string | null,
-  searchQuery: string,
-): LiteraturePaper[] {
-  const category = demoLibrary.categories.find((item) => item.id === categoryId);
-  const query = searchQuery.trim().toLocaleLowerCase();
-
-  return demoLibrary.papers.filter((paper) => {
-    if (category?.systemKey === 'favorites' && !paper.isFavorite) {
-      return false;
-    }
-
-    if (category?.systemKey === 'uncategorized' && paper.categoryIds.length > 0) {
-      return false;
-    }
-
-    if (category && !category.isSystem && !paper.categoryIds.includes(category.id)) {
-      return false;
-    }
-
-    if (!query) {
-      return true;
-    }
-
-    return [
-      paper.title,
-      paper.publication ?? '',
-      paper.abstractText ?? '',
-      paper.authors.map((author) => author.name).join(' '),
-      paper.keywords.join(' '),
-      paper.tags.map((tag) => tag.name).join(' '),
-    ].some((value) => value.toLocaleLowerCase().includes(query));
-  });
-}
-
 interface PaperContextMenuState {
   paper: LiteraturePaper;
   x: number;
   y: number;
-}
-
-const DETAILS_PANEL_WIDTH_STORAGE_KEY = 'paperquay-literature-details-width-v1';
-const DETAILS_PANEL_DEFAULT_WIDTH = 420;
-const DETAILS_PANEL_MIN_WIDTH = 320;
-const DETAILS_PANEL_MAX_WIDTH = 760;
-
-function clampDetailsPanelWidth(width: number): number {
-  return Math.max(DETAILS_PANEL_MIN_WIDTH, Math.min(DETAILS_PANEL_MAX_WIDTH, Math.round(width)));
-}
-
-function loadDetailsPanelWidth(): number {
-  try {
-    const rawValue = Number(localStorage.getItem(DETAILS_PANEL_WIDTH_STORAGE_KEY));
-
-    return Number.isFinite(rawValue)
-      ? clampDetailsPanelWidth(rawValue)
-      : DETAILS_PANEL_DEFAULT_WIDTH;
-  } catch {
-    return DETAILS_PANEL_DEFAULT_WIDTH;
-  }
 }
 
 type CategoryNameDialogState =
@@ -185,187 +135,11 @@ type LibraryConfirmDialogState =
   | { kind: 'delete-category'; category: LiteratureCategory }
   | { kind: 'delete-paper'; paper: LiteraturePaper; deleteFiles: boolean };
 
-function splitAuthors(value: string): string[] {
-  return value
-    .split(/[;,，；]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function metadataFromDraft(draft: ImportDraftItem): ImportPdfMetadata {
-  return {
-    title: draft.title.trim() || titleFromPdfPath(draft.path),
-    authors: splitAuthors(draft.authors),
-    year: draft.year.trim() || null,
-    publication: draft.publication.trim() || null,
-    doi: draft.doi.trim() || null,
-  };
-}
-
-function metadataFromZoteroItem(item: ZoteroLibraryItem): ImportPdfMetadata {
-  const year = item.year.trim();
-
-  return {
-    title: item.title.trim() || item.attachmentFilename || item.itemKey,
-    authors: splitAuthors(item.creators).filter((author) => author !== 'Unknown Authors'),
-    year: year && year !== '未知年份' && year !== 'Unknown Year' ? year : null,
-    publication: null,
-    doi: null,
-  };
-}
-
-function categorySignature(name: string, parentId: string | null): string {
-  return `${parentId ?? 'root'}::${name.trim().toLocaleLowerCase()}`;
-}
-
-function reorderPaperList(
-  papers: LiteraturePaper[],
-  draggedPaperId: string,
-  targetPaperId: string,
-  placement: 'before' | 'after',
-): LiteraturePaper[] {
-  if (draggedPaperId === targetPaperId) {
-    return papers;
-  }
-
-  const draggedPaper = papers.find((paper) => paper.id === draggedPaperId);
-
-  if (!draggedPaper) {
-    return papers;
-  }
-
-  const withoutDragged = papers.filter((paper) => paper.id !== draggedPaperId);
-  const targetIndex = withoutDragged.findIndex((paper) => paper.id === targetPaperId);
-
-  if (targetIndex < 0) {
-    return papers;
-  }
-
-  const insertIndex = placement === 'after' ? targetIndex + 1 : targetIndex;
-  const nextPapers = [...withoutDragged];
-  nextPapers.splice(insertIndex, 0, draggedPaper);
-
-  return nextPapers;
-}
-
-function metadataUpdateForPaper(
-  paper: LiteraturePaper,
-  metadata: MetadataLookupResult,
-): UpdatePaperRequest | null {
-  const request: UpdatePaperRequest = {
-    paperId: paper.id,
-  };
-  let changed = false;
-  const pdfPath = paperPdfPath(paper);
-  const assignString = <Key extends keyof UpdatePaperRequest>(
-    key: Key,
-    currentValue: string | null,
-    nextValue: string | null | undefined,
-  ) => {
-    const normalized = nextValue?.trim();
-
-    if (!normalized || normalized === currentValue?.trim()) {
-      return;
-    }
-
-    if (
-      key === 'title' &&
-      currentValue?.trim() &&
-      (!pdfPath || !canAutoReplaceTitle(currentValue, pdfPath))
-    ) {
-      return;
-    }
-
-    (request[key] as string | null | undefined) = normalized;
-    changed = true;
-  };
-
-  assignString('title', paper.title, metadata.title);
-  assignString('year', paper.year, metadata.year);
-  assignString('publication', paper.publication, metadata.publication);
-  assignString('doi', paper.doi, metadata.doi);
-  assignString('url', paper.url, metadata.url);
-  assignString('abstractText', paper.abstractText, metadata.abstractText);
-
-  if (metadata.authors.length > 0) {
-    const currentAuthors = paper.authors.map((author) => author.name.trim()).filter(Boolean);
-    const nextAuthors = metadata.authors.map((author) => author.trim()).filter(Boolean);
-
-    if (
-      nextAuthors.length > 0 &&
-      nextAuthors.join('\n').toLocaleLowerCase() !== currentAuthors.join('\n').toLocaleLowerCase()
-    ) {
-      request.authors = nextAuthors;
-      changed = true;
-    }
-  }
-
-  return changed ? request : null;
-}
-
-function createNativeWorkspaceItemForPaper(paper: LiteraturePaper): WorkspaceItem | null {
-  const attachment = paper.attachments.find((item) => item.kind === 'pdf' && item.storedPath.trim());
-
-  if (!attachment) {
-    return null;
-  }
-
-  const workspaceId = `native-library:${paper.id}`;
-
-  return {
-    itemKey: paper.id,
-    title: paper.title,
-    creators: paper.authors.length > 0
-      ? paper.authors.map((author) => author.name).join(', ')
-      : 'Unknown Authors',
-    year: paper.year ?? '',
-    itemType: 'pdf',
-    attachmentFilename: attachment.fileName,
-    localPdfPath: attachment.storedPath,
-    source: 'native-library',
-    workspaceId,
-    groupKey: workspaceId,
-  };
-}
-
-async function hasMineruOutputForPaper(
-  paper: LiteraturePaper,
-  mineruCacheDir: string,
-  autoLoadSiblingJson: boolean,
-): Promise<boolean> {
-  const candidates = new Set<string>();
-  const workspaceItem = createNativeWorkspaceItemForPaper(paper);
-  const cacheRoot = mineruCacheDir.trim();
-
-  if (workspaceItem && cacheRoot) {
-    for (const cachePaths of buildMineruCachePathCandidates(cacheRoot, workspaceItem)) {
-      candidates.add(cachePaths.contentJsonPath);
-      candidates.add(cachePaths.middleJsonPath);
-      candidates.add(cachePaths.markdownPath);
-    }
-  }
-
-  const pdfPath = paperPdfPath(paper);
-
-  if (pdfPath && autoLoadSiblingJson) {
-    candidates.add(guessSiblingJsonPath(pdfPath));
-    candidates.add(guessSiblingMarkdownPath(pdfPath));
-  }
-
-  for (const candidate of candidates) {
-    if (await localPathExists(candidate)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 export default function LiteratureLibraryView({
   onOpenPaper,
-  onOpenSettings,
   mineruCacheDir = '',
   autoLoadSiblingJson = true,
+  showReadingHeatmap = true,
   demoLibrary = null,
   paperActionStates = {},
   onRunMineruParse,
@@ -391,9 +165,6 @@ export default function LiteratureLibraryView({
   const [importDrafts, setImportDrafts] = useState<ImportDraftItem[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
-  const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
-  const [editingSettings, setEditingSettings] = useState<LibrarySettings | null>(null);
-  const [settingsSaving, setSettingsSaving] = useState(false);
   const [paperSaving, setPaperSaving] = useState(false);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [metadataAttemptedPaths, setMetadataAttemptedPaths] = useState<Set<string>>(
@@ -414,6 +185,12 @@ export default function LiteratureLibraryView({
     width: DETAILS_PANEL_DEFAULT_WIDTH,
   });
   const selectedCategoryIdRef = useRef<string | null>(null);
+  const checkedMineruPaperIdsRef = useRef<Set<string>>(new Set());
+  const mineruStatusConfigKey = useMemo(
+    () => `${mineruCacheDir.trim()}::${autoLoadSiblingJson ? 'auto-sibling' : 'cache-only'}`,
+    [autoLoadSiblingJson, mineruCacheDir],
+  );
+  const mineruStatusConfigKeyRef = useRef(mineruStatusConfigKey);
 
   const flatCategories = useMemo(() => flattenCategories(categories), [categories]);
   const selectedCategory = useMemo(
@@ -439,11 +216,68 @@ export default function LiteratureLibraryView({
   const showDemoLockedMessage = useCallback(() => {
     setStatusMessage(
       l(
-        '新手引导模式只展示 Welcome 演示文档。完成或退出引导后即可管理真实文库。',
+        '引导模式只展示欢迎示例。完成或退出引导后即可管理真实文库。',
         'Onboarding mode only shows the Welcome demo. Finish or exit onboarding to manage the real library.',
       ),
     );
   }, [l]);
+
+  const refreshMineruStatusesForPapers = useCallback(
+    async (
+      targetPapers: LiteraturePaper[],
+      shouldCancel: () => boolean = () => false,
+    ) => {
+      if (demoLibrary || targetPapers.length === 0) {
+        return;
+      }
+
+      const uniquePapers = Array.from(
+        new Map(targetPapers.map((paper) => [paper.id, paper])).values(),
+      );
+      const uncheckedPapers = uniquePapers.filter(
+        (paper) => !checkedMineruPaperIdsRef.current.has(paper.id),
+      );
+      const uncheckedPaperIds = new Set(uncheckedPapers.map((paper) => paper.id));
+
+      setPaperStatuses((current) =>
+        markPaperStatusesCheckingMineru(current, uniquePapers, uncheckedPaperIds),
+      );
+
+      if (uncheckedPapers.length === 0) {
+        return;
+      }
+
+      const entries = await Promise.all(
+        uncheckedPapers.map(async (paper): Promise<[string, LiteraturePaperListStatus]> => [
+          paper.id,
+          {
+            mineruParsed: await hasMineruOutputForPaper(
+              paper,
+              mineruCacheDir,
+              autoLoadSiblingJson,
+              localPathExists,
+            ),
+            overviewGenerated: Boolean(paper.aiSummary?.trim()),
+            checkingMineru: false,
+          },
+        ]),
+      );
+
+      if (shouldCancel()) {
+        return;
+      }
+
+      for (const [paperId] of entries) {
+        checkedMineruPaperIdsRef.current.add(paperId);
+      }
+
+      setPaperStatuses((current) => ({
+        ...current,
+        ...Object.fromEntries(entries),
+      }));
+    },
+    [autoLoadSiblingJson, demoLibrary, mineruCacheDir],
+  );
 
   const refreshPapers = useCallback(
     async (nextCategoryId = selectedCategoryId) => {
@@ -451,11 +285,7 @@ export default function LiteratureLibraryView({
         const nextPapers = resolveDemoPapers(nextCategoryId);
 
         setPapers(nextPapers);
-        setSelectedPaperId((current) =>
-          current && nextPapers.some((paper) => paper.id === current)
-            ? current
-            : nextPapers[0]?.id ?? null,
-        );
+        setSelectedPaperId((current) => resolveSelectedPaperId(current, nextPapers));
         return;
       }
 
@@ -468,11 +298,7 @@ export default function LiteratureLibraryView({
       });
 
       setPapers(nextPapers);
-      setSelectedPaperId((current) =>
-        current && nextPapers.some((paper) => paper.id === current)
-          ? current
-          : nextPapers[0]?.id ?? null,
-      );
+      setSelectedPaperId((current) => resolveSelectedPaperId(current, nextPapers));
     },
     [demoLibrary, resolveDemoPapers, searchQuery, selectedCategoryId],
   );
@@ -484,22 +310,24 @@ export default function LiteratureLibraryView({
       setSettings(demoLibrary.settings);
       setCategories(demoLibrary.categories);
       setPapers(nextPapers);
-      setSelectedPaperId((current) =>
-        current && nextPapers.some((paper) => paper.id === current)
-          ? current
-          : nextPapers[0]?.id ?? null,
-      );
+      setSelectedPaperId((current) => resolveSelectedPaperId(current, nextPapers));
       setStatusMessage(demoLibrary.statusMessage);
       return;
     }
 
-    const [nextCategories] = await Promise.all([
+    const [nextCategories, , allPapers] = await Promise.all([
       listLibraryCategories(),
       refreshPapers(),
+      listLibraryPapers({
+        sortBy: 'manual',
+        sortDirection: 'asc',
+        limit: 5000,
+      }),
     ]);
 
     setCategories(nextCategories);
-  }, [demoLibrary, refreshPapers, resolveDemoPapers]);
+    void refreshMineruStatusesForPapers(allPapers);
+  }, [demoLibrary, refreshMineruStatusesForPapers, refreshPapers, resolveDemoPapers]);
 
   const hydrateImportDraftsFromLocalPdf = useCallback(
     async (drafts: ImportDraftItem[]) => {
@@ -541,35 +369,23 @@ export default function LiteratureLibraryView({
         return;
       }
 
-      const pdfPaths = Array.from(
-        new Set(paths.filter((path) => path.trim().toLowerCase().endsWith('.pdf'))),
-      );
+      const { pdfPaths, drafts: nextDrafts } = buildImportDraftsFromPdfPaths({
+        paths,
+        existingDrafts: importDrafts,
+        categories,
+        selectedCategoryId,
+      });
 
       if (pdfPaths.length === 0) {
         setStatusMessage(l('没有可导入的 PDF 文件', 'No importable PDF files were found'));
         return;
       }
 
-      const targetCategory = categories.find((category) => category.id === selectedCategoryId);
-      const defaultCategoryId = targetCategory && !targetCategory.isSystem ? targetCategory.id : '';
-      const existingPaths = new Set(importDrafts.map((draft) => draft.path));
-      const nextDrafts = pdfPaths
-        .filter((path) => !existingPaths.has(path))
-        .map((path): ImportDraftItem => ({
-          path,
-          title: titleFromPdfPath(path),
-          authors: '',
-          year: '',
-          publication: '',
-          doi: '',
-          categoryId: defaultCategoryId,
-        }));
-
       setImportDrafts((current) => [...current, ...nextDrafts]);
       setImportDialogOpen(true);
       setStatusMessage(
         l(
-          `已准备导入 ${pdfPaths.length} 个 PDF，请确认元数据。`,
+          `已准备 ${pdfPaths.length} 个 PDF，请确认元数据。`,
           `${pdfPaths.length} PDFs are ready. Please confirm metadata.`,
         ),
       );
@@ -589,7 +405,7 @@ export default function LiteratureLibraryView({
     ],
   );
 
-  useTauriPdfDrop({
+  useDesktopPdfDrop({
     onPdfPaths: beginImportDrafts,
     onDragStateChange: setDropActive,
   });
@@ -728,16 +544,9 @@ export default function LiteratureLibraryView({
           paper.id === detail.paperId ? { ...paper, aiSummary: detail.aiSummary } : paper,
         ),
       );
-      setPaperStatuses((current) => ({
-        ...current,
-        [detail.paperId]: {
-          ...(current[detail.paperId] ?? {
-            mineruParsed: false,
-            overviewGenerated: false,
-          }),
-          overviewGenerated: Boolean(detail.aiSummary?.trim()),
-        },
-      }));
+      setPaperStatuses((current) =>
+        applyPaperSummaryStatusUpdate(current, detail.paperId, detail.aiSummary),
+      );
     };
 
     const handleNativeMineruStatusUpdated = (event: Event) => {
@@ -747,17 +556,10 @@ export default function LiteratureLibraryView({
         return;
       }
 
-      setPaperStatuses((current) => ({
-        ...current,
-        [detail.paperId]: {
-          ...(current[detail.paperId] ?? {
-            mineruParsed: false,
-            overviewGenerated: false,
-          }),
-          mineruParsed: detail.mineruParsed,
-          checkingMineru: false,
-        },
-      }));
+      checkedMineruPaperIdsRef.current.add(detail.paperId);
+      setPaperStatuses((current) =>
+        applyPaperMineruStatusUpdate(current, detail.paperId, detail.mineruParsed),
+      );
     };
 
     window.addEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
@@ -770,69 +572,43 @@ export default function LiteratureLibraryView({
   }, []);
 
   useEffect(() => {
-    if (papers.length === 0) {
-      setPaperStatuses({});
-      return;
-    }
-
     if (demoLibrary) {
       setPaperStatuses(
         demoLibrary.paperStatuses ??
-          Object.fromEntries(
-            papers.map((paper) => [
-              paper.id,
-              {
-                mineruParsed: false,
-                overviewGenerated: Boolean(paper.aiSummary?.trim()),
-                checkingMineru: false,
-              },
-            ]),
-          ),
+          buildInitialPaperStatuses(papers),
       );
-      return;
+      return undefined;
+    }
+
+    if (loading) {
+      return undefined;
+    }
+
+    if (mineruStatusConfigKeyRef.current !== mineruStatusConfigKey) {
+      mineruStatusConfigKeyRef.current = mineruStatusConfigKey;
+      checkedMineruPaperIdsRef.current = new Set();
     }
 
     let cancelled = false;
 
-    setPaperStatuses((current) => {
-      const nextStatuses: Record<string, LiteraturePaperListStatus> = {};
-
-      for (const paper of papers) {
-        nextStatuses[paper.id] = {
-          mineruParsed: current[paper.id]?.mineruParsed ?? false,
-          overviewGenerated: Boolean(paper.aiSummary?.trim()),
-          checkingMineru: true,
-        };
-      }
-
-      return nextStatuses;
-    });
-
     void (async () => {
-      const entries = await Promise.all(
-        papers.map(async (paper): Promise<[string, LiteraturePaperListStatus]> => [
-          paper.id,
-          {
-            mineruParsed: await hasMineruOutputForPaper(
-              paper,
-              mineruCacheDir,
-              autoLoadSiblingJson,
-            ),
-            overviewGenerated: Boolean(paper.aiSummary?.trim()),
-            checkingMineru: false,
-          },
-        ]),
-      );
-
-      if (!cancelled) {
-        setPaperStatuses(Object.fromEntries(entries));
-      }
+      const allPapers = await listLibraryPapers({
+        sortBy: 'manual',
+        sortDirection: 'asc',
+        limit: 5000,
+      });
+      await refreshMineruStatusesForPapers(allPapers, () => cancelled);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [autoLoadSiblingJson, demoLibrary, mineruCacheDir, papers]);
+  }, [
+    demoLibrary,
+    loading,
+    mineruStatusConfigKey,
+    refreshMineruStatusesForPapers,
+  ]);
 
   useEffect(() => {
     if (loading) {
@@ -863,191 +639,6 @@ export default function LiteratureLibraryView({
     });
   };
 
-  const handleSelectStorageDir = async () => {
-    if (demoMode) {
-      showDemoLockedMessage();
-      return;
-    }
-
-    if (!settings) {
-      return;
-    }
-
-    try {
-      const directory = await selectDirectory(
-        l('选择默认文献存储文件夹', 'Select the default paper storage folder'),
-      );
-
-      if (!directory) {
-        return;
-      }
-
-      const nextSettings = await updateLibrarySettings({
-        ...settings,
-        storageDir: directory,
-      });
-
-      setSettings(nextSettings);
-      setStatusMessage(l('已更新文献存储文件夹', 'Updated the paper storage folder'));
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error
-          ? nextError.message
-          : l('更新文献存储文件夹失败', 'Failed to update the storage folder');
-      setError(message);
-      setStatusMessage(message);
-    }
-  };
-
-  const handleOpenLibrarySettings = () => {
-    if (demoMode) {
-      onOpenSettings();
-      return;
-    }
-
-    setLibrarySettingsOpen(true);
-
-    void (async () => {
-      try {
-        const latestSettings = await getLibrarySettings();
-
-        setSettings(latestSettings);
-        setEditingSettings(latestSettings);
-      } catch (nextError) {
-        setEditingSettings(settings);
-        const message =
-          nextError instanceof Error
-            ? nextError.message
-            : l('Failed to load settings', 'Failed to load settings');
-        setError(message);
-        setStatusMessage(message);
-      }
-    })();
-  };
-
-  const saveLibrarySettingsPatch = async (patch: Partial<LibrarySettings>, source: string) => {
-    const base = editingSettings ?? settings ?? await getLibrarySettings();
-    const nextSettings = await updateLibrarySettings({
-      ...base,
-      ...patch,
-    });
-
-    setSettings(nextSettings);
-    setEditingSettings(nextSettings);
-    emitLibrarySettingsUpdated(nextSettings, source);
-    return nextSettings;
-  };
-
-  const handleSelectEditingStorageDir = async () => {
-    if (!editingSettings) {
-      return;
-    }
-
-    try {
-      const directory = await selectDirectory(
-        l('选择默认文献存储文件夹', 'Select the default paper storage folder'),
-      );
-
-      if (!directory) {
-        return;
-      }
-
-      setEditingSettings({
-        ...editingSettings,
-        storageDir: directory,
-      });
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error
-          ? nextError.message
-          : l('选择文献存储文件夹失败', 'Failed to select the storage folder');
-      setError(message);
-      setStatusMessage(message);
-    }
-  };
-
-  const patchEditingSettings = (patch: Partial<LibrarySettings>) => {
-    const base = editingSettings ?? settings;
-
-    if (!base) {
-      return;
-    }
-
-    setEditingSettings({
-      ...base,
-      ...patch,
-    });
-  };
-
-  const handleDetectZoteroDir = async () => {
-    try {
-      const dataDir = await detectLocalZoteroDataDir();
-
-      if (!dataDir) {
-        setStatusMessage(l('未找到 Zotero 本地数据目录，请手动选择包含 zotero.sqlite 的目录。', 'No Zotero local data directory was found. Choose the folder containing zotero.sqlite manually.'));
-        return;
-      }
-
-      await saveLibrarySettingsPatch(
-        { zoteroLocalDataDir: dataDir },
-        'literature-zotero-detect',
-      );
-      setStatusMessage(l('已检测到 Zotero 本地数据目录', 'Detected the Zotero local data directory'));
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error ? nextError.message : l('检测 Zotero 目录失败', 'Failed to detect the Zotero directory');
-      setError(message);
-      setStatusMessage(message);
-    }
-  };
-
-  const handleSelectZoteroDir = async () => {
-    try {
-      const dataDir = await selectLocalZoteroDataDir();
-
-      if (!dataDir) {
-        setStatusMessage(l('未选择 Zotero 目录', 'No Zotero directory selected'));
-        return;
-      }
-
-      await saveLibrarySettingsPatch(
-        { zoteroLocalDataDir: dataDir },
-        'literature-zotero-select',
-      );
-      setStatusMessage(l('已选择 Zotero 本地数据目录', 'Selected the Zotero local data directory'));
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error ? nextError.message : l('选择 Zotero 目录失败', 'Failed to choose the Zotero directory');
-      setError(message);
-      setStatusMessage(message);
-    }
-  };
-
-  const handleSaveLibrarySettings = async () => {
-    if (!editingSettings) {
-      return;
-    }
-
-    setSettingsSaving(true);
-    setError('');
-
-    try {
-      const nextSettings = await updateLibrarySettings(editingSettings);
-      setSettings(nextSettings);
-      setEditingSettings(nextSettings);
-      emitLibrarySettingsUpdated(nextSettings, 'literature-settings-save');
-      setLibrarySettingsOpen(false);
-      setStatusMessage(l('文库设置已保存', 'Library settings saved'));
-    } catch (nextError) {
-      const message =
-        nextError instanceof Error ? nextError.message : l('保存文库设置失败', 'Failed to save library settings');
-      setError(message);
-      setStatusMessage(message);
-    } finally {
-      setSettingsSaving(false);
-    }
-  };
-
   const handleImportZoteroLibrary = async (preferredDataDir?: string) => {
     if (demoMode) {
       showDemoLockedMessage();
@@ -1058,7 +649,7 @@ export default function LiteratureLibraryView({
     setError('');
 
     try {
-      const activeSettings = editingSettings ?? settings ?? await getLibrarySettings();
+      const activeSettings = settings ?? await getLibrarySettings();
       let dataDir = preferredDataDir?.trim() || activeSettings.zoteroLocalDataDir.trim();
 
       if (!dataDir) {
@@ -1066,7 +657,12 @@ export default function LiteratureLibraryView({
       }
 
       if (!dataDir) {
-        setStatusMessage(l('未找到 Zotero 本地数据目录，请先选择包含 zotero.sqlite 的目录。', 'No Zotero local data directory was found. Choose the folder containing zotero.sqlite first.'));
+        setStatusMessage(
+          l(
+            '未找到 Zotero 本地数据目录。请先选择包含 zotero.sqlite 的文件夹。',
+            'No Zotero local data directory was found. Choose the folder containing zotero.sqlite first.',
+          ),
+        );
         return;
       }
 
@@ -1075,14 +671,15 @@ export default function LiteratureLibraryView({
         zoteroLocalDataDir: dataDir,
       });
       setSettings(nextSettings);
-      setEditingSettings(nextSettings);
       emitLibrarySettingsUpdated(nextSettings, 'literature-zotero-import');
 
       setStatusMessage(l('正在读取 Zotero 分类树...', 'Reading Zotero collection tree...'));
       const zoteroCollections = await listLocalZoteroCollections({ dataDir });
+      setStatusMessage(l('正在读取 Zotero PDF 条目...', 'Reading Zotero PDF items...'));
+      const allZoteroItems = uniqueZoteroItems(await listLocalZoteroLibraryItems({ dataDir }));
 
-      if (zoteroCollections.length === 0) {
-        setStatusMessage(l('Zotero 中没有可导入的分类。', 'No Zotero collections are available to import.'));
+      if (zoteroCollections.length === 0 && allZoteroItems.length === 0) {
+        setStatusMessage(l('没有可导入的 Zotero PDF。', 'No Zotero PDFs are available to import.'));
         return;
       }
 
@@ -1103,7 +700,12 @@ export default function LiteratureLibraryView({
         }
 
         if (visiting.has(collection.collectionKey)) {
-          throw new Error(l('Zotero 分类层级存在循环，无法导入。', 'The Zotero collection tree has a cycle and cannot be imported.'));
+          throw new Error(
+            l(
+              'Zotero 分类树存在循环引用，无法导入。',
+              'The Zotero collection tree has a cycle and cannot be imported.',
+            ),
+          );
         }
 
         visiting.add(collection.collectionKey);
@@ -1134,6 +736,26 @@ export default function LiteratureLibraryView({
         return category.id;
       };
 
+      const ensureTopLevelCategory = async (name: string): Promise<string> => {
+        const normalizedName = name.trim();
+        const existingCategory = currentCategories.find(
+          (category) =>
+            !category.isSystem &&
+            category.parentId === null &&
+            categorySignature(category.name, category.parentId) === categorySignature(normalizedName, null),
+        );
+        const category = existingCategory ?? await createLibraryCategory({
+          name: normalizedName,
+          parentId: null,
+        });
+
+        if (!existingCategory) {
+          currentCategories = [...currentCategories, category];
+        }
+
+        return category.id;
+      };
+
       for (const collection of zoteroCollections) {
         await ensureCategoryForCollection(collection);
       }
@@ -1142,6 +764,8 @@ export default function LiteratureLibraryView({
       let duplicateCount = 0;
       let failedCount = 0;
       let missingPdfCount = 0;
+      let unfiledCount = 0;
+      const collectionItems: ZoteroLibraryItem[] = [];
 
       for (const collection of zoteroCollections) {
         const categoryId = categoryIdByZoteroKey.get(collection.collectionKey);
@@ -1153,8 +777,9 @@ export default function LiteratureLibraryView({
         const items = await listLocalZoteroCollectionItems({
           dataDir,
           collectionKey: collection.collectionKey,
-          limit: 400,
         });
+        collectionItems.push(...items);
+
         const importableItems = items.filter((item) => item.localPdfPath);
         missingPdfCount += items.length - importableItems.length;
 
@@ -1190,11 +815,49 @@ export default function LiteratureLibraryView({
         }
       }
 
+      const unfiledItems = filterZoteroItemsOutsideCollections(allZoteroItems, collectionItems);
+      unfiledCount = unfiledItems.length;
+
+      if (unfiledItems.length > 0) {
+        const unfiledCategoryId = await ensureTopLevelCategory(l('Zotero 未归档', 'Zotero Unfiled'));
+        const importableItems = unfiledItems.filter((item) => item.localPdfPath);
+        missingPdfCount += unfiledItems.length - importableItems.length;
+
+        if (importableItems.length > 0) {
+          const metadata = Object.fromEntries(
+            importableItems.map((item) => [item.localPdfPath as string, metadataFromZoteroItem(item)]),
+          );
+          const results = await importPdfsToLibrary({
+            paths: importableItems.map((item) => item.localPdfPath as string),
+            targetCategoryId: unfiledCategoryId,
+            importMode: 'copy',
+            metadata,
+          });
+
+          for (const result of results) {
+            if (result.status === 'imported') {
+              importedCount += 1;
+            } else if (result.status === 'duplicate') {
+              duplicateCount += 1;
+
+              if (result.existingPaperId) {
+                await assignPaperToLibraryCategory({
+                  paperId: result.existingPaperId,
+                  categoryId: unfiledCategoryId,
+                });
+              }
+            } else {
+              failedCount += 1;
+            }
+          }
+        }
+      }
+
       await refreshAll();
       setStatusMessage(
         l(
-          `Zotero 导入完成：分类 ${zoteroCollections.length} 个，新增 ${importedCount} 篇，重复 ${duplicateCount} 篇，失败 ${failedCount} 篇，缺少本地 PDF ${missingPdfCount} 篇。`,
-          `Zotero import finished: ${zoteroCollections.length} collections, ${importedCount} imported, ${duplicateCount} duplicated, ${failedCount} failed, ${missingPdfCount} missing local PDFs.`,
+          `Zotero 导入完成：${zoteroCollections.length} 个分类，${unfiledCount} 个未归档条目，导入 ${importedCount}，重复 ${duplicateCount}，失败 ${failedCount}，缺少本地 PDF ${missingPdfCount}。`,
+          `Zotero import finished: ${zoteroCollections.length} collections, ${unfiledCount} unfiled items, ${importedCount} imported, ${duplicateCount} duplicated, ${failedCount} failed, ${missingPdfCount} missing local PDFs.`,
         ),
       );
     } catch (nextError) {
@@ -1216,7 +879,6 @@ export default function LiteratureLibraryView({
       }
 
       setSettings(detail.settings);
-      setEditingSettings((current) => (current ? detail.settings : current));
     };
 
     const handleZoteroImportRequest = (event: Event) => {
@@ -1307,7 +969,9 @@ export default function LiteratureLibraryView({
             mergedDraft.authors !== draft.authors ||
             mergedDraft.year !== draft.year ||
             mergedDraft.publication !== draft.publication ||
-            mergedDraft.doi !== draft.doi;
+            mergedDraft.doi !== draft.doi ||
+            mergedDraft.url !== draft.url ||
+            mergedDraft.abstractText !== draft.abstractText;
 
           if (!changed) {
             missedCount += 1;
@@ -1325,7 +989,7 @@ export default function LiteratureLibraryView({
         if (!silent) {
           setStatusMessage(
             l(
-              `元数据补全完成：成功 ${filledCount} 个，未匹配 ${missedCount} 个。`,
+              `元数据补全完成：匹配 ${filledCount}，未匹配 ${missedCount}。`,
               `Metadata enrichment finished: ${filledCount} matched, ${missedCount} not matched.`,
             ),
           );
@@ -1531,7 +1195,7 @@ export default function LiteratureLibraryView({
       await refreshAll();
 
       const message = l(
-        `全部文献元数据解析完成：更新 ${updatedCount} 篇，已是最新 ${unchangedCount} 篇，未匹配 ${missedCount} 篇，失败 ${failedCount} 篇。`,
+        `元数据解析完成：更新 ${updatedCount}，无需更新 ${unchangedCount}，未匹配 ${missedCount}，失败 ${failedCount}。`,
         `Metadata parsing finished: ${updatedCount} updated, ${unchangedCount} unchanged, ${missedCount} not matched, ${failedCount} failed.`,
       );
 
@@ -1541,16 +1205,28 @@ export default function LiteratureLibraryView({
         setError(message);
       }
     } catch (nextError) {
-      const message =
-        nextError instanceof Error
-          ? nextError.message
-          : l('解析全部文献元数据失败', 'Failed to parse metadata for all papers');
+        const message =
+          nextError instanceof Error
+            ? nextError.message
+            : l('批量解析文献元数据失败', 'Failed to parse metadata for all papers');
       setError(message);
       setStatusMessage(message);
     } finally {
       setBulkMetadataWorking(false);
     }
   };
+
+  useEffect(() => {
+    const handleMetadataEnrichRequest = () => {
+      void handleEnrichAllMetadata();
+    };
+
+    window.addEventListener(LIBRARY_METADATA_ENRICH_REQUEST_EVENT, handleMetadataEnrichRequest);
+
+    return () => {
+      window.removeEventListener(LIBRARY_METADATA_ENRICH_REQUEST_EVENT, handleMetadataEnrichRequest);
+    };
+  }, [handleEnrichAllMetadata]);
 
   const handleCreateCategory = (parentCategory?: LiteratureCategory | null) => {
     if (demoMode) {
@@ -1696,7 +1372,7 @@ export default function LiteratureLibraryView({
       setStatusMessage(
         parentId
           ? l(`已调整分类层级：${movedCategory.name}`, `Updated category hierarchy: ${movedCategory.name}`)
-          : l(`已移回顶层分类：${movedCategory.name}`, `Moved category to root: ${movedCategory.name}`),
+          : l(`已移到顶层分类：${movedCategory.name}`, `Moved category to root: ${movedCategory.name}`),
       );
     } catch (nextError) {
       const message =
@@ -1773,8 +1449,8 @@ export default function LiteratureLibraryView({
       await refreshAll();
       setStatusMessage(
         deleteFiles
-          ? l('文献记录和 PDF 文件已删除', 'Paper record and PDF files deleted.')
-          : l('文献记录已删除，PDF 文件未删除', 'Paper record deleted. PDF files were not deleted.'),
+          ? l('文献记录和 PDF 文件已删除。', 'Paper record and PDF files deleted.')
+          : l('文献记录已删除，PDF 文件未删除。', 'Paper record deleted. PDF files were not deleted.'),
       );
       setConfirmDialog(null);
     } catch (nextError) {
@@ -1880,10 +1556,11 @@ export default function LiteratureLibraryView({
     event.preventDefault();
     event.stopPropagation();
     setSelectedPaperId(paper.id);
+    const position = clampFloatingMenuPosition(event.clientX, event.clientY, 224, 170);
     setPaperContextMenu({
       paper,
-      x: event.clientX,
-      y: event.clientY,
+      x: position.x,
+      y: position.y,
     });
   };
 
@@ -2049,20 +1726,18 @@ export default function LiteratureLibraryView({
 
   return (
     <div
-      className="relative grid h-full min-h-0 overflow-hidden bg-slate-100 text-slate-900 dark:bg-[#121212] dark:text-[#e0e0e0]"
+      className="pq-saas-scope pq-library-workspace pq-workspace-surface relative grid h-full min-h-0 overflow-hidden text-[var(--pq-text)]"
       style={{
-        gridTemplateColumns: `280px minmax(360px,1fr) ${detailsPanelWidth}px`,
+        gridTemplateColumns: `248px minmax(360px,1fr) ${detailsPanelWidth}px`,
         gridTemplateRows: 'minmax(0, 1fr)',
       }}
     >
       <div data-tour="library-sidebar" className="h-full min-h-0 overflow-hidden">
         <LiteratureCategorySidebar
-          settings={settings}
           categories={flatCategories}
           selectedCategoryId={selectedCategoryId}
           onCreateCategory={handleCreateCategory}
           onSelectCategory={handleSelectCategory}
-          onSelectStorageDir={() => void handleSelectStorageDir()}
           onRenameCategory={handleRenameCategory}
           onDeleteCategory={handleDeleteCategory}
           onCategoryMove={(categoryId, parentId) => void handleMoveCategory(categoryId, parentId)}
@@ -2077,6 +1752,7 @@ export default function LiteratureLibraryView({
           working={working}
           papers={papers}
           paperStatuses={paperStatuses}
+          showReadingHeatmap={showReadingHeatmap}
           selectedPaper={selectedPaper}
           searchQuery={searchQuery}
           statusMessage={statusMessage}
@@ -2101,7 +1777,6 @@ export default function LiteratureLibraryView({
           selectedPaper={selectedPaper}
           saving={paperSaving}
           onOpenPaper={onOpenPaper}
-          onOpenSettings={handleOpenLibrarySettings}
           onSavePaper={(request) => void handleSavePaper(request)}
           actionState={selectedPaper ? paperActionStates[selectedPaper.id] ?? null : null}
           onRunMineruParse={onRunMineruParse}
@@ -2113,13 +1788,13 @@ export default function LiteratureLibraryView({
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label={l('拖动调整详情栏宽度', 'Drag to resize the details panel')}
-        title={l('拖动调整详情栏宽度', 'Drag to resize the details panel')}
+        aria-label={l('拖动调整详情面板宽度', 'Drag to resize the details panel')}
+        title={l('拖动调整详情面板宽度', 'Drag to resize the details panel')}
         onPointerDown={handleStartDetailsPanelResize}
         onDoubleClick={() => setDetailsPanelWidth(DETAILS_PANEL_DEFAULT_WIDTH)}
         className={[
           'absolute bottom-0 top-0 z-40 w-4 -translate-x-1/2 cursor-col-resize touch-none',
-          detailsPanelResizing ? 'bg-teal-400/10' : 'bg-transparent hover:bg-teal-400/4',
+          detailsPanelResizing ? 'bg-teal-400/10' : 'bg-transparent hover:bg-teal-400/[0.04]',
         ].join(' ')}
         style={{
           right: detailsPanelWidth - 1,
@@ -2137,21 +1812,21 @@ export default function LiteratureLibraryView({
       </div>
 
       {dropActive ? (
-        <div className="pointer-events-none absolute inset-4 z-40 flex items-center justify-center rounded-[32px] border-2 border-dashed border-teal-400 bg-teal-500/12 text-center backdrop-blur-[2px] dark:bg-teal-300/10">
-          <div className="rounded-3xl border border-white/70 bg-white/90 px-8 py-6 shadow-[0_24px_80px_rgba(15,23,42,0.22)] dark:border-white/10 dark:bg-[#1e1e1e]/94">
+        <div className="pointer-events-none absolute inset-3 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-bg)] text-center backdrop-blur-[2px]">
+          <div className="pq-acrylic px-8 py-6">
             <div className="text-xl font-semibold">
               {l('松开鼠标导入 PDF', 'Drop to import PDFs')}
             </div>
-            <div className="mt-2 text-sm text-slate-500 dark:text-[#a0a0a0]">
-              {l('导入前会先进入元数据确认页。', 'A metadata confirmation screen will appear before import.')}
+            <div className="mt-2 text-sm text-[var(--pq-text-muted)]">
+              {l('导入前会先显示元数据确认界面。', 'A metadata confirmation screen will appear before import.')}
             </div>
           </div>
         </div>
       ) : null}
 
-      {paperContextMenu ? (
+      {paperContextMenu ? createPortal(
         <div
-          className="fixed inset-0 z-50"
+          className="fixed inset-0 z-[10000]"
           onClick={() => setPaperContextMenu(null)}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -2159,7 +1834,7 @@ export default function LiteratureLibraryView({
           }}
         >
           <div
-            className="fixed w-56 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.22)] dark:border-white/10 dark:bg-[#1e1e1e]"
+            className="pq-acrylic fixed w-56 p-1.5"
             style={{
               left: paperContextMenu.x,
               top: paperContextMenu.y,
@@ -2202,7 +1877,8 @@ export default function LiteratureLibraryView({
               {l('删除文献记录', 'Delete Paper Record')}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
 
       <ImportConfirmationDialog
@@ -2218,21 +1894,6 @@ export default function LiteratureLibraryView({
         onConfirm={() => void handleConfirmImportDrafts()}
       />
 
-      <LibrarySettingsDialog
-        open={librarySettingsOpen}
-        settings={editingSettings}
-        saving={settingsSaving}
-        metadataWorking={bulkMetadataWorking}
-        onClose={() => setLibrarySettingsOpen(false)}
-        onSelectStorageDir={() => void handleSelectEditingStorageDir()}
-        onDetectZoteroDir={() => void handleDetectZoteroDir()}
-        onSelectZoteroDir={() => void handleSelectZoteroDir()}
-        onImportZotero={() => void handleImportZoteroLibrary()}
-        onEnrichAllMetadata={() => void handleEnrichAllMetadata()}
-        onChange={setEditingSettings}
-        onSave={() => void handleSaveLibrarySettings()}
-      />
-
       <LibraryTextInputDialog
         open={categoryNameDialog !== null}
         title={
@@ -2244,17 +1905,15 @@ export default function LiteratureLibraryView({
         }
         description={
           categoryNameDialog?.mode === 'create' && categoryNameDialog.parentCategory
-            ? l(
-                `将在“${categoryNameDialog.parentCategory.name}”下面创建子分类。`,
-                `Create a subcategory under "${categoryNameDialog.parentCategory.name}".`,
+            ? l(`在“${categoryNameDialog.parentCategory.name}”下创建子分类。`, `Create a subcategory under "${categoryNameDialog.parentCategory.name}".`,
               )
             : categoryNameDialog?.mode === 'create'
-              ? l('分类会出现在左侧文献库树中，可以继续拖拽调整层级。', 'The category will appear in the library tree and can be rearranged by drag and drop.')
-              : l('只会修改分类名称，不会移动或删除文献文件。', 'Only the category name changes. Paper files are not moved or deleted.')
+              ? l('分类会显示在文库目录树中，可通过拖拽调整位置。', 'The category will appear in the library tree and can be rearranged by drag and drop.')
+              : l('只会修改分类名称，不会移动或删除 PDF 文件。', 'Only the category name changes. Paper files are not moved or deleted.')
         }
         label={l('分类名称', 'Category Name')}
         initialValue={categoryNameDialog?.mode === 'rename' ? categoryNameDialog.category.name : ''}
-        placeholder={l('例如：研究综述', 'e.g. Literature Review')}
+        placeholder={l('例如：文献综述', 'e.g. Literature Review')}
         confirmLabel={categoryNameDialog?.mode === 'rename' ? l('保存', 'Save') : l('创建', 'Create')}
         cancelLabel={l('取消', 'Cancel')}
         busy={dialogBusy}
@@ -2271,9 +1930,7 @@ export default function LiteratureLibraryView({
         title={l('添加自定义标签', 'Add Custom Tag')}
         description={
           tagDialogPaper
-            ? l(
-                `给“${tagDialogPaper.title}”添加一个自定义标签。状态标签不会写入文献标签。`,
-                `Add a custom tag to "${tagDialogPaper.title}". Status badges are not saved as paper tags.`,
+            ? l(`为“${tagDialogPaper.title}”添加自定义标签。状态徽章不会保存为文献标签。`, `Add a custom tag to "${tagDialogPaper.title}". Status badges are not saved as paper tags.`,
               )
             : ''
         }
@@ -2300,19 +1957,13 @@ export default function LiteratureLibraryView({
         }
         description={
           confirmDialog?.kind === 'delete-category'
-            ? l(
-                `确定删除分类“${confirmDialog.category.name}”及其所有子分类？这只会解除分类关系，不会删除磁盘上的 PDF 文件。`,
-                `Delete category "${confirmDialog.category.name}" and all subcategories? This only removes category relations and does not delete PDF files on disk.`,
+            ? l(`删除分类“${confirmDialog.category.name}”及其所有子分类？这只会移除分类关系，不会删除磁盘上的 PDF 文件。`, `Delete category "${confirmDialog.category.name}" and all subcategories? This only removes category relations and does not delete PDF files on disk.`,
               )
             : confirmDialog?.kind === 'delete-paper'
               ? confirmDialog.deleteFiles
-                ? l(
-                    `确定从“全部文献”删除“${confirmDialog.paper.title}”？这会同时删除磁盘上的 PDF 文件。`,
-                    `Delete "${confirmDialog.paper.title}" from All Papers? This will also delete PDF files from disk.`,
+                ? l(`从所有文献中删除“${confirmDialog.paper.title}”？这也会删除磁盘上的 PDF 文件。`, `Delete "${confirmDialog.paper.title}" from All Papers? This will also delete PDF files from disk.`,
                   )
-                : l(
-                    `确定删除“${confirmDialog.paper.title}”的文献记录？磁盘上的 PDF 文件不会被删除。`,
-                    `Delete the paper record for "${confirmDialog.paper.title}"? PDF files on disk will not be deleted.`,
+                : l(`删除“${confirmDialog.paper.title}”的文献记录？磁盘上的 PDF 文件不会被删除。`, `Delete the paper record for "${confirmDialog.paper.title}"? PDF files on disk will not be deleted.`,
                   )
               : ''
         }
@@ -2341,3 +1992,4 @@ export default function LiteratureLibraryView({
     </div>
   );
 }
+

@@ -1,5 +1,10 @@
 import type { LucideIcon } from 'lucide-react';
-import type { LibraryAgentPlan, LibraryAgentTool, LibraryAgentUserChoice } from '../../services/libraryAgent';
+import type {
+  LibraryAgentPaperSelectionRequest,
+  LibraryAgentPlan,
+  LibraryAgentTool,
+  LibraryAgentUserChoice,
+} from '../../services/libraryAgent';
 import type { DocumentChatAttachment } from '../../types/reader';
 
 export type AgentStepStatus = 'waiting' | 'running' | 'success' | 'error';
@@ -50,10 +55,13 @@ export interface AgentChatMessage {
   meta?: string;
   createdAt: number;
   attachments?: DocumentChatAttachment[];
+  paperScopeIds?: string[];
+  thinking?: string | null;
   trace?: AgentTraceStep[];
   toolCall?: AgentToolCallView;
   plan?: LibraryAgentPlan;
   choices?: LibraryAgentUserChoice[];
+  paperSelectionRequest?: LibraryAgentPaperSelectionRequest;
   error?: string;
 }
 

@@ -1,6 +1,7 @@
 import {
   readLocalBinaryFile,
   readLocalTextFile,
+  readLocalTextFileIfExists,
   writeLocalTextFile,
 } from '../../services/desktop';
 import {
@@ -36,7 +37,7 @@ import {
   type MineruCacheManifest,
   type SummaryCacheEnvelope,
 } from './readerShared';
-import { writeTranslationCache } from './readerTranslation';
+import { writeTranslationCache } from './readerTranslationCache';
 
 type LocaleTextFn = (zh: string, en: string) => string;
 
@@ -94,7 +95,8 @@ export async function readExistingMineruJson(
 ): Promise<ExistingMineruJson | null> {
   for (const candidatePath of resolvePreviewJsonCandidatePaths(item, options)) {
     try {
-      const jsonText = await readLocalTextFile(candidatePath);
+      const jsonText = await readLocalTextFileIfExists(candidatePath);
+      if (!jsonText) continue;
 
       if (jsonText.trim()) {
         return {
@@ -213,7 +215,9 @@ export async function loadReaderLibraryPreviewBlocks({
     for (const cachePaths of buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item)) {
       for (const candidatePath of [cachePaths.contentJsonPath, cachePaths.middleJsonPath]) {
         try {
-          const jsonText = await readLocalTextFile(candidatePath);
+          const jsonText = await readLocalTextFileIfExists(candidatePath);
+          if (!jsonText) continue;
+
           const pages = parseMineruPages(jsonText);
           const blocks = flattenMineruPages(pages);
 
@@ -237,7 +241,9 @@ export async function loadReaderLibraryPreviewBlocks({
     const siblingJsonPath = guessSiblingJsonPath(item.localPdfPath);
 
     try {
-      const jsonText = await readLocalTextFile(siblingJsonPath);
+      const jsonText = await readLocalTextFileIfExists(siblingJsonPath);
+      if (!jsonText) throw new Error('Sibling MinerU JSON not found');
+
       const pages = parseMineruPages(jsonText);
       const blocks = flattenMineruPages(pages);
 
@@ -370,7 +376,8 @@ export async function buildLibraryPreviewSummaryRequest({
 
   for (const candidatePath of candidateMarkdownPaths) {
     try {
-      const documentText = await readLocalTextFile(candidatePath);
+      const documentText = await readLocalTextFileIfExists(candidatePath);
+      if (!documentText) continue;
 
       if (documentText.trim()) {
         return {
@@ -439,7 +446,9 @@ export async function readSavedPreviewSummary({
 
   for (const candidatePath of candidatePaths) {
     try {
-      const raw = await readLocalTextFile(candidatePath);
+      const raw = await readLocalTextFileIfExists(candidatePath);
+      if (!raw) continue;
+
       const parsed = JSON.parse(raw) as Partial<SummaryCacheEnvelope>;
 
       if (

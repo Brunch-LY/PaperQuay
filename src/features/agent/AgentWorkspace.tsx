@@ -1,6 +1,5 @@
 import type { FormEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import {
   applyLibraryAgentPlan,
@@ -9,12 +8,11 @@ import {
   runConversationalLibraryAgent,
   type LibraryAgentConversationMessage,
   type LibraryAgentPlan,
+  type LibraryAgentStreamHandlers,
 } from '../../services/libraryAgent';
-import { listLibraryPapers } from '../../services/library';
-import type { LiteraturePaper } from '../../types/library';
-import type { DocumentChatAttachment, QaModelPreset } from '../../types/reader';
-import { useThemeStore } from '../../stores/useThemeStore';
-import { PlanDiffCard, ToolCallCard, TraceTimeline } from './AgentExecutionCards';
+import { listLibraryCategories, listLibraryPapers } from '../../services/library';
+import type { LiteratureCategory, LiteraturePaper } from '../../types/library';
+import type { DocumentChatAttachment, ModelReasoningEffort, QaModelPreset } from '../../types/reader';
 import {
   patchAgentHistorySessionMessage,
   upsertAgentHistorySession,
@@ -24,14 +22,13 @@ import {
   updateAgentRunningSessions,
 } from './agentRunningSessions';
 import {
-  agentCapabilities,
   buildErrorTrace,
   buildAgentHistorySession,
-  buildPreviewToolCall,
   buildSuccessTrace,
   buildToolCallView,
   durationLabel,
   formatPaperMeta,
+  hasAgentConversationHistory,
   loadAgentHistorySessions,
   newAgentSessionId,
   newMessageId,
@@ -45,43 +42,61 @@ import {
 } from './AgentWorkspace.model';
 import type { AgentChatMessage, AgentHistorySession, AgentToolCallView } from './AgentWorkspace.types';
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
-import { emitOpenPreferences } from '../../app/appEvents';
 import AgentWorkspaceView from './AgentWorkspaceView';
 import { buildAttachmentFromPath, buildScreenshotAttachmentFromPath } from '../reader/documentReaderShared';
 import { captureSystemScreenshot, selectChatAttachmentPaths } from '../../services/desktop';
 import { mergeUniqueAgentAttachments } from './agentAttachmentUtils';
+import {
+  buildConversationPaperScopes,
+  collectPaperScopeCandidateIds,
+  containsLegacyMojibake,
+  hasSameAgentHistoryMessages,
+  latestConversationPaperScopeIds,
+  uniquePaperScopeIds,
+} from './agentPaperScopes';
+import {
+  findMentionedCategoryScope,
+  hasExplicitFullLibraryScope,
+  shouldUseFullLibraryCandidateSet,
+} from './agentCategoryScopes';
 
-interface AgentWorkspaceProps {
-  onOpenPreferences?: () => void;
-}
+const agentWelcomeText = {
+  zh: '直接输入问题即可。需要文献时，可打开输入区的 Paper Skill，也可以直接说“找文献 / 推荐论文 / 全库 RAG”。',
+  en: 'Type naturally. When papers are needed, open Paper Skill in the composer or ask to find papers, recommend papers, or use full-library RAG.',
+};
 
-function containsLegacyMojibake(value: string): boolean {
-  return /[\uFFFD]|\u93b6|\u95ab|\u7b49|\u93c0|\u7025/.test(value);
-}
+const agentWelcomeMeta = {
+  zh: '共享文库 RAG · 文献推荐 · 工具计划需确认',
+  en: 'Shared library RAG · paper recommendations · reviewable tool plans',
+};
 
-function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
-  const appWindow = getCurrentWindow();
-  const { mode: themeMode, setMode: setThemeMode } = useThemeStore();
+const agentWelcomeTraceSummary = {
+  zh: '需要文献时会自动尝试使用全库候选，也可以手动选择范围。',
+  en: 'When papers are needed, the Agent can automatically use the full library as candidates, or you can choose a scope manually.',
+};
+
+function AgentWorkspace() {
   const locale = useAppLocale();
   const l = useLocaleText();
   const [papers, setPapers] = useState<LiteraturePaper[]>([]);
+  const [categories, setCategories] = useState<LiteratureCategory[]>([]);
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(() => new Set());
   const [paperSearchQuery, setPaperSearchQuery] = useState('');
   const [composerValue, setComposerValue] = useState('');
   const [lastInstruction, setLastInstruction] = useState('');
-  const [agentPresetName, setAgentPresetName] = useState('');
   const [agentModelPresets, setAgentModelPresets] = useState<QaModelPreset[]>([]);
   const [plan, setPlan] = useState<LibraryAgentPlan | null>(null);
   const [approvedItemIds, setApprovedItemIds] = useState<Set<string>>(() => new Set());
   const [expandedStepKeys, setExpandedStepKeys] = useState<Set<string>>(() => new Set());
   const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
-  const [selectedInspectorItemId, setSelectedInspectorItemId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState(() => newAgentSessionId());
   const [historySessions, setHistorySessions] = useState<AgentHistorySession[]>(() => loadAgentHistorySessions());
   const [historySidebarCollapsed, setHistorySidebarCollapsed] = useState(false);
   const [agentAttachments, setAgentAttachments] = useState<DocumentChatAttachment[]>([]);
   const [agentRagEnabled, setAgentRagEnabled] = useState(true);
   const [selectedAgentPresetId, setSelectedAgentPresetId] = useState<string | null>(null);
+  const [selectedAgentReasoningEffort, setSelectedAgentReasoningEffort] =
+    useState<ModelReasoningEffort>('auto');
   const [capturingScreenshot, setCapturingScreenshot] = useState(false);
   const [messages, setMessages] = useState<AgentChatMessage[]>(() => [
     {
@@ -89,12 +104,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       role: 'assistant',
       content:
         l(
-          '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
-          'You can chat directly, or select papers on the left to add literature context. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
+          '直接输入问题即可。需要文献时，可以打开输入区的 Paper Skill 选择范围，也可以直接说“找文献”“推荐论文”或“用全库 RAG”，Agent 会自动把文库作为候选上下文。',
+          'Type naturally. When papers are needed, open Paper Skill in the composer or ask to find papers, recommend papers, or use full-library RAG; the Agent will use the library as candidate context.',
         ),
       meta: l(
-        '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
-        'Q&A, renaming, metadata completion, smart tags, tag cleanup, and auto-classification',
+        '共享文库 RAG · 文献推荐 · 可审批工具计划 · 本地写入前确认',
+        'Shared library RAG · paper recommendations · reviewable tool plans · confirm before local writes',
       ),
       createdAt: Date.now(),
       trace: [
@@ -102,7 +117,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
           id: 'welcome-intent',
           type: 'intent',
           title: l('等待用户指令', 'Waiting for user instruction'),
-          summary: l('可直接输入问题，也可以先在左侧选择论文后再执行任务。', 'You can type a question directly, or select papers on the left before running a task.'),
+          summary: l('文献范围现在由输入区的 Paper Skill 管理，检索和推荐任务会自动尝试使用全库候选。', 'Paper scope is managed by the Paper Skill in the composer; retrieval and recommendation tasks can automatically use the full library as candidates.'),
           status: 'waiting',
         },
       ],
@@ -117,24 +132,20 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const [error, setError] = useState('');
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const historySidebarRef = useRef<HTMLElement | null>(null);
-  const paperSidebarRef = useRef<HTMLElement | null>(null);
   const conversationPanelRef = useRef<HTMLElement | null>(null);
-  const inspectorSidebarRef = useRef<HTMLElement | null>(null);
   const handleHistoryWheelCapture = useWheelScrollDelegate({ rootRef: historySidebarRef });
-  const handlePaperWheelCapture = useWheelScrollDelegate({ rootRef: paperSidebarRef });
   const handleConversationWheelCapture = useWheelScrollDelegate({ rootRef: conversationPanelRef });
-  const handleInspectorWheelCapture = useWheelScrollDelegate({ rootRef: inspectorSidebarRef });
 
   const createLocalizedWelcomeMessage = (): AgentChatMessage => ({
     id: newMessageId(),
     role: 'assistant',
     content: l(
-      '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
-      'You can chat directly, or select papers on the left to add literature context. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
+      '直接输入问题即可。需要文献时，可以打开输入区的 Paper Skill 选择范围，也可以直接说“找文献”“推荐论文”或“用全库 RAG”，Agent 会自动把文库作为候选上下文。',
+      'Type naturally. When papers are needed, open Paper Skill in the composer or ask to find papers, recommend papers, or use full-library RAG; the Agent will use the library as candidate context.',
     ),
     meta: l(
-      '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
-      'Q&A, renaming, metadata completion, smart tags, tag cleanup, and auto-classification',
+      '共享文库 RAG · 文献推荐 · 可审批工具计划 · 本地写入前确认',
+      'Shared library RAG · paper recommendations · reviewable tool plans · confirm before local writes',
     ),
     createdAt: Date.now(),
     trace: [
@@ -142,7 +153,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         id: 'welcome-intent',
         type: 'intent',
         title: l('等待用户指令', 'Waiting for user instruction'),
-        summary: l('可直接输入问题，也可以先在左侧选择论文后再执行任务。', 'You can type a question directly, or select papers on the left before running a task.'),
+        summary: l('文献范围现在由输入区的 Paper Skill 管理，检索和推荐任务会自动尝试使用全库候选。', 'Paper scope is managed by the Paper Skill in the composer; retrieval and recommendation tasks can automatically use the full library as candidates.'),
         status: 'waiting',
       },
     ],
@@ -156,10 +167,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     () => papers.filter((paper) => selectedPaperIds.has(paper.id)),
     [papers, selectedPaperIds],
   );
-  const selectedPlanItems = useMemo(
-    () => plan?.items.filter((item) => approvedItemIds.has(item.id)) ?? [],
-    [approvedItemIds, plan],
-  );
   const selectedTags = useMemo(() => uniqueTagNames(selectedPapers), [selectedPapers]);
   const activeSessionRunning = useMemo(
     () => isAgentSessionRunning(runningSessionIds, activeSessionId),
@@ -169,8 +176,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     () => historySessions.slice().sort((left, right) => right.updatedAt - left.updatedAt),
     [historySessions],
   );
-  const selectedInspectorItem =
-    plan?.items.find((item) => item.id === selectedInspectorItemId) ?? plan?.items[0] ?? null;
   const localizedCapabilityTitles: Record<string, string> = {
     rename: l('批量重命名', 'Batch Rename'),
     metadata: l('元数据补全', 'Metadata Completion'),
@@ -186,12 +191,16 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setError('');
 
     try {
-      const nextPapers = await listLibraryPapers({
-        sortBy: 'manual',
-        sortDirection: 'asc',
-        limit: 1000,
-      });
+      const [nextCategories, nextPapers] = await Promise.all([
+        listLibraryCategories(),
+        listLibraryPapers({
+          sortBy: 'manual',
+          sortDirection: 'asc',
+          limit: 1000,
+        }),
+      ]);
 
+      setCategories(nextCategories);
       setPapers(nextPapers);
       setSelectedPaperIds((current) => {
         const nextIds = new Set(nextPapers.map((paper) => paper.id));
@@ -224,9 +233,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
 
         setAgentModelPresets(presets);
         setSelectedAgentPresetId((current) => current ?? presets[0]?.id ?? null);
-        if (presets[0]) {
-          setAgentPresetName(presets[0].label || presets[0].model);
-        }
       } catch {
         if (!cancelled) {
           setAgentModelPresets([]);
@@ -295,6 +301,16 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     });
 
     setHistorySessions((current) => {
+      if (!hasAgentConversationHistory(messages)) {
+        return current.filter((session) => session.id !== activeSessionId);
+      }
+
+      const existingSession = current.find((session) => session.id === activeSessionId);
+
+      if (hasSameAgentHistoryMessages(existingSession, nextSession)) {
+        return current;
+      }
+
       const otherSessions = current.filter((session) => session.id !== activeSessionId);
       return [nextSession, ...otherSessions].slice(0, 30);
     });
@@ -372,7 +388,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
 
     setPlan(nextPlan);
     setApprovedItemIds(new Set(nextPlan?.items.map((item) => item.id) ?? []));
-    setSelectedInspectorItemId(nextPlan?.items[0]?.id ?? null);
   };
 
   const setAgentSessionRunning = (sessionId: string, running: boolean) => {
@@ -412,10 +427,55 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setStatusMessage(l('已清空当前选中的文献。', 'Cleared the current paper selection.'));
   };
 
+  const handleFindPapers = () => {
+    setComposerValue(
+      l(
+        '从我的文库里找出和这个研究问题最相关的论文，并说明为什么相关：',
+        'Find the papers in my library that are most relevant to this research question, and explain why they are relevant:',
+      ),
+    );
+    setStatusMessage(l('已插入文献检索指令，可补充研究问题后发送。', 'Inserted a paper-finding prompt. Add the research question and send.'));
+  };
+
+  const handleRecommendPapers = () => {
+    setAgentRagEnabled(true);
+    setSelectedPaperIds(new Set(papers.map((paper) => paper.id)));
+    setComposerValue(
+      l(
+        '基于整个文库，推荐最值得优先阅读的论文。请按主题聚类，说明推荐理由、适合解决的问题，以及下一步阅读顺序。',
+        'Based on the full library, recommend the papers worth reading first. Cluster them by topic, explain why they matter, what questions they help answer, and the suggested reading order.',
+      ),
+    );
+    setStatusMessage(
+      l(
+        `已选择全部 ${papers.length} 篇文献并开启 Agent RAG，推荐会复用文库共享向量库。`,
+        `Selected all ${papers.length} papers and enabled Agent RAG. Recommendations will reuse the shared library vector store.`,
+      ),
+    );
+  };
+
+  const handleUseFullLibraryRag = () => {
+    setAgentRagEnabled(true);
+    setSelectedPaperIds(new Set(papers.map((paper) => paper.id)));
+    setComposerValue((current) =>
+      current.trim()
+        ? current
+        : l(
+          '使用整个文库作为 RAG 上下文回答：',
+          'Use the full library as RAG context to answer:',
+        ),
+    );
+    setStatusMessage(
+      l(
+        `已将全部 ${papers.length} 篇文献加入本轮上下文。向量检索继续使用文库共享的 paperquay-rag.sqlite。`,
+        `Added all ${papers.length} papers to this turn. Vector retrieval still uses the shared library paperquay-rag.sqlite store.`,
+      ),
+    );
+  };
+
   const setNextPlan = (nextPlan: LibraryAgentPlan) => {
     setPlan(nextPlan);
     setApprovedItemIds(new Set(nextPlan.items.map((item) => item.id)));
-    setSelectedInspectorItemId(nextPlan.items[0]?.id ?? null);
     setStatusMessage(nextPlan.description);
   };
 
@@ -476,10 +536,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       .map((message) => ({
         role: message.role,
         content: message.content.trim(),
+        paperScopeIds: message.paperScopeIds,
         attachments: message.attachments,
       }));
 
-  const runAgent = async (rawInstruction: string) => {
+  const runAgent = async (rawInstruction: string, inlinePaperIds?: string[]) => {
     const instruction = rawInstruction.trim();
 
     if (!instruction) {
@@ -499,8 +560,46 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       return;
     }
 
-    const selectedPapersSnapshot = selectedPapers;
-    const selectedPaperIdsSnapshot = [...selectedPaperIds];
+    const explicitPaperScopeIds = uniquePaperScopeIds(inlinePaperIds ?? []);
+    const fallbackPaperScopeIds =
+      explicitPaperScopeIds.length === 0 && selectedPaperIds.size === 0
+        ? latestConversationPaperScopeIds(messages)
+        : [];
+    const currentTurnPaperScopeIds =
+      explicitPaperScopeIds.length > 0 ? explicitPaperScopeIds : fallbackPaperScopeIds;
+    const inlinePaperIdSet = new Set(currentTurnPaperScopeIds);
+    const inlinePapers = inlinePaperIdSet.size > 0
+      ? papers.filter((paper) => inlinePaperIdSet.has(paper.id))
+      : [];
+    const useInlinePaperScope = inlinePapers.length > 0;
+    const categoryScope = useInlinePaperScope ? null : findMentionedCategoryScope(instruction, categories, papers);
+    const useCategoryScope = !useInlinePaperScope && Boolean(categoryScope && categoryScope.papers.length > 0);
+    const useFullLibraryCandidates =
+      !useInlinePaperScope &&
+      !useCategoryScope &&
+      papers.length > 0 &&
+      (hasExplicitFullLibraryScope(instruction) ||
+        (selectedPapers.length === 0 && shouldUseFullLibraryCandidateSet(instruction)));
+    const selectedPapersSnapshot = useInlinePaperScope
+      ? inlinePapers
+      : useCategoryScope
+      ? categoryScope?.papers ?? []
+      : useFullLibraryCandidates
+        ? papers
+        : selectedPapers;
+    const selectedPaperIdsSnapshot = useInlinePaperScope
+      ? inlinePapers.map((paper) => paper.id)
+      : useCategoryScope
+      ? selectedPapersSnapshot.map((paper) => paper.id)
+      : useFullLibraryCandidates
+        ? papers.map((paper) => paper.id)
+        : [...selectedPaperIds];
+    const paperScopesSnapshot = buildConversationPaperScopes(messages, selectedPaperIdsSnapshot);
+    const paperScopeCandidateIds = collectPaperScopeCandidateIds(paperScopesSnapshot);
+    const selectedPaperCandidateSet = new Set(selectedPapersSnapshot.map((paper) => paper.id));
+    const modelPapersSnapshot = paperScopeCandidateIds.length > 0
+      ? papers.filter((paper) => selectedPaperCandidateSet.has(paper.id) || paperScopeCandidateIds.includes(paper.id))
+      : selectedPapersSnapshot;
     const startedAt = performance.now();
     const assistantMessageId = newMessageId();
     const paperCount = selectedPapersSnapshot.length;
@@ -511,29 +610,82 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       role: 'user',
       content: instruction,
       attachments: attachmentsSnapshot,
-      meta: paperCount > 0
-        ? l(`作用于 ${paperCount} 篇论文`, `Applied to ${paperCount} papers`)
-        : l('未选择论文，按通用对话处理', 'No papers selected; using general chat context'),
+      paperScopeIds: selectedPaperIdsSnapshot.length > 0 ? selectedPaperIdsSnapshot : undefined,
+      meta: useInlinePaperScope
+        ? l(`本轮已选择 ${paperCount} 篇论文`, `This turn selected ${paperCount} papers`)
+        : useCategoryScope && categoryScope
+        ? l(
+          `Paper Skill 自动使用分类「${categoryScope.path}」：${paperCount} 篇`,
+          `Paper Skill auto-scoped to category "${categoryScope.path}": ${paperCount} papers`,
+        )
+        : useFullLibraryCandidates
+          ? l(`Paper Skill 自动使用全库候选：${paperCount} 篇`, `Paper Skill auto-scoped to full library: ${paperCount} papers`)
+          : paperCount > 0
+            ? l(`Paper Skill 已选择 ${paperCount} 篇论文`, `Paper Skill selected ${paperCount} papers`)
+            : undefined,
       createdAt: Date.now(),
     };
     const pendingAssistantMessage: AgentChatMessage = {
       id: assistantMessageId,
       role: 'assistant',
+      paperScopeIds: selectedPaperIdsSnapshot.length > 0 ? selectedPaperIdsSnapshot : undefined,
       content: l('Agent 正在回复...', 'Agent is replying...'),
       meta: l('执行中', 'Running'),
       createdAt: Date.now(),
-      trace: [
-        {
-          id: `${assistantMessageId}:intent`,
-          type: 'intent',
-          title: l('正在分析请求', 'Analyzing request'),
-          summary: instruction,
-          status: 'running',
-        },
-      ],
     };
     const nextMessages = [...messages, userMessage, pendingAssistantMessage];
     const isTargetSessionActive = () => activeSessionIdRef.current === sessionId;
+    let streamedAgentAnswer = '';
+    let streamedAgentThinking = '';
+    let streamCommitTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let lastStreamCommitAt = 0;
+    const commitStreamedAgentMessage = () => {
+      streamCommitTimer = null;
+
+      if ((!streamedAgentAnswer.trim() && !streamedAgentThinking.trim()) || !isTargetSessionActive()) {
+        return;
+      }
+
+      lastStreamCommitAt = Date.now();
+      updateMessage(assistantMessageId, (message) => ({
+        ...message,
+        content: streamedAgentAnswer.trim() ? streamedAgentAnswer : message.content,
+        thinking: streamedAgentThinking.trim() ? streamedAgentThinking : message.thinking,
+        meta: 'streaming / Running',
+        error: undefined,
+      }));
+    };
+    const scheduleStreamedAgentMessageCommit = () => {
+      if (!isTargetSessionActive()) {
+        return;
+      }
+
+      const elapsedMs = Date.now() - lastStreamCommitAt;
+
+      if (elapsedMs >= 120) {
+        commitStreamedAgentMessage();
+        return;
+      }
+
+      if (streamCommitTimer === null) {
+        streamCommitTimer = window.setTimeout(commitStreamedAgentMessage, 120 - elapsedMs);
+      }
+    };
+    const agentStreamHandlers: LibraryAgentStreamHandlers = {
+      onDelta: (_delta, fullText) => {
+        streamedAgentAnswer = fullText;
+        scheduleStreamedAgentMessageCommit();
+      },
+      onThinkingDelta: (_delta, fullText) => {
+        streamedAgentThinking = fullText;
+        scheduleStreamedAgentMessageCommit();
+      },
+      onError: (message) => {
+        if (isTargetSessionActive()) {
+          setStatusMessage(message);
+        }
+      },
+    };
 
     setLastInstruction(instruction);
     setMessages(nextMessages);
@@ -544,7 +696,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setError('');
     setPlan(null);
     setApprovedItemIds(new Set());
-    setSelectedInspectorItemId(null);
 
     try {
       const preset = await loadLibraryAgentModelPresetById(selectedAgentPresetId);
@@ -553,21 +704,44 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         throw new Error(l('请先在设置里配置 Agent 工具调用模型。', 'Configure the Agent tool-calling model in Settings first.'));
       }
 
-      setAgentPresetName(preset.label || preset.model);
+      const runtimePreset =
+        selectedAgentReasoningEffort === 'auto'
+          ? preset
+          : { ...preset, reasoningEffort: selectedAgentReasoningEffort };
+
       if (isTargetSessionActive()) {
         setStatusMessage(
-          l(
-            `正在调用大模型 Agent：${preset.label || preset.model}...`,
-            `Calling Agent model: ${preset.label || preset.model}...`,
-          ),
+          useCategoryScope && categoryScope
+            ? l(
+              `正在调用大模型 Agent：${preset.label || preset.model}。Paper Skill 已自动使用分类「${categoryScope.path}」中的 ${paperCount} 篇文献。`,
+              `Calling Agent model: ${preset.label || preset.model}. Paper Skill auto-scoped to ${paperCount} papers in "${categoryScope.path}".`,
+            )
+            : useInlinePaperScope
+              ? l(
+                `正在调用大模型 Agent：${preset.label || preset.model}。本轮使用对话内选择的 ${paperCount} 篇论文。`,
+                `Calling Agent model: ${preset.label || preset.model}. This turn uses ${paperCount} papers selected in chat.`,
+              )
+              : useFullLibraryCandidates
+              ? l(
+                `正在调用大模型 Agent：${preset.label || preset.model}。Paper Skill 已自动使用全库候选 ${paperCount} 篇。`,
+                `Calling Agent model: ${preset.label || preset.model}. Paper Skill auto-scoped to ${paperCount} full-library candidates.`,
+              )
+              : l(
+                `正在调用大模型 Agent：${preset.label || preset.model}...`,
+                `Calling Agent model: ${preset.label || preset.model}...`,
+              ),
         );
       }
 
       const result = await runConversationalLibraryAgent({
-        papers: selectedPapersSnapshot,
+        papers: modelPapersSnapshot,
+        categories,
         instruction,
-        preset,
+        preset: runtimePreset,
+        streamHandlers: agentStreamHandlers,
         historyMessages,
+        currentPaperScopeIds: selectedPaperIdsSnapshot,
+        paperScopes: paperScopesSnapshot,
         responseLanguage: locale === 'en-US' ? 'English' : 'Simplified Chinese',
         ragEnabled: agentRagEnabled,
       });
@@ -577,11 +751,13 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         updateSessionMessage(sessionId, assistantMessageId, (message) => ({
           ...message,
           content: result.answer,
-        meta: `${result.contextLabel} · ${durationLabel(durationMs, locale)}`,
+          meta: `${result.contextLabel} · ${durationLabel(durationMs, locale)}`,
+          thinking: result.thinking,
           trace: undefined,
           toolCall: undefined,
           plan: undefined,
           choices: undefined,
+          paperSelectionRequest: undefined,
           error: undefined,
         }));
         if (isTargetSessionActive()) {
@@ -600,19 +776,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
           ...message,
           content: result.answer,
           meta: `waiting for choice · ${durationLabel(durationMs, locale)}`,
-          trace: [
-            {
-              id: `${assistantMessageId}:choice`,
-              type: 'plan',
-              title: l('等待你的选择', 'Waiting for your choice'),
-              summary: l('Agent 需要你确认下一步。', 'The Agent needs your confirmation for the next step.'),
-              status: 'waiting',
-              durationMs,
-            },
-          ],
+          thinking: result.thinking,
+          trace: undefined,
           toolCall: undefined,
           plan: undefined,
           choices: result.choices,
+          paperSelectionRequest: undefined,
           error: undefined,
         }));
         if (isTargetSessionActive()) {
@@ -620,6 +789,30 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
             l(
               `Agent 需要你选择下一步，共 ${result.choices.length} 个选项。`,
               `The Agent needs your next-step choice. ${result.choices.length} options available.`,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (result.kind === 'paper-selection') {
+        updateSessionMessage(sessionId, assistantMessageId, (message) => ({
+          ...message,
+          content: result.answer,
+          meta: `paper selection · ${durationLabel(durationMs, locale)}`,
+          thinking: result.thinking,
+          trace: undefined,
+          toolCall: undefined,
+          plan: undefined,
+          choices: undefined,
+          paperSelectionRequest: result.request,
+          error: undefined,
+        }));
+        if (isTargetSessionActive()) {
+          setStatusMessage(
+            l(
+              'Agent 需要文献上下文。请在对话里的论文选择框中勾选目标论文后继续。',
+              'The Agent needs paper context. Select target papers in the chat picker and continue.',
             ),
           );
         }
@@ -634,18 +827,20 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         content:
           nextPlan.items.length > 0
             ? l(
-              `已自动选择「${localizedToolLabel(nextPlan.tool)}」，生成 ${nextPlan.items.length} 个可审查计划项。`,
-              `Selected "${localizedToolLabel(nextPlan.tool)}" and generated ${nextPlan.items.length} reviewable plan items.`,
+              `模型建议使用「${localizedToolLabel(nextPlan.tool)}」。已生成 ${nextPlan.items.length} 个待确认计划项，点击同意后才会执行。`,
+              `The model suggested "${localizedToolLabel(nextPlan.tool)}". ${nextPlan.items.length} pending plan items were generated and will run only after approval.`,
             )
             : l(
-              `已自动选择「${localizedToolLabel(nextPlan.tool)}」，当前没有需要变更的计划项。`,
-              `Selected "${localizedToolLabel(nextPlan.tool)}"; there are no changes to apply.`,
+              `模型建议使用「${localizedToolLabel(nextPlan.tool)}」，但当前没有需要变更的计划项。`,
+              `The model suggested "${localizedToolLabel(nextPlan.tool)}", but there are no changes to apply.`,
             ),
         meta: `${toolFunctionName(nextPlan.tool)} · ${durationLabel(durationMs, locale)}`,
+        thinking: result.thinking,
         trace: buildSuccessTrace(instruction, paperCount, nextPlan, durationMs, locale),
         toolCall: nextToolCall,
         plan: nextPlan,
         choices: undefined,
+        paperSelectionRequest: undefined,
         error: undefined,
       }));
       if (isTargetSessionActive()) {
@@ -672,9 +867,10 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
           : l(`生成计划失败：${message}`, `Plan generation failed: ${message}`),
         meta: `error · ${durationLabel(durationMs, locale)}`,
         trace: buildErrorTrace(instruction, paperCount, message, durationMs, locale),
-        toolCall: buildPreviewToolCall(instruction, paperCount, 'error', locale),
+        toolCall: undefined,
         plan: undefined,
         choices: undefined,
+        paperSelectionRequest: undefined,
         error: message,
       }));
       if (isTargetSessionActive()) {
@@ -682,6 +878,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         setStatusMessage(message);
       }
     } finally {
+      if (streamCommitTimer !== null) {
+        window.clearTimeout(streamCommitTimer);
+      }
+
+      commitStreamedAgentMessage();
       setAgentSessionRunning(sessionId, false);
     }
   };
@@ -723,7 +924,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       if (isTargetSessionActive()) {
         setPlan(null);
         setApprovedItemIds(new Set());
-        setSelectedInspectorItemId(null);
         setStatusMessage(
           l(
             `执行完成：成功 ${result.applied}，失败 ${result.failed}。`,
@@ -760,7 +960,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
   const cancelPlan = () => {
     setPlan(null);
     setApprovedItemIds(new Set());
-    setSelectedInspectorItemId(null);
     setStatusMessage(l('已取消当前计划。', 'Canceled the current plan.'));
   };
 
@@ -787,20 +986,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     });
   };
 
-  const toggleStep = (stepKey: string) => {
-    setExpandedStepKeys((current) => {
-      const next = new Set(current);
-
-      if (next.has(stepKey)) {
-        next.delete(stepKey);
-      } else {
-        next.add(stepKey);
-      }
-
-      return next;
-    });
-  };
-
   const toggleTool = (toolCallId: string) => {
     setExpandedToolIds((current) => {
       const next = new Set(current);
@@ -817,52 +1002,17 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     });
   };
 
-  const handleOpenPreferences = () => {
-    setStatusMessage(l('正在打开设置，请在 AI 模型里检查 Agent 工具调用模型。', 'Opening Settings. Check the Agent tool-calling model under AI Models.'));
-    if (onOpenPreferences) {
-      onOpenPreferences();
-      return;
-    }
+  const toggleStep = (stepKey: string) => {
+    setExpandedStepKeys((current) => {
+      const next = new Set(current);
 
-    emitOpenPreferences('models');
-  };
+      if (next.has(stepKey)) {
+        next.delete(stepKey);
+      } else {
+        next.add(stepKey);
+      }
 
-  const handleToggleThemeMode = () => {
-    const nextMode = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'system' : 'light';
-    setThemeMode(nextMode);
-    setStatusMessage(
-      nextMode === 'light'
-        ? l('已切换到浅色主题。', 'Switched to light theme.')
-        : nextMode === 'dark'
-          ? l('已切换到深色主题。', 'Switched to dark theme.')
-          : l('已切换到跟随系统主题。', 'Switched to system theme.'),
-    );
-  };
-
-  const handleWindowMinimize = () => {
-    setStatusMessage(l('正在最小化窗口。', 'Minimizing window.'));
-    void appWindow.minimize().catch((nextError) => {
-      const message = nextError instanceof Error ? nextError.message : l('窗口最小化失败', 'Failed to minimize window');
-      setError(message);
-      setStatusMessage(message);
-    });
-  };
-
-  const handleWindowToggleMaximize = () => {
-    setStatusMessage(l('正在切换窗口大小。', 'Toggling window size.'));
-    void appWindow.toggleMaximize().catch((nextError) => {
-      const message = nextError instanceof Error ? nextError.message : l('窗口缩放失败', 'Failed to resize window');
-      setError(message);
-      setStatusMessage(message);
-    });
-  };
-
-  const handleWindowClose = () => {
-    setStatusMessage(l('正在关闭窗口。', 'Closing window.'));
-    void appWindow.close().catch((nextError) => {
-      const message = nextError instanceof Error ? nextError.message : l('关闭窗口失败', 'Failed to close window');
-      setError(message);
-      setStatusMessage(message);
+      return next;
     });
   };
 
@@ -888,7 +1038,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     void runAgent(nextInstruction);
   };
 
-  const handleAgentChoice = (instruction: string) => {
+  const handleAgentChoice = (instruction: string, paperScopeIds?: string[]) => {
     const nextInstruction = instruction.trim();
 
     if (!nextInstruction) {
@@ -898,7 +1048,29 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
 
     setComposerValue(nextInstruction);
     setStatusMessage(l('已选择 Agent 建议，正在继续执行。', 'Selected the Agent suggestion. Continuing execution.'));
-    void runAgent(nextInstruction);
+    void runAgent(nextInstruction, paperScopeIds);
+  };
+
+  const handleInlinePaperSelectionContinue = (instruction: string, paperIds: string[]) => {
+    const nextInstruction = instruction.trim();
+
+    if (!nextInstruction) {
+      setStatusMessage(l('这个请求没有可继续执行的指令。', 'This request has no instruction to continue.'));
+      return;
+    }
+
+    if (paperIds.length === 0) {
+      setStatusMessage(l('请先在这条消息里选择至少一篇论文。', 'Select at least one paper in this message first.'));
+      return;
+    }
+
+    setStatusMessage(
+      l(
+        `已选择 ${paperIds.length} 篇论文，正在继续执行当前任务。`,
+        `Selected ${paperIds.length} papers. Continuing the current task.`,
+      ),
+    );
+    void runAgent(nextInstruction, paperIds);
   };
 
   const handleSelectAgentAttachments = async (kind: 'image' | 'file') => {
@@ -985,49 +1157,34 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     }
 
     setSelectedAgentPresetId(nextPreset.id);
-    setAgentPresetName(nextPreset.label || nextPreset.model);
     setStatusMessage(
       l(`已切换 Agent 模型：${nextPreset.label || nextPreset.model}`, `Switched Agent model: ${nextPreset.label || nextPreset.model}`),
     );
   };
 
-  const createWelcomeMessage = (): AgentChatMessage => ({
-    id: newMessageId(),
-    role: 'assistant',
-    content: l(
-      '选择左侧文献后，直接用自然语言提问或描述任务。普通问答会直接回答；需要修改文库时，我会调用工具生成可审查计划，只有确认后才写入本地文库。',
-      'You can chat directly, or select papers on the left to add literature context. Plain Q&A is answered directly; library edits are converted into reviewable tool plans and written only after confirmation.',
-    ),
-    meta: l(
-      '支持问答、重命名、元数据补全、智能标签、标签清洗、自动归类',
-      'Q&A, renaming, metadata completion, smart tags, tag cleanup, and auto-classification',
-    ),
-    createdAt: Date.now(),
-    trace: [
-      {
-        id: 'welcome-intent',
-        type: 'intent',
-        title: l('等待用户指令', 'Waiting for user instruction'),
-        summary: l('可直接输入问题，也可以先在左侧选择论文后再执行任务。', 'You can type a question directly, or select papers on the left before running a task.'),
-        status: 'waiting',
-      },
-    ],
-  });
-
   const handleNewAgentSession = () => {
+    if (!hasAgentConversationHistory(messages)) {
+      setPlan(null);
+      setApprovedItemIds(new Set());
+      setLastInstruction('');
+      setComposerValue('');
+      setAgentAttachments([]);
+      setAgentRagEnabled(true);
+      setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
+      setError('');
+      setStatusMessage(l('当前已经是新的空白对话。', 'You are already in a blank new chat.'));
+      return;
+    }
+
     setActiveSessionId(newAgentSessionId());
     setMessages([createLocalizedWelcomeMessage()]);
     setPlan(null);
     setApprovedItemIds(new Set());
-    setSelectedInspectorItemId(null);
     setLastInstruction('');
     setComposerValue('');
     setAgentAttachments([]);
     setAgentRagEnabled(true);
     setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
-    if (agentModelPresets[0]) {
-      setAgentPresetName(agentModelPresets[0].label || agentModelPresets[0].model);
-    }
     setError('');
     setStatusMessage(l('已创建新的 Agent 对话。', 'Created a new Agent chat.'));
   };
@@ -1043,9 +1200,6 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       agentModelPresets.find((preset) => preset.id === session.selectedModelPresetId) ??
       agentModelPresets[0] ??
       null;
-    if (restoredPreset) {
-      setAgentPresetName(restoredPreset.label || restoredPreset.model);
-    }
     setAgentAttachments(session.attachments ?? []);
     restoreDraftStateFromMessages(session.messages);
     setComposerValue('');
@@ -1061,15 +1215,11 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       setMessages([createLocalizedWelcomeMessage()]);
       setPlan(null);
       setApprovedItemIds(new Set());
-      setSelectedInspectorItemId(null);
       setLastInstruction('');
       setComposerValue('');
       setAgentAttachments([]);
       setAgentRagEnabled(true);
       setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
-      if (agentModelPresets[0]) {
-        setAgentPresetName(agentModelPresets[0].label || agentModelPresets[0].model);
-      }
       setError('');
     }
 
@@ -1084,27 +1234,12 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
     setMessages(nextMessages);
     setPlan(null);
     setApprovedItemIds(new Set());
-    setSelectedInspectorItemId(null);
     setLastInstruction('');
     setComposerValue('');
     setAgentAttachments([]);
     setAgentRagEnabled(true);
     setSelectedAgentPresetId((current) => current ?? agentModelPresets[0]?.id ?? null);
-    if (agentModelPresets[0]) {
-      setAgentPresetName(agentModelPresets[0].label || agentModelPresets[0].model);
-    }
-    setHistorySessions([
-      buildAgentHistorySession({
-        id: nextSessionId,
-        messages: nextMessages,
-        selectedPaperIds: [...selectedPaperIds],
-        lastInstruction: '',
-        ragEnabled: true,
-        selectedModelPresetId: selectedAgentPresetId ?? undefined,
-        attachments: [],
-        locale,
-      }),
-    ]);
+    setHistorySessions([]);
     setStatusMessage(l('已清空 Agent 历史记录。', 'Cleared Agent history.'));
   };
 
@@ -1121,9 +1256,7 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       activeSessionId={activeSessionId}
       activeSessionRunning={activeSessionRunning}
       agentAttachments={agentAttachments}
-      agentCapabilities={agentCapabilities}
       agentModelPresets={agentModelPresets}
-      agentPresetName={agentPresetName}
       agentRagEnabled={agentRagEnabled}
       applyingPlan={applyingPlan}
       approvedItemIds={approvedItemIds}
@@ -1144,23 +1277,14 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       handleModifyPreviousParameters={handleModifyPreviousParameters}
       handleNewAgentSession={handleNewAgentSession}
       handleOpenHistorySession={handleOpenHistorySession}
-      handleOpenPreferences={handleOpenPreferences}
-      handleInspectorWheelCapture={handleInspectorWheelCapture}
-      handlePaperWheelCapture={handlePaperWheelCapture}
       handlePreviewOnly={handlePreviewOnly}
       handleRetryAgent={handleRetryAgent}
-      handleToggleThemeMode={handleToggleThemeMode}
-      handleWindowClose={handleWindowClose}
-      handleWindowMinimize={handleWindowMinimize}
-      handleWindowToggleMaximize={handleWindowToggleMaximize}
       historySidebarCollapsed={historySidebarCollapsed}
       historySidebarRef={historySidebarRef}
-      inspectorSidebarRef={inspectorSidebarRef}
       l={l}
       lastInstruction={lastInstruction}
       loading={loading}
       locale={locale}
-      localizedCapabilityTitles={localizedCapabilityTitles}
       localizedToolLabel={localizedToolLabel}
       messages={messages}
       onApplyPlan={() => {
@@ -1173,12 +1297,13 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         void copyToolParameters(toolCall);
       }}
       onAgentPresetChange={handleAgentPresetChange}
+      onAgentReasoningEffortChange={setSelectedAgentReasoningEffort}
       onCaptureScreenshot={() => {
         void handleCaptureAgentScreenshot();
       }}
       onHistorySidebarCollapsedChange={setHistorySidebarCollapsed}
-      onInspectPlanItem={(itemId, paperTitle) => {
-        setSelectedInspectorItemId(itemId);
+      onInlinePaperSelectionContinue={handleInlinePaperSelectionContinue}
+      onInspectPlanItem={(_itemId, paperTitle) => {
         setStatusMessage(l(`正在查看计划项：${paperTitle}`, `Inspecting plan item: ${paperTitle}`));
       }}
       onPaperSearchQueryChange={setPaperSearchQuery}
@@ -1186,6 +1311,8 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
         void refreshPapers();
       }}
       onRemoveAttachment={handleRemoveAgentAttachment}
+      onFindPapers={handleFindPapers}
+      onRecommendPapers={handleRecommendPapers}
       onSelectAllVisible={selectAllVisible}
       onSelectFileAttachments={() => {
         void handleSelectAgentAttachments('file');
@@ -1196,28 +1323,25 @@ function AgentWorkspace({ onOpenPreferences }: AgentWorkspaceProps) {
       onSubmitPrompt={submitPrompt}
       onToggleAgentRag={handleToggleAgentRag}
       onTogglePaper={togglePaper}
+      onUseFullLibraryRag={handleUseFullLibraryRag}
       onTogglePlanItem={togglePlanItem}
       onToggleStep={toggleStep}
       onToggleTool={toggleTool}
       paperSearchQuery={paperSearchQuery}
-      paperSidebarRef={paperSidebarRef}
       papers={papers}
       plan={plan}
       promptSuggestions={locale === 'en-US' ? promptSuggestionsEn : promptSuggestions}
-      selectedInspectorItem={selectedInspectorItem}
       selectedAgentPresetId={selectedAgentPresetId ?? ''}
+      selectedAgentReasoningEffort={selectedAgentReasoningEffort}
       selectedPaperIds={selectedPaperIds}
       selectedPapers={selectedPapers}
-      selectedPlanItems={selectedPlanItems}
       selectedTags={selectedTags}
       screenshotLoading={capturingScreenshot}
       setStatusMessage={setStatusMessage}
       sortedHistorySessions={sortedHistorySessions}
-      statusMessage={statusMessage}
       submitPromptFromEnter={() => {
         void runAgent(composerValue);
       }}
-      themeMode={themeMode}
     />
   );
 }

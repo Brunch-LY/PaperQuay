@@ -22,7 +22,7 @@ import { useLocaleText } from '../../i18n/uiLanguage';
 import { approveWritePath, selectSavePdfPath, writeLocalBinaryFile } from '../../services/desktop';
 import type { PdfSource, TextSelectionPayload } from '../../types/reader';
 import { cn } from '../../utils/cn';
-import { buildSiblingPath } from '../../utils/mineruCache';
+import { buildPathInDirectory, getParentDirectory, normalizePathForCompare } from '../../utils/path';
 import { getFileNameFromPath, normalizeSelectionText } from '../../utils/text';
 import {
   applyPdfAnnotationToolColors,
@@ -33,6 +33,13 @@ import {
   persistPdfAnnotationToolColors,
   type PdfAnnotationColorTool,
 } from './annotationColors';
+import { buildPdfJsDocumentInit } from './pdfDocumentSource';
+import {
+  buildAnnotatedFileName,
+  buildAnnotatedSiblingPath,
+  isPdfLifecycleCancellation,
+  releasePdfDocument,
+} from './pdfViewerUtils';
 
 GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -50,48 +57,6 @@ interface PdfAnnotationWorkspaceProps {
   onTextSelect?: (selection: TextSelectionPayload) => void;
   onClearSelectedExcerpt?: () => void;
   onSaveSuccess?: (path: string) => void;
-}
-
-function buildAnnotatedFileName(fileName: string) {
-  const trimmedName = fileName.trim() || 'document.pdf';
-  const lowerName = trimmedName.toLowerCase();
-
-  if (lowerName.endsWith('.annotated.pdf')) {
-    return trimmedName;
-  }
-
-  if (!lowerName.endsWith('.pdf')) {
-    return `${trimmedName}.annotated.pdf`;
-  }
-
-  return `${trimmedName.slice(0, -4)}.annotated.pdf`;
-}
-
-function getParentDirectory(path: string) {
-  const normalizedPath = path.replace(/\//g, '\\');
-  const separatorIndex = normalizedPath.lastIndexOf('\\');
-
-  return separatorIndex >= 0 ? normalizedPath.slice(0, separatorIndex) : '';
-}
-
-function buildAnnotatedSiblingPath(path: string) {
-  return buildSiblingPath(path, buildAnnotatedFileName(getFileNameFromPath(path) || 'document.pdf'));
-}
-
-function buildPathInDirectory(directory: string, fileName: string) {
-  const trimmedDirectory = directory.trim().replace(/[\\/]+$/, '');
-
-  if (!trimmedDirectory) {
-    return fileName;
-  }
-
-  const separator = trimmedDirectory.includes('\\') ? '\\' : '/';
-
-  return `${trimmedDirectory}${separator}${fileName}`;
-}
-
-function normalizePathForCompare(path: string) {
-  return path.replace(/\//g, '\\').trim().toLowerCase();
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -195,26 +160,7 @@ function PdfAnnotationWorkspace({
     );
   }, [l]);
 
-  const documentInit = useMemo(() => {
-    if (pdfData) {
-      return {
-        data: pdfData.slice(),
-      };
-    }
-
-    if (source?.kind === 'remote-url') {
-      return source.headers
-        ? {
-            url: source.url,
-            httpHeaders: source.headers,
-          }
-        : {
-            url: source.url,
-          };
-    }
-
-    return null;
-  }, [pdfData, source]);
+  const documentInit = useMemo(() => buildPdfJsDocumentInit(source, pdfData), [pdfData, source]);
 
   useEffect(() => {
     toolModeRef.current = toolMode;
@@ -422,6 +368,7 @@ function PdfAnnotationWorkspace({
         return loadingTask.promise
           .then((pdfDocument: any) => {
             if (cancelled) {
+              releasePdfDocument(pdfDocument);
               return;
             }
 
@@ -433,6 +380,11 @@ function PdfAnnotationWorkspace({
           })
           .catch((loadError: unknown) => {
             if (cancelled) {
+              return;
+            }
+
+            if (isPdfLifecycleCancellation(loadError)) {
+              setLoading(false);
               return;
             }
 
@@ -450,6 +402,11 @@ function PdfAnnotationWorkspace({
       })
       .catch((loadError: unknown) => {
         if (cancelled) {
+          return;
+        }
+
+        if (isPdfLifecycleCancellation(loadError)) {
+          setLoading(false);
           return;
         }
 
@@ -488,12 +445,15 @@ function PdfAnnotationWorkspace({
         selectionTimerRef.current = null;
       }
 
+      const pdfDocumentToDestroy = pdfDocumentRef.current;
       pdfDocumentRef.current = null;
       pdfViewerRef.current = null;
       viewer.textContent = '';
 
       const loadingTaskToDestroy = loadingTaskRef.current;
       loadingTaskRef.current = null;
+
+      releasePdfDocument(pdfDocumentToDestroy);
 
       if (loadingTaskToDestroy?.destroy) {
         void loadingTaskToDestroy.destroy();
@@ -538,7 +498,9 @@ function PdfAnnotationWorkspace({
   }, [onTextSelect]);
 
   const handleSave = useCallback(async () => {
-    if (!pdfDocumentRef.current || saving) {
+    const pdfDocument = pdfDocumentRef.current;
+
+    if (!pdfDocument || saving) {
       return;
     }
 
@@ -580,7 +542,12 @@ function PdfAnnotationWorkspace({
         );
       }
 
-      const nextBytes = await pdfDocumentRef.current.saveDocument();
+      const nextBytes = await pdfDocument.saveDocument();
+
+      if (pdfDocumentRef.current !== pdfDocument) {
+        return;
+      }
+
       await approveWritePath(targetPath);
       await writeLocalBinaryFile(targetPath, new Uint8Array(nextBytes));
       setSaveMessage(

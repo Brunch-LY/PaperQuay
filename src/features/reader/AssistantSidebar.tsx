@@ -4,29 +4,37 @@ import {
   Info,
   Languages,
   MessageSquare,
-  PanelRightClose,
   PanelRightOpen,
   Quote,
   Settings2,
 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type {
+  CreateNoteRequest,
+  Note,
+  NoteAnchor,
+  NoteAnchorInsertRequest,
+  UpdateNoteRequest,
+} from '../../types/notes';
+import type {
   AssistantPanelKey,
   DocumentChatAttachment,
   DocumentChatCitation,
   DocumentChatMessage,
+  DocumentChatRenderMode,
   DocumentChatSession,
+  ModelReasoningEffort,
   PaperAnnotation,
   QaModelPreset,
   SelectedExcerpt,
   ZoteroRelatedNote,
 } from '../../types/reader';
 import { cn } from '../../utils/cn';
+import { NotesSidebar } from '../notes/NotesSidebar';
 import { ChatPanel, ChatWorkspacePanel } from './assistantSidebarChat';
 import {
   AnnotationsDrawerContent,
   InfoDrawerContent,
-  NotesDrawerContent,
   TranslateDrawerContent,
 } from './assistantSidebarDrawers';
 import { SectionCard, SelectionPanel, SummaryPanel } from './assistantSidebarPrimitives';
@@ -44,6 +52,17 @@ export interface AssistantSidebarCoreProps {
   statusMessage?: string;
   hasBlocks: boolean;
   aiConfigured: boolean;
+  paperId: string;
+  notes: Note[];
+  activeNoteId: string | null;
+  notesLoading: boolean;
+  notesSaving: boolean;
+  notesError: string;
+  pendingAnchorInsert?: NoteAnchorInsertRequest | null;
+  onPendingAnchorInsertHandled?: (requestId: string) => void;
+  noteEditorSourceId?: string;
+  externalUpdateNote?: Note | null;
+  onExternalUpdateApply?: (note: Note) => void;
   qaSessions: DocumentChatSession[];
   selectedQaSessionId: string;
   qaMessages: DocumentChatMessage[];
@@ -52,6 +71,8 @@ export interface AssistantSidebarCoreProps {
   qaModelPresets: QaModelPreset[];
   selectedQaPresetId: string;
   qaRagEnabled: boolean;
+  qaAnswerRenderMode: DocumentChatRenderMode;
+  qaReasoningEffort: ModelReasoningEffort;
   qaLoading: boolean;
   qaError: string;
   screenshotLoading?: boolean;
@@ -60,6 +81,8 @@ export interface AssistantSidebarCoreProps {
   onQaSubmit: () => void;
   onQaPresetChange: (presetId: string) => void;
   onQaRagEnabledChange: (value: boolean) => void;
+  onQaAnswerRenderModeChange: (mode: DocumentChatRenderMode) => void;
+  onQaReasoningEffortChange: (reasoningEffort: ModelReasoningEffort) => void;
   onQaSessionCreate: () => void;
   onQaSessionSelect: (sessionId: string) => void;
   onQaSessionDelete: (sessionId: string) => void;
@@ -68,6 +91,15 @@ export interface AssistantSidebarCoreProps {
   onCaptureScreenshot: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
   onCitationClick: (citation: DocumentChatCitation) => void;
+  onCreateNote: (request: CreateNoteRequest) => void;
+  onCreateStandaloneNote: () => void;
+  onSelectNote: (note: Note) => void;
+  onUpdateNote: (noteId: string, patch: UpdateNoteRequest, options?: { sourceId?: string }) => void;
+  onDeleteNote: (noteId: string) => void;
+  onJumpToNote: (note: Note) => void;
+  onJumpToNoteAnchor: (note: Note, anchor: NoteAnchor) => void;
+  onAddSelectionToNote: () => void;
+  onSaveAssistantMessageAsNote: (message: DocumentChatMessage) => void;
   selectedExcerpt: SelectedExcerpt | null;
   selectedExcerptTranslation: string;
   selectedExcerptTranslating: boolean;
@@ -112,6 +144,16 @@ function AssistantSidebar({
   statusMessage,
   hasBlocks,
   aiConfigured,
+  notes,
+  activeNoteId,
+  notesLoading,
+  notesSaving,
+  notesError,
+  pendingAnchorInsert = null,
+  onPendingAnchorInsertHandled,
+  noteEditorSourceId,
+  externalUpdateNote = null,
+  onExternalUpdateApply,
   qaSessions,
   selectedQaSessionId,
   qaMessages,
@@ -120,6 +162,8 @@ function AssistantSidebar({
   qaModelPresets,
   selectedQaPresetId,
   qaRagEnabled,
+  qaAnswerRenderMode,
+  qaReasoningEffort,
   qaLoading,
   qaError,
   screenshotLoading = false,
@@ -128,6 +172,8 @@ function AssistantSidebar({
   onQaSubmit,
   onQaPresetChange,
   onQaRagEnabledChange,
+  onQaAnswerRenderModeChange,
+  onQaReasoningEffortChange,
   onQaSessionCreate,
   onQaSessionSelect,
   onQaSessionDelete,
@@ -136,19 +182,20 @@ function AssistantSidebar({
   onCaptureScreenshot,
   onRemoveAttachment,
   onCitationClick,
+  onCreateStandaloneNote,
+  onSelectNote,
+  onUpdateNote,
+  onDeleteNote,
+  onJumpToNote,
+  onJumpToNoteAnchor,
+  onAddSelectionToNote,
+  onSaveAssistantMessageAsNote,
   selectedExcerpt,
   selectedExcerptTranslation,
   selectedExcerptTranslating,
   selectedExcerptError,
   onAppendSelectedExcerptToQa,
-  activeBlockSummary,
-  workspaceNoteMarkdown,
   annotations,
-  zoteroRelatedNotes,
-  zoteroRelatedNotesLoading,
-  zoteroRelatedNotesError,
-  onWorkspaceNoteChange,
-  onAppendSelectedExcerptToNote,
   onCreateAnnotation,
   onDeleteAnnotation,
   onSelectAnnotation,
@@ -185,7 +232,7 @@ function AssistantSidebar({
     },
     {
       key: 'notes' as const,
-      label: l('笔记', 'Notes'),
+      label: l('摘录', 'Clips'),
       icon: FileText,
       onClick: () => togglePanel('notes'),
     },
@@ -197,57 +244,16 @@ function AssistantSidebar({
     },
   ];
 
-  const panelTitle =
-    activePanel === 'chat'
-      ? l('文档问答', 'Document Chat')
-      : activePanel === 'translate'
-        ? l('划词翻译', 'Selection Translation')
-        : activePanel === 'info'
-          ? l('论文信息', 'Paper Info')
-          : activePanel === 'notes'
-            ? l('阅读笔记', 'Reading Notes')
-            : activePanel === 'annotations'
-              ? l('阅读批注', 'Reading Annotations')
-              : '';
-
-  const panelDescription =
-    activePanel === 'chat'
-      ? documentMeta || l('基于当前文档内容进行问答。', 'Ask questions grounded in the current document.')
-      : activePanel === 'translate'
-        ? l('在 PDF 中选中文本后翻译并复用。', 'Translate and reuse selected text from the PDF.')
-        : activePanel === 'info'
-          ? documentSource || l('查看论文元信息与处理状态。', 'Review paper metadata and processing status.')
-          : activePanel === 'notes'
-            ? l('记录工作区笔记并查看关联资料。', 'Capture workspace notes and review related materials.')
-            : activePanel === 'annotations'
-              ? l('管理绑定到文档块的阅读批注。', 'Manage reading annotations linked to document blocks.')
-              : '';
-
   return (
-    <div className="paperquay-assistant flex h-full min-h-0 overflow-hidden">
+    <div className="pq-saas-scope pq-reader-assistant paperquay-assistant flex h-full min-h-0 overflow-hidden">
       <div
         className={cn(
-          'overflow-hidden border-l border-slate-200 bg-slate-50/50 transition-[width] duration-300 ease-in-out',
+          'pq-reader-pane overflow-hidden border-l transition-[width] duration-300 ease-in-out',
           !activePanel && 'border-transparent',
         )}
         style={{ width: activePanel ? panelWidth : 0 }}
       >
         <div className="flex h-full flex-col" style={{ width: panelWidth, minWidth: panelWidth }}>
-          <div className="flex items-center justify-between border-b border-slate-200/80 px-4 py-3">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900">{panelTitle}</div>
-              <div className="mt-1 truncate text-xs text-slate-400">{panelDescription}</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onActivePanelChange(null)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 transition hover:bg-white/80 hover:text-slate-700"
-              aria-label={l('收起右侧面板', 'Collapse right sidebar')}
-            >
-              <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-          </div>
-
           <div className="min-h-0 flex-1">
             {activePanel === 'chat' ? (
               <ChatWorkspacePanel
@@ -263,12 +269,16 @@ function AssistantSidebar({
                 qaModelPresets={qaModelPresets}
                 selectedQaPresetId={selectedQaPresetId}
                 qaRagEnabled={qaRagEnabled}
+                qaAnswerRenderMode={qaAnswerRenderMode}
+                qaReasoningEffort={qaReasoningEffort}
                 screenshotLoading={screenshotLoading}
                 layoutMode={chatLayoutMode}
                 onInputChange={onQaInputChange}
                 onSubmit={onQaSubmit}
                 onQaPresetChange={onQaPresetChange}
                 onQaRagEnabledChange={onQaRagEnabledChange}
+                onQaAnswerRenderModeChange={onQaAnswerRenderModeChange}
+                onQaReasoningEffortChange={onQaReasoningEffortChange}
                 onSessionCreate={onQaSessionCreate}
                 onSessionSelect={onQaSessionSelect}
                 onSessionDelete={onQaSessionDelete}
@@ -278,6 +288,8 @@ function AssistantSidebar({
                 onCaptureScreenshot={onCaptureScreenshot}
                 onRemoveAttachment={onRemoveAttachment}
                 onCitationClick={onCitationClick}
+                onSaveAssistantMessageAsNote={onSaveAssistantMessageAsNote}
+                onCollapseSidebar={() => onActivePanelChange(null)}
               />
             ) : null}
 
@@ -291,6 +303,7 @@ function AssistantSidebar({
                 onAppendSelectedExcerptToQa={onAppendSelectedExcerptToQa}
                 onTranslateSelectedExcerpt={onTranslateSelectedExcerpt}
                 onClearSelectedExcerpt={onClearSelectedExcerpt}
+                onCollapse={() => onActivePanelChange(null)}
               />
             ) : null}
 
@@ -306,19 +319,31 @@ function AssistantSidebar({
                 statusMessage={statusMessage}
                 hasBlocks={hasBlocks}
                 aiConfigured={aiConfigured}
+                onCollapse={() => onActivePanelChange(null)}
               />
             ) : null}
 
             {activePanel === 'notes' ? (
-              <NotesDrawerContent
-                activeBlockSummary={activeBlockSummary}
-                workspaceNoteMarkdown={workspaceNoteMarkdown}
-                zoteroRelatedNotes={zoteroRelatedNotes}
-                zoteroRelatedNotesLoading={zoteroRelatedNotesLoading}
-                zoteroRelatedNotesError={zoteroRelatedNotesError}
+              <NotesSidebar
+                notes={notes}
+                activeNoteId={activeNoteId}
+                documentTitle={documentTitle}
+                loading={notesLoading}
+                saving={notesSaving}
+                error={notesError}
                 selectedExcerpt={selectedExcerpt}
-                onWorkspaceNoteChange={onWorkspaceNoteChange}
-                onAppendSelectedExcerptToNote={onAppendSelectedExcerptToNote}
+                pendingAnchorInsert={pendingAnchorInsert}
+                onPendingAnchorInsertHandled={onPendingAnchorInsertHandled}
+                noteEditorSourceId={noteEditorSourceId}
+                externalUpdateNote={externalUpdateNote}
+                onExternalUpdateApply={onExternalUpdateApply}
+                onAddSelectionToNote={onAddSelectionToNote}
+                onCreateStandaloneNote={onCreateStandaloneNote}
+                onSelectNote={onSelectNote}
+                onUpdateNote={onUpdateNote}
+                onDeleteNote={onDeleteNote}
+                onJumpToNoteAnchor={onJumpToNoteAnchor}
+                onCollapse={() => onActivePanelChange(null)}
               />
             ) : null}
 
@@ -328,13 +353,14 @@ function AssistantSidebar({
                 onCreateAnnotation={onCreateAnnotation}
                 onDeleteAnnotation={onDeleteAnnotation}
                 onSelectAnnotation={onSelectAnnotation}
+                onCollapse={() => onActivePanelChange(null)}
               />
             ) : null}
           </div>
         </div>
       </div>
 
-      <div className="z-10 flex h-full w-12 flex-col items-center border-l border-slate-200 bg-white py-4 shadow-[-2px_0_10px_rgba(0,0,0,0.02)]">
+      <div className="pq-reader-pane z-10 flex h-full w-12 flex-col items-center rounded-none border-l py-4 shadow-[-8px_0_26px_rgba(31,41,55,0.06)]">
         <div className="flex flex-col items-center gap-1.5">
           {activityItems.map((item) => {
             const active = activePanel === item.key;
@@ -348,12 +374,12 @@ function AssistantSidebar({
                 className={cn(
                   'relative flex h-10 w-10 items-center justify-center rounded-xl transition',
                   active
-                    ? 'bg-indigo-50 text-indigo-600'
-                    : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600',
+                    ? 'bg-[var(--pq-accent-soft)] text-[var(--pq-accent)] ring-1 ring-[var(--pq-accent-ring)]'
+                    : 'text-[var(--pq-text-muted)] hover:bg-white/70 hover:text-[var(--pq-text)]',
                 )}
               >
                 {active ? (
-                  <span className="absolute bottom-2 left-0 top-2 w-0.5 rounded-full bg-indigo-600" />
+                  <span className="absolute bottom-2 left-0 top-2 w-0.5 rounded-full bg-[var(--pq-accent)]" />
                 ) : null}
                 <Icon className="h-4.5 w-4.5" strokeWidth={1.9} />
               </button>
@@ -367,7 +393,7 @@ function AssistantSidebar({
               type="button"
               onClick={onDetach}
               title={l('弹出文档问答窗口', 'Open document chat window')}
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              className="pq-icon-button h-10 w-10"
             >
               <ExternalLink className="h-4.5 w-4.5" strokeWidth={1.9} />
             </button>
@@ -378,7 +404,7 @@ function AssistantSidebar({
               type="button"
               onClick={onAttachBack}
               title={l('停靠回侧边栏', 'Dock Back to Sidebar')}
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              className="pq-icon-button h-10 w-10"
             >
               <PanelRightOpen className="h-4.5 w-4.5" strokeWidth={1.9} />
             </button>
@@ -389,7 +415,7 @@ function AssistantSidebar({
               type="button"
               onClick={onOpenPreferences}
               title={l('设置', 'Settings')}
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              className="pq-icon-button h-10 w-10"
             >
               <Settings2 className="h-4.5 w-4.5" strokeWidth={1.9} />
             </button>

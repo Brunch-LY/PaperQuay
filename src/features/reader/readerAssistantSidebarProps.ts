@@ -16,6 +16,17 @@ export interface BuildReaderAssistantSidebarInput {
   statusMessage: string;
   hasBlocks: boolean;
   aiConfigured: boolean;
+  paperId: AssistantSidebarCoreProps['paperId'];
+  notes: AssistantSidebarCoreProps['notes'];
+  activeNoteId: AssistantSidebarCoreProps['activeNoteId'];
+  notesLoading: AssistantSidebarCoreProps['notesLoading'];
+  notesSaving: AssistantSidebarCoreProps['notesSaving'];
+  notesError: AssistantSidebarCoreProps['notesError'];
+  pendingAnchorInsert: AssistantSidebarCoreProps['pendingAnchorInsert'];
+  onPendingAnchorInsertHandled: AssistantSidebarCoreProps['onPendingAnchorInsertHandled'];
+  noteEditorSourceId: AssistantSidebarCoreProps['noteEditorSourceId'];
+  externalUpdateNote: AssistantSidebarCoreProps['externalUpdateNote'];
+  onExternalUpdateApply: AssistantSidebarCoreProps['onExternalUpdateApply'];
   qaSessions: AssistantSidebarCoreProps['qaSessions'];
   selectedQaSessionId: AssistantSidebarCoreProps['selectedQaSessionId'];
   qaMessages: AssistantSidebarCoreProps['qaMessages'];
@@ -24,6 +35,8 @@ export interface BuildReaderAssistantSidebarInput {
   qaModelPresets: AssistantSidebarCoreProps['qaModelPresets'];
   selectedQaPresetId: AssistantSidebarCoreProps['selectedQaPresetId'];
   qaRagEnabled: AssistantSidebarCoreProps['qaRagEnabled'];
+  qaAnswerRenderMode: AssistantSidebarCoreProps['qaAnswerRenderMode'];
+  qaReasoningEffort: AssistantSidebarCoreProps['qaReasoningEffort'];
   qaLoading: AssistantSidebarCoreProps['qaLoading'];
   qaError: AssistantSidebarCoreProps['qaError'];
   screenshotLoading: NonNullable<AssistantSidebarCoreProps['screenshotLoading']>;
@@ -31,6 +44,8 @@ export interface BuildReaderAssistantSidebarInput {
   onQaSubmit: AssistantSidebarCoreProps['onQaSubmit'];
   onQaPresetChange: AssistantSidebarCoreProps['onQaPresetChange'];
   onQaRagEnabledChange: AssistantSidebarCoreProps['onQaRagEnabledChange'];
+  onQaAnswerRenderModeChange: AssistantSidebarCoreProps['onQaAnswerRenderModeChange'];
+  onQaReasoningEffortChange: AssistantSidebarCoreProps['onQaReasoningEffortChange'];
   onQaSessionCreate: AssistantSidebarCoreProps['onQaSessionCreate'];
   onQaSessionSelect: AssistantSidebarCoreProps['onQaSessionSelect'];
   onQaSessionDelete: AssistantSidebarCoreProps['onQaSessionDelete'];
@@ -39,6 +54,15 @@ export interface BuildReaderAssistantSidebarInput {
   onCaptureScreenshot: AssistantSidebarCoreProps['onCaptureScreenshot'];
   onRemoveAttachment: AssistantSidebarCoreProps['onRemoveAttachment'];
   onCitationClick: AssistantSidebarCoreProps['onCitationClick'];
+  onCreateNote: AssistantSidebarCoreProps['onCreateNote'];
+  onCreateStandaloneNote: AssistantSidebarCoreProps['onCreateStandaloneNote'];
+  onSelectNote: AssistantSidebarCoreProps['onSelectNote'];
+  onUpdateNote: AssistantSidebarCoreProps['onUpdateNote'];
+  onDeleteNote: AssistantSidebarCoreProps['onDeleteNote'];
+  onJumpToNote: AssistantSidebarCoreProps['onJumpToNote'];
+  onJumpToNoteAnchor: AssistantSidebarCoreProps['onJumpToNoteAnchor'];
+  onAddSelectionToNote: AssistantSidebarCoreProps['onAddSelectionToNote'];
+  onSaveAssistantMessageAsNote: AssistantSidebarCoreProps['onSaveAssistantMessageAsNote'];
   selectedExcerpt: AssistantSidebarCoreProps['selectedExcerpt'];
   selectedExcerptTranslation: AssistantSidebarCoreProps['selectedExcerptTranslation'];
   selectedExcerptTranslating: AssistantSidebarCoreProps['selectedExcerptTranslating'];
@@ -76,6 +100,17 @@ export function buildReaderAssistantSidebarProps(
     statusMessage: input.statusMessage,
     hasBlocks: input.hasBlocks,
     aiConfigured: input.aiConfigured,
+    paperId: input.paperId,
+    notes: input.notes,
+    activeNoteId: input.activeNoteId,
+    notesLoading: input.notesLoading,
+    notesSaving: input.notesSaving,
+    notesError: input.notesError,
+    pendingAnchorInsert: input.pendingAnchorInsert,
+    onPendingAnchorInsertHandled: input.onPendingAnchorInsertHandled,
+    noteEditorSourceId: input.noteEditorSourceId,
+    externalUpdateNote: input.externalUpdateNote,
+    onExternalUpdateApply: input.onExternalUpdateApply,
     qaSessions: input.qaSessions,
     selectedQaSessionId: input.selectedQaSessionId,
     qaMessages: input.qaMessages,
@@ -84,6 +119,8 @@ export function buildReaderAssistantSidebarProps(
     qaModelPresets: input.qaModelPresets,
     selectedQaPresetId: input.selectedQaPresetId,
     qaRagEnabled: input.qaRagEnabled,
+    qaAnswerRenderMode: input.qaAnswerRenderMode,
+    qaReasoningEffort: input.qaReasoningEffort,
     qaLoading: input.qaLoading,
     qaError: input.qaError,
     screenshotLoading: input.screenshotLoading,
@@ -91,6 +128,8 @@ export function buildReaderAssistantSidebarProps(
     onQaSubmit: input.onQaSubmit,
     onQaPresetChange: input.onQaPresetChange,
     onQaRagEnabledChange: input.onQaRagEnabledChange,
+    onQaAnswerRenderModeChange: input.onQaAnswerRenderModeChange,
+    onQaReasoningEffortChange: input.onQaReasoningEffortChange,
     onQaSessionCreate: input.onQaSessionCreate,
     onQaSessionSelect: input.onQaSessionSelect,
     onQaSessionDelete: input.onQaSessionDelete,
@@ -99,6 +138,15 @@ export function buildReaderAssistantSidebarProps(
     onCaptureScreenshot: input.onCaptureScreenshot,
     onRemoveAttachment: input.onRemoveAttachment,
     onCitationClick: input.onCitationClick,
+    onCreateNote: input.onCreateNote,
+    onCreateStandaloneNote: input.onCreateStandaloneNote,
+    onSelectNote: input.onSelectNote,
+    onUpdateNote: input.onUpdateNote,
+    onDeleteNote: input.onDeleteNote,
+    onJumpToNote: input.onJumpToNote,
+    onJumpToNoteAnchor: input.onJumpToNoteAnchor,
+    onAddSelectionToNote: input.onAddSelectionToNote,
+    onSaveAssistantMessageAsNote: input.onSaveAssistantMessageAsNote,
     selectedExcerpt: input.selectedExcerpt,
     selectedExcerptTranslation: input.selectedExcerptTranslation,
     selectedExcerptTranslating: input.selectedExcerptTranslating,

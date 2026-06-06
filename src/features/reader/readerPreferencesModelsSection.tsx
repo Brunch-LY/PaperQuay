@@ -1,17 +1,20 @@
 import clsx from 'clsx';
-import { Settings2 } from 'lucide-react';
+import { Plus, RefreshCw, Settings2, TestTube2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type {
   ModelReasoningEffort,
   ModelRuntimeConfig,
   ModelRuntimeRole,
+  OpenAICompatibleApiMode,
+  OpenAICompatibleModelListResult,
   OpenAICompatibleTestResult,
   QaModelPreset,
   ReaderSettings,
 } from '../../types/reader';
 import {
   getModelRuntimeConfig,
+  MODEL_API_MODE_OPTIONS,
   MODEL_REASONING_OPTIONS,
   normalizeModelRuntimeConfig,
   normalizeModelTemperature,
@@ -49,6 +52,7 @@ interface ReaderPreferencesModelsSectionProps {
   settings: ReaderSettings;
   qaModelPresets: QaModelPreset[];
   onSettingChange: ReaderSettingsChangeHandler;
+  onListLlmModels: (preset: QaModelPreset) => Promise<OpenAICompatibleModelListResult>;
   onTestLlmConnection: (preset?: QaModelPreset) => Promise<OpenAICompatibleTestResult>;
   onQaModelPresetAdd: () => void;
   onQaModelPresetRemove: (presetId: string) => void;
@@ -62,9 +66,7 @@ function buildModelRoleBindings(l: ReaderPreferencesLocalizer): ModelRoleBinding
       runtimeRole: 'translation',
       settingKey: 'translationModelPresetId',
       title: l('文档翻译', 'Document Translation'),
-      description: l(
-        '全文翻译、批量翻译和 MinerU 块翻译。',
-        'Full translation, batch translation, and MinerU block translation.',
+      description: l('Full translation, batch translation, and MinerU block translation.', 'Full translation, batch translation, and MinerU block translation.',
       ),
     },
     {
@@ -72,9 +74,7 @@ function buildModelRoleBindings(l: ReaderPreferencesLocalizer): ModelRoleBinding
       runtimeRole: 'selectionTranslation',
       settingKey: 'selectionTranslationModelPresetId',
       title: l('划词翻译', 'Selection Translation'),
-      description: l(
-        '阅读器中选中文本后的快速翻译。',
-        'Quick translation for selected text in the reader.',
+      description: l('Quick translation for selected text in the reader.', 'Quick translation for selected text in the reader.',
       ),
     },
     {
@@ -82,9 +82,7 @@ function buildModelRoleBindings(l: ReaderPreferencesLocalizer): ModelRoleBinding
       runtimeRole: 'summary',
       settingKey: 'summaryModelPresetId',
       title: l('论文概览', 'Paper Overview'),
-      description: l(
-        '论文概览、文库预览概览和批量概览生成。',
-        'Paper overview, library preview overview, and batch overview generation.',
+      description: l('Paper overview, library preview overview, and batch overview generation.', 'Paper overview, library preview overview, and batch overview generation.',
       ),
     },
     {
@@ -92,9 +90,7 @@ function buildModelRoleBindings(l: ReaderPreferencesLocalizer): ModelRoleBinding
       runtimeRole: 'agent',
       settingKey: 'agentModelPresetId',
       title: 'Agent 工具调用模型',
-      description: l(
-        '用于选择工具、生成参数、批量整理文献。',
-        'Used for tool selection, parameter generation, and batch library operations.',
+      description: l('Used for tool selection, parameter generation, and batch library operations.', 'Used for tool selection, parameter generation, and batch library operations.',
       ),
     },
     {
@@ -102,9 +98,7 @@ function buildModelRoleBindings(l: ReaderPreferencesLocalizer): ModelRoleBinding
       runtimeRole: 'qa',
       settingKey: 'qaActivePresetId',
       title: l('问答默认模型', 'Default QA Model'),
-      description: l(
-        '论文问答助手的默认模型。',
-        'Default model for the paper QA assistant.',
+      description: l('Default model for the paper QA assistant.', 'Default model for the paper QA assistant.',
       ),
     },
   ];
@@ -120,8 +114,8 @@ function formatRuntimeConfig(
       : l('Temp 默认', 'Temp default');
   const reasoningLabel =
     runtimeConfig.reasoningEffort && runtimeConfig.reasoningEffort !== 'auto'
-      ? `${l('思考', 'Reasoning')} ${runtimeConfig.reasoningEffort}`
-      : l('思考 自动', 'Reasoning auto');
+      ? `${l('Reasoning', 'Reasoning')} ${runtimeConfig.reasoningEffort}`
+      : l('推理自动', 'Reasoning auto');
 
   return `${temperatureLabel} · ${reasoningLabel}`;
 }
@@ -133,17 +127,55 @@ export function ReaderPreferencesModelsSection({
   settings,
   qaModelPresets,
   onSettingChange,
+  onListLlmModels,
   onTestLlmConnection,
   onQaModelPresetAdd,
   onQaModelPresetRemove,
   onQaModelPresetChange,
 }: ReaderPreferencesModelsSectionProps) {
+  const [presetModelListLoadingMap, setPresetModelListLoadingMap] = useState<Record<string, boolean>>({});
+  const [presetModelListResultMap, setPresetModelListResultMap] = useState<
+    Record<string, OpenAICompatibleModelListResult | null>
+  >({});
+  const [presetModelListErrorMap, setPresetModelListErrorMap] = useState<Record<string, string>>({});
   const [presetTestLoadingMap, setPresetTestLoadingMap] = useState<Record<string, boolean>>({});
   const [presetTestResultMap, setPresetTestResultMap] = useState<
     Record<string, OpenAICompatibleTestResult | null>
   >({});
   const [expandedModelConfigKey, setExpandedModelConfigKey] = useState<string | null>(null);
   const modelRoleBindings = buildModelRoleBindings(l);
+
+  const handleListModelPresetModels = async (preset: QaModelPreset) => {
+    setPresetModelListLoadingMap((current) => ({
+      ...current,
+      [preset.id]: true,
+    }));
+    setPresetModelListErrorMap((current) => ({
+      ...current,
+      [preset.id]: '',
+    }));
+
+    try {
+      const result = await onListLlmModels(preset);
+      setPresetModelListResultMap((current) => ({
+        ...current,
+        [preset.id]: result,
+      }));
+    } catch (nextError) {
+      setPresetModelListErrorMap((current) => ({
+        ...current,
+        [preset.id]:
+          nextError instanceof Error
+            ? nextError.message
+            : l('读取模型列表失败', 'Failed to load the model list'),
+      }));
+    } finally {
+      setPresetModelListLoadingMap((current) => ({
+        ...current,
+        [preset.id]: false,
+      }));
+    }
+  };
 
   const handleTestModelPreset = async (preset: QaModelPreset) => {
     setPresetTestLoadingMap((current) => ({
@@ -202,45 +234,74 @@ export function ReaderPreferencesModelsSection({
   return (
     <>
       <SettingsField
-        label={l('模型预设库', 'Model Presets')}
-        description={l(
-          '统一维护翻译、概览与问答共用的 OpenAI 兼容模型配置。',
-          'Maintain shared OpenAI-compatible model configurations for translation, overview, and QA.',
+        label={l('Model Presets', 'Model Presets')}
+        description={l('Maintain shared OpenAI-compatible model configurations for translation, overview, and QA.', 'Maintain shared OpenAI-compatible model configurations for translation, overview, and QA.',
         )}
       >
         <div className="space-y-3">
-          {qaModelPresets.map((preset) => (
-            <div
-              key={preset.id}
-              className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
-            >
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm font-medium text-slate-900">
-                  {preset.label || preset.model || l('未命名模型', 'Unnamed Preset')}
+          {qaModelPresets.map((preset) => {
+            const modelListResult = presetModelListResultMap[preset.id];
+            const loadedModels = modelListResult?.models ?? [];
+            const selectedModelInList = loadedModels.some((model) => model.id === preset.model);
+            const modelListError = presetModelListErrorMap[preset.id];
+
+            return (
+              <div
+                key={preset.id}
+                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"
+              >
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 truncate text-sm font-semibold text-slate-900">
+                  {preset.label || preset.model || l('Unnamed Preset', 'Unnamed Preset')}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void handleTestModelPreset(preset)}
-                  disabled={
-                    !preset.baseUrl.trim() ||
-                    !preset.model.trim() ||
-                    !preset.apiKey.trim() ||
-                    Boolean(presetTestLoadingMap[preset.id])
-                  }
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-                >
-                  {presetTestLoadingMap[preset.id]
-                    ? l('测试中...', 'Testing...')
-                    : l('测试', 'Test')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onQaModelPresetRemove(preset.id)}
-                  disabled={qaModelPresets.length <= 1}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
-                >
-                  {l('删除', 'Delete')}
-                </button>
+                <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void handleListModelPresetModels(preset)}
+                    disabled={!preset.baseUrl.trim() || Boolean(presetModelListLoadingMap[preset.id])}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={l('读取模型列表', 'Load model list')}
+                  >
+                    <RefreshCw
+                      className={clsx('h-3.5 w-3.5', presetModelListLoadingMap[preset.id] && 'animate-spin')}
+                      strokeWidth={1.9}
+                    />
+                    <span>
+                      {presetModelListLoadingMap[preset.id]
+                        ? l('Loading', 'Loading')
+                        : l('读取模型', 'Load Models')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleTestModelPreset(preset)}
+                    disabled={
+                      !preset.baseUrl.trim() ||
+                      !preset.model.trim() ||
+                      !preset.apiKey.trim() ||
+                      Boolean(presetTestLoadingMap[preset.id])
+                    }
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={l('测试模型连接', 'Test model connection')}
+                  >
+                    <TestTube2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                    <span>
+                      {presetTestLoadingMap[preset.id]
+                        ? l('Testing', 'Testing')
+                        : l('测试', 'Test')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onQaModelPresetRemove(preset.id)}
+                    disabled={qaModelPresets.length <= 1}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:bg-white disabled:hover:text-slate-500 disabled:opacity-50"
+                    title={l('删除模型预设', 'Delete model preset')}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                    <span>{l('删除', 'Delete')}</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
@@ -260,6 +321,27 @@ export function ReaderPreferencesModelsSection({
                   <div className="text-xs font-medium text-slate-500">
                     {l('模型名称', 'Model Name')}
                   </div>
+                  {loadedModels.length > 0 ? (
+                    <SettingsSelect
+                      value={selectedModelInList ? preset.model : ''}
+                      onChange={(event) => {
+                        if (event.target.value) {
+                          onQaModelPresetChange(preset.id, { model: event.target.value });
+                        }
+                      }}
+                    >
+                      <option value="">
+                        {preset.model && !selectedModelInList
+                          ? l(`当前手动填写：${preset.model}`, `Manual value: ${preset.model}`)
+                          : l('Select a loaded model', 'Select a loaded model')}
+                      </option>
+                      {loadedModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.id}
+                        </option>
+                      ))}
+                    </SettingsSelect>
+                  ) : null}
                   <SettingsInput
                     value={preset.model}
                     onChange={(event) =>
@@ -280,7 +362,33 @@ export function ReaderPreferencesModelsSection({
                     placeholder="https://api.openai.com"
                   />
                 </div>
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-slate-500">
+                    {l('接口格式', 'API Format')}
+                  </div>
+                  <SettingsSelect
+                    value={preset.apiMode}
+                    onChange={(event) =>
+                      onQaModelPresetChange(preset.id, {
+                        apiMode: event.target.value as OpenAICompatibleApiMode,
+                      })
+                    }
+                  >
+                    {MODEL_API_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {l(option.labelZh, option.labelEn)}
+                      </option>
+                    ))}
+                  </SettingsSelect>
+                  <div className="text-[11px] leading-5 text-slate-400">
+                    {
+                      MODEL_API_MODE_OPTIONS.find((option) => option.value === preset.apiMode)?.[
+                        uiLanguage === 'en-US' ? 'descriptionEn' : 'descriptionZh'
+                      ]
+                    }
+                  </div>
+                </div>
+                <div className="space-y-2">
                   <div className="text-xs font-medium text-slate-500">API Key</div>
                   <SettingsInput
                     value={preset.apiKey}
@@ -298,10 +406,21 @@ export function ReaderPreferencesModelsSection({
 
               {!preset.baseUrl.trim() || !preset.model.trim() || !preset.apiKey.trim() ? (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
-                  {l(
-                    'Base URL、模型名称和 API Key 需要同时填写，才能用于测试与调用。',
-                    'Fill in the Base URL, model name, and API key before testing or using this preset.',
+                  {l('Fill in the Base URL, model name, and API key before testing or using this preset.', 'Fill in the Base URL, model name, and API key before testing or using this preset.',
                   )}
+                </div>
+              ) : null}
+
+              {modelListResult ? (
+                <div className="mt-3 rounded-xl border border-[var(--pq-accent-border)] bg-[var(--pq-accent-bg)] px-3 py-2 text-xs leading-5 text-[var(--pq-accent)]">
+                  {l(`Loaded ${loadedModels.length} models from ${modelListResult.endpoint}.`, `Loaded ${loadedModels.length} models from ${modelListResult.endpoint}.`,
+                  )}
+                </div>
+              ) : null}
+
+              {modelListError ? (
+                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">
+                  {modelListError}
                 </div>
               ) : null}
 
@@ -323,38 +442,38 @@ export function ReaderPreferencesModelsSection({
                       : ''}
                   </div>
                   <div className="mt-1 break-all">
-                    {l('地址', 'Endpoint')}:{' '}
-                    {presetTestResultMap[preset.id]?.endpoint || l('未返回', 'Unavailable')}
+                    {l('端点', 'Endpoint')}:{' '}
+                    {presetTestResultMap[preset.id]?.endpoint || l('Unavailable', 'Unavailable')}
                   </div>
                   <div className="mt-1 break-all">
                     {l('模型', 'Model')}:{' '}
                     {presetTestResultMap[preset.id]?.responseModel ||
                       presetTestResultMap[preset.id]?.model ||
-                      l('未返回', 'Unavailable')}
+                      l('Unavailable', 'Unavailable')}
                   </div>
                   <div className="mt-1 whitespace-pre-wrap">
                     {presetTestResultMap[preset.id]?.message}
                   </div>
                 </div>
               ) : null}
-            </div>
-          ))}
+              </div>
+            );
+          })}
 
           <button
             type="button"
             onClick={onQaModelPresetAdd}
-            className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
           >
-            {l('新增模型预设', 'Add Model Preset')}
+            <Plus className="h-4 w-4" strokeWidth={1.9} />
+            <span>{l('新增模型预设', 'Add Model Preset')}</span>
           </button>
         </div>
       </SettingsField>
 
       <SettingsField
         label={l('功能角色绑定', 'Feature Role Binding')}
-        description={l(
-          '为文档翻译、划词翻译、概览、问答与 Agent 工具调用分别选择默认模型。',
-          'Choose default presets for document translation, selection translation, overview, QA, and Agent tool use.',
+        description={l('Choose default presets for document translation, selection translation, overview, QA, and Agent tool use.', 'Choose default presets for document translation, selection translation, overview, QA, and Agent tool use.',
         )}
       >
         <div className="space-y-3">
@@ -367,14 +486,14 @@ export function ReaderPreferencesModelsSection({
             return (
               <div
                 key={binding.key}
-                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-chrome-900/72"
+                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-[var(--pq-sidebar)]"
               >
                 <div className="grid gap-3 lg:grid-cols-[minmax(150px,220px)_minmax(0,1fr)_auto] lg:items-center">
                   <div className="min-w-0">
-                    <div className="text-sm font-medium text-slate-900 dark:text-chrome-100">
+                    <div className="text-sm font-medium text-slate-900 dark:text-[var(--pq-text)]">
                       {binding.title}
                     </div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-chrome-400">
+                    <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-[var(--pq-text-faint)]">
                       {binding.description}
                     </div>
                   </div>
@@ -392,22 +511,22 @@ export function ReaderPreferencesModelsSection({
                     type="button"
                     onClick={() => setExpandedModelConfigKey(expanded ? null : binding.key)}
                     disabled={!selectedPreset}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:bg-chrome-700"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-muted)] dark:hover:bg-[var(--pq-surface-2)]"
                   >
                     <Settings2 className="h-4 w-4" strokeWidth={1.8} />
                     {l('配置', 'Configure')}
                   </button>
                 </div>
-                <div className="mt-2 text-[11px] leading-5 text-slate-400 dark:text-chrome-500">
+                <div className="mt-2 text-[11px] leading-5 text-slate-400 dark:text-[var(--pq-text-faint)]">
                   {selectedPreset
                     ? `${selectedPreset.label || selectedPreset.model} · ${formatRuntimeConfig(l, runtimeConfig)}`
                     : l('未选择模型预设', 'No model preset selected')}
                 </div>
 
                 {expanded && selectedPreset ? (
-                  <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-chrome-800/80 md:grid-cols-2">
+                  <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[var(--pq-surface-1)] md:grid-cols-2">
                     <div className="space-y-2">
-                      <div className="text-xs font-medium text-slate-500 dark:text-chrome-400">
+                      <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-faint)]">
                         {l('温度', 'Temperature')}
                       </div>
                       <SettingsInput
@@ -423,16 +542,14 @@ export function ReaderPreferencesModelsSection({
                         }
                         placeholder={l('默认', 'Default')}
                       />
-                      <div className="text-[11px] leading-5 text-slate-400 dark:text-chrome-500">
-                        {l(
-                          '留空时使用各功能默认值；建议翻译/概览 0.1-0.3，创意生成可提高。',
-                          'Leave blank to use each feature default; 0.1-0.3 is recommended for translation/overview.',
+                      <div className="text-[11px] leading-5 text-slate-400 dark:text-[var(--pq-text-faint)]">
+                        {l('Leave blank to use each feature default; 0.1-0.3 is recommended for translation/overview.', 'Leave blank to use each feature default; 0.1-0.3 is recommended for translation/overview.',
                         )}
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <div className="text-xs font-medium text-slate-500 dark:text-chrome-400">
-                        {l('思考程度', 'Reasoning Effort')}
+                      <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-faint)]">
+                        {l('Reasoning Effort', 'Reasoning Effort')}
                       </div>
                       <SettingsSelect
                         value={runtimeConfig.reasoningEffort ?? 'auto'}
@@ -448,7 +565,7 @@ export function ReaderPreferencesModelsSection({
                           </option>
                         ))}
                       </SettingsSelect>
-                      <div className="text-[11px] leading-5 text-slate-400 dark:text-chrome-500">
+                      <div className="text-[11px] leading-5 text-slate-400 dark:text-[var(--pq-text-faint)]">
                         {
                           MODEL_REASONING_OPTIONS.find(
                             (option) => option.value === (runtimeConfig.reasoningEffort ?? 'auto'),
@@ -466,3 +583,4 @@ export function ReaderPreferencesModelsSection({
     </>
   );
 }
+

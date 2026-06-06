@@ -8,7 +8,10 @@ import {
 } from "react";
 
 import { extractTranslatableMarkdownFromMineruBlock } from "../../services/mineru";
-import { translateTextOpenAICompatible } from "../../services/translation";
+import {
+  translateBlocksOpenAICompatible,
+  translateTextOpenAICompatible,
+} from "../../services/translation";
 import type {
   PositionedMineruBlock,
   QaModelPreset,
@@ -27,11 +30,13 @@ import type { ReaderDocumentTranslationSnapshot } from "./documentReaderShared";
 import {
   countTranslatedBlocks,
   mergeReaderTranslations,
-  readTranslationCache,
   sanitizeTranslationErrorMessage,
   translateBlocksBestEffort,
-  writeTranslationCache,
 } from "./readerTranslation";
+import {
+  readTranslationCache,
+  writeTranslationCache,
+} from "./readerTranslationCache";
 
 type LocaleTextFn = (zh: string, en: string) => string;
 
@@ -438,6 +443,7 @@ export function useDocumentTranslation({
 
       const result = await translateBlocksBestEffort({
         apiKey: translationModelPreset.apiKey.trim(),
+        apiMode: translationModelPreset.apiMode,
         baseUrl: translationModelPreset.baseUrl,
         batchSize: Math.max(1, settings.translationBatchSize),
         blocks: blocksToTranslate,
@@ -475,6 +481,7 @@ export function useDocumentTranslation({
         sourceLanguage: settings.translationSourceLanguage,
         targetLanguage: settings.translationTargetLanguage,
         temperature: getModelRuntimeConfig(settings, "translation").temperature,
+        translateBatch: translateBlocksOpenAICompatible,
       });
       const nextTranslations = result.translations;
       const nextTranslatedCount = countTranslatedBlocks(nextTranslations);
@@ -660,6 +667,7 @@ export function useDocumentTranslation({
             baseUrl: selectionTranslationModelPreset.baseUrl,
             apiKey: selectionTranslationModelPreset.apiKey.trim(),
             model: selectionTranslationModelPreset.model,
+            apiMode: selectionTranslationModelPreset.apiMode,
             temperature: getModelRuntimeConfig(settings, "selectionTranslation")
               .temperature,
             reasoningEffort: getModelRuntimeConfig(

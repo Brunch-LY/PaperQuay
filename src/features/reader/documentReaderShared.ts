@@ -13,10 +13,17 @@ import type {
 import type { LiteraturePaperTaskState } from '../../types/library';
 import { readLocalBinaryFile } from '../../services/desktop';
 import { bytesToDataUrl, decodeUtf8, formatFileSize, guessMimeTypeFromPath, isImagePath, isTextLikePath } from '../../utils/files';
-import { buildPathInDirectory, normalizePathForCompare } from '../../utils/path';
 import { getFileNameFromPath, normalizeSelectionText as normalizeTextSelection } from '../../utils/text';
 import { pickLocaleText } from './readerShared';
 import type { MineruCacheManifest, SummaryCacheEnvelope, TranslationCacheEnvelope } from './readerShared';
+export {
+  appendUniqueLocalPath,
+  buildRemotePdfDownloadPath,
+  ensurePdfExtension,
+  isSameLocalPath,
+  joinLocalPath,
+  sanitizeFilename,
+} from './documentReaderPdfPaths.ts';
 
 export const MIN_LEFT_PANE_RATIO = 0.28;
 export const MAX_LEFT_PANE_RATIO = 0.72;
@@ -137,6 +144,7 @@ export function createChatMessage(
     attachments?: DocumentChatAttachment[];
     modelId?: string;
     modelLabel?: string;
+    renderMode?: DocumentChatMessage['renderMode'];
     qaContext?: DocumentChatQaContext;
     citations?: DocumentChatCitation[];
   },
@@ -149,6 +157,7 @@ export function createChatMessage(
     attachments: options?.attachments,
     modelId: options?.modelId,
     modelLabel: options?.modelLabel,
+    renderMode: options?.renderMode,
     qaContext: options?.qaContext,
     citations: options?.citations,
   };
@@ -267,19 +276,6 @@ export async function buildScreenshotAttachmentFromPath(
   };
 }
 
-export function sanitizeFilename(filename: string): string {
-  const sanitized = filename
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return sanitized || 'document.pdf';
-}
-
-export function ensurePdfExtension(filename: string): string {
-  return filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
-}
-
 export function getMineruJsonDisplayName(path: string): string {
   return path.startsWith('cloud:') ? path.replace(/^cloud:/, '') : getFileNameFromPath(path);
 }
@@ -304,43 +300,6 @@ export function getPreviewPdfName(item: WorkspaceItem, pdfPath: string, source: 
 
   return item.attachmentFilename || item.attachmentTitle || `${item.title}.pdf`;
 }
-export function joinLocalPath(directory: string, filename: string): string {
-  return buildPathInDirectory(directory, filename);
-}
-
-export function buildRemotePdfDownloadPath(
-  directory: string,
-  item: WorkspaceItem,
-  source?: Exclude<PdfSource, null>,
-) {
-  const rawName =
-    (source?.kind === 'remote-url' ? source.fileName : '') ||
-    item.attachmentFilename ||
-    item.attachmentTitle ||
-    item.title ||
-    item.itemKey;
-  const filename = ensurePdfExtension(sanitizeFilename(rawName));
-  const prefix = sanitizeFilename(item.itemKey || item.workspaceId);
-
-  return joinLocalPath(directory, `${prefix}-${filename}`);
-}
-
-export function isSameLocalPath(left: string, right: string): boolean {
-  return normalizePathForCompare(left) === normalizePathForCompare(right);
-}
-
-export function appendUniqueLocalPath(targets: string[], nextPath: string): void {
-  if (!nextPath.trim()) {
-    return;
-  }
-
-  if (targets.some((candidate) => isSameLocalPath(candidate, nextPath))) {
-    return;
-  }
-
-  targets.push(nextPath);
-}
-
 export function waitForNextPaint(): Promise<void> {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => {

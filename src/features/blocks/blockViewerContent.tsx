@@ -6,10 +6,12 @@ import {
 } from 'lucide-react';
 import katex from 'katex';
 import {
+  memo,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
@@ -99,7 +101,7 @@ function useMineruAssetDataUrl(assetPath?: string) {
   };
 }
 
-function EquationContent({
+function EquationContentComponent({
   latex,
   scale,
 }: {
@@ -148,14 +150,16 @@ function EquationContent({
 
   return (
     <div
-      className="my-1 overflow-x-auto overflow-y-hidden rounded-xl bg-white/70 px-3 py-2 text-slate-900 dark:bg-chrome-900/40 dark:text-chrome-100 [&_.katex-display]:my-0 [&_.katex]:text-slate-900 dark:[&_.katex]:text-chrome-100"
+      className="my-1 overflow-x-auto overflow-y-hidden rounded-xl bg-white/70 px-3 py-2 text-slate-900 dark:bg-[var(--pq-sidebar)] dark:text-[var(--pq-text)] [&_.katex-display]:my-0 [&_.katex]:text-slate-900 dark:[&_.katex]:text-[var(--pq-text)]"
       style={{ fontSize: `${15 * scale}px` }}
       dangerouslySetInnerHTML={{ __html: renderedEquation.html }}
     />
   );
 }
 
-function MarkdownContent({
+const EquationContent = memo(EquationContentComponent);
+
+function MarkdownContentComponent({
   markdown,
   scale,
 }: {
@@ -170,13 +174,13 @@ function MarkdownContent({
 
   return (
     <ReactMarkdown
-      className="prose prose-slate max-w-none prose-headings:tracking-tight prose-a:text-indigo-600 prose-strong:text-slate-900 dark:prose-invert dark:prose-strong:text-chrome-100 [&_.katex]:text-slate-900 dark:[&_.katex]:text-chrome-100 [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-2"
+      className="prose prose-slate max-w-none prose-headings:tracking-tight prose-a:text-indigo-600 prose-strong:text-slate-900 dark:prose-invert dark:prose-strong:text-[var(--pq-text)] [&_.katex]:text-slate-900 dark:[&_.katex]:text-[var(--pq-text)] [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-2"
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: false }]]}
       components={{
         p: ({ children }) => (
           <p
-            className="my-0 text-slate-700 dark:text-chrome-200 [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden"
+            className="my-0 text-slate-700 dark:text-[var(--pq-text-muted)] [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden"
             style={bodyStyle}
           >
             {children}
@@ -184,7 +188,7 @@ function MarkdownContent({
         ),
         ul: ({ children }) => (
           <ul
-            className="my-0 list-disc space-y-2 pl-6 text-slate-700 dark:text-chrome-200"
+            className="my-0 list-disc space-y-2 pl-6 text-slate-700 dark:text-[var(--pq-text-muted)]"
             style={bodyStyle}
           >
             {children}
@@ -192,7 +196,7 @@ function MarkdownContent({
         ),
         ol: ({ children }) => (
           <ol
-            className="my-0 list-decimal space-y-2 pl-6 text-slate-700 dark:text-chrome-200"
+            className="my-0 list-decimal space-y-2 pl-6 text-slate-700 dark:text-[var(--pq-text-muted)]"
             style={bodyStyle}
           >
             {children}
@@ -205,7 +209,7 @@ function MarkdownContent({
         ),
         h1: ({ children }) => (
           <h1
-            className="my-0 font-semibold text-slate-950 dark:text-chrome-100"
+            className="my-0 font-semibold text-slate-950 dark:text-[var(--pq-text)]"
             style={{
               fontSize: `${30 * scale}px`,
               lineHeight: `${40 * scale}px`,
@@ -216,7 +220,7 @@ function MarkdownContent({
         ),
         h2: ({ children }) => (
           <h2
-            className="my-0 font-semibold text-slate-950 dark:text-chrome-100"
+            className="my-0 font-semibold text-slate-950 dark:text-[var(--pq-text)]"
             style={{
               fontSize: `${25 * scale}px`,
               lineHeight: `${36 * scale}px`,
@@ -227,7 +231,7 @@ function MarkdownContent({
         ),
         blockquote: ({ children }) => (
           <blockquote
-            className="my-0 border-l-2 border-slate-200 pl-4 italic text-slate-600 dark:border-chrome-700 dark:text-chrome-300"
+            className="my-0 border-l-2 border-slate-200 pl-4 italic text-slate-600 dark:border-[var(--pq-border)] dark:text-[var(--pq-text-muted)]"
             style={bodyStyle}
           >
             {children}
@@ -239,6 +243,8 @@ function MarkdownContent({
     </ReactMarkdown>
   );
 }
+
+const MarkdownContent = memo(MarkdownContentComponent);
 
 function AssetFigure({
   assetPath,
@@ -254,12 +260,52 @@ function AssetFigure({
   scale: number;
 }) {
   const l = useLocaleText();
-  const { dataUrl, loading, error } = useMineruAssetDataUrl(assetPath);
+  const figureRef = useRef<HTMLDivElement | null>(null);
+  const [shouldLoadAsset, setShouldLoadAsset] = useState(false);
+  const { dataUrl, loading, error } = useMineruAssetDataUrl(
+    shouldLoadAsset ? assetPath : undefined,
+  );
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    setShouldLoadAsset(false);
+
+    if (!assetPath) {
+      return undefined;
+    }
+
+    const element = figureRef.current;
+
+    if (!element || !('IntersectionObserver' in window)) {
+      setShouldLoadAsset(true);
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          return;
+        }
+
+        setShouldLoadAsset(true);
+        observer.disconnect();
+      },
+      {
+        rootMargin: '900px 0px',
+      },
+    );
+
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [assetPath]);
 
   return (
     <>
-      <div className="overflow-hidden rounded-[22px] border border-slate-200/80 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
+      <div
+        ref={figureRef}
+        className="overflow-hidden rounded-[22px] border border-slate-200/80 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.05)]"
+      >
         {dataUrl ? (
           <button
             type="button"
@@ -325,7 +371,7 @@ function AssetFigure({
   );
 }
 
-function TableContent({
+function TableContentComponent({
   assetPath,
   captionText,
   tableHtml,
@@ -377,7 +423,7 @@ function TableContent({
           ) : null}
 
           {sanitizedTableHtml ? (
-            <div className="overflow-auto rounded-[20px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] dark:border-chrome-700/80 dark:bg-chrome-800 dark:shadow-[0_10px_24px_rgba(0,0,0,0.18)]">
+            <div className="overflow-auto rounded-[20px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] dark:border-[var(--pq-border)] dark:bg-[var(--pq-surface-1)] dark:shadow-[0_10px_24px_rgba(0,0,0,0.18)]">
               <div
                 className="mineru-table min-w-max p-4"
                 style={{ fontSize: `${14 * scale}px` }}
@@ -403,7 +449,9 @@ function TableContent({
   );
 }
 
-function ImageContent({
+const TableContent = memo(TableContentComponent);
+
+function ImageContentComponent({
   assetPath,
   captionText,
   fallbackMarkdown,
@@ -450,7 +498,23 @@ function ImageContent({
   );
 }
 
-export function BlockItem({
+const ImageContent = memo(ImageContentComponent);
+
+interface BlockItemProps {
+  renderable: RenderableMineruBlock;
+  active: boolean;
+  hovered: boolean;
+  flashing: boolean;
+  scale: number;
+  showBlockMeta: boolean;
+  compactMode: boolean;
+  translatedText?: string;
+  translationDisplayMode: TranslationDisplayMode;
+  onClick: (block: PositionedMineruBlock) => void;
+  registerRef: (blockId: string, element: HTMLDivElement | null) => void;
+}
+
+function BlockItemComponent({
   renderable,
   active,
   hovered,
@@ -462,19 +526,7 @@ export function BlockItem({
   translationDisplayMode,
   onClick,
   registerRef,
-}: {
-  renderable: RenderableMineruBlock;
-  active: boolean;
-  hovered: boolean;
-  flashing: boolean;
-  scale: number;
-  showBlockMeta: boolean;
-  compactMode: boolean;
-  translatedText?: string;
-  translationDisplayMode: TranslationDisplayMode;
-  onClick: (block: PositionedMineruBlock) => void;
-  registerRef: (element: HTMLDivElement | null) => void;
-}) {
+}: BlockItemProps) {
   const l = useLocaleText();
   const { block, markdown, mathText, plainText, tableHtml, captionText, assetPath } = renderable;
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -484,14 +536,20 @@ export function BlockItem({
   const showBilingual = hasTranslation && translationDisplayMode === 'bilingual';
   const effectiveMarkdown = showTranslatedOnly ? translatedText || markdown : markdown;
   const effectivePlainText = showTranslatedOnly ? translatedText || plainText : plainText;
-  const displayMarkdown =
-    block.type === 'list'
-      ? renderListMarkdownContent(effectiveMarkdown || effectivePlainText || markdown)
-      : effectiveMarkdown;
-  const displayTranslatedMarkdown =
-    block.type === 'list' && translatedText
-      ? renderListMarkdownContent(translatedText)
-      : translatedText;
+  const displayMarkdown = useMemo(
+    () =>
+      block.type === 'list'
+        ? renderListMarkdownContent(effectiveMarkdown || effectivePlainText || markdown)
+        : effectiveMarkdown,
+    [block.type, effectiveMarkdown, effectivePlainText, markdown],
+  );
+  const displayTranslatedMarkdown = useMemo(
+    () =>
+      block.type === 'list' && translatedText
+        ? renderListMarkdownContent(translatedText)
+        : translatedText,
+    [block.type, translatedText],
+  );
 
   useEffect(
     () => () => {
@@ -534,10 +592,19 @@ export function BlockItem({
   };
 
   const metaScale = Math.min(scale, 1.1);
+  const contentVisibilityStyle = {
+    contentVisibility: 'auto',
+    containIntrinsicSize:
+      block.type === 'title'
+        ? '88px'
+        : block.type === 'image' || block.type === 'table'
+          ? '360px'
+          : '160px',
+  } as CSSProperties;
 
   return (
     <div
-      ref={registerRef}
+      ref={(element) => registerRef(block.blockId, element)}
       data-block-id={block.blockId}
       onPointerDown={(event) => {
         pointerStartRef.current = {
@@ -546,12 +613,13 @@ export function BlockItem({
         };
       }}
       onClick={handleClick}
+      style={contentVisibilityStyle}
       className={cn(
         'group relative cursor-text select-text rounded-[18px] border border-transparent transition-all duration-200',
         compactMode ? 'px-3 py-2' : 'px-5 py-3',
         active &&
-          'bg-white shadow-[0_18px_40px_rgba(79,70,229,0.09)] dark:bg-chrome-800 dark:shadow-[0_18px_40px_rgba(79,70,229,0.12)]',
-        hovered && !active && 'bg-slate-100/70 dark:bg-chrome-700/60',
+          'bg-white shadow-[0_18px_40px_rgba(79,70,229,0.09)] dark:bg-[var(--pq-surface-1)] dark:shadow-[0_18px_40px_rgba(79,70,229,0.12)]',
+        hovered && !active && 'bg-slate-100/70 dark:bg-[var(--pq-surface-2)]',
         flashing && 'ring-2 ring-indigo-200/80',
       )}
     >
@@ -627,7 +695,7 @@ export function BlockItem({
           )}
 
           {showBilingual && translatedText && block.type !== 'equation' ? (
-            <div className="mt-4 rounded-[18px] border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-white/10 dark:bg-chrome-800">
+            <div className="mt-4 rounded-[18px] border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-white/10 dark:bg-[var(--pq-surface-1)]">
               <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-500 dark:text-[#b8c2d9]">
                 <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
                 {l('译文', 'Translation')}
@@ -640,3 +708,21 @@ export function BlockItem({
     </div>
   );
 }
+
+function areBlockItemPropsEqual(previous: BlockItemProps, next: BlockItemProps) {
+  return (
+    previous.renderable === next.renderable &&
+    previous.active === next.active &&
+    previous.hovered === next.hovered &&
+    previous.flashing === next.flashing &&
+    previous.scale === next.scale &&
+    previous.showBlockMeta === next.showBlockMeta &&
+    previous.compactMode === next.compactMode &&
+    previous.translatedText === next.translatedText &&
+    previous.translationDisplayMode === next.translationDisplayMode &&
+    previous.onClick === next.onClick &&
+    previous.registerRef === next.registerRef
+  );
+}
+
+export const BlockItem = memo(BlockItemComponent, areBlockItemPropsEqual);

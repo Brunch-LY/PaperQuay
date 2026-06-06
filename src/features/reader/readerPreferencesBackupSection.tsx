@@ -235,8 +235,8 @@ export function ReaderPreferencesBackupSection({
     <SettingsField
       label={l('WebDAV 手动远程备份', 'WebDAV Manual Remote Backup')}
       description={l(
-        '数据库始终保留在本地；这里配置远程副本。SQLite 通过 backup API 暂存后上传，PDF、MinerU、翻译和摘要缓存会先上传到临时对象再用 MOVE 提交。',
-        'The database always stays local; this configures remote backup copies. SQLite is staged through the backup API, while PDFs, MinerU, translations, and summaries are uploaded to temporary objects and promoted with MOVE.',
+        '文献库始终保留在本地；这里配置远程副本。文献库 SQLite、RAG embedding 数据库、PDF、MinerU、翻译和摘要缓存会先上传到临时对象再用 MOVE 提交。',
+        'The library always stays local; this configures remote backup copies. The library SQLite database, RAG embedding database, PDFs, MinerU, translations, and summaries are uploaded to temporary objects and promoted with MOVE.',
       )}
     >
       {settings ? (
@@ -313,24 +313,24 @@ export function ReaderPreferencesBackupSection({
             />
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-200">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-muted)]">
             {l(
-              '恢复是补全式的：本地缺什么补什么，本地比云端多的不会删除；本地数据库文件不会被远端 SQLite 直接覆盖。',
-              'Restore is additive: it fills local gaps, never deletes local extras, and never replaces the live local SQLite file with the remote backup.',
+              '恢复是补全式的：本地缺什么补什么，本地比云端多的不会删除；本地文献库会与远端副本合并，不会被直接覆盖。',
+              'Restore is additive: it fills local gaps, never deletes local extras, and merges the remote backup into the local library instead of replacing it directly.',
             )}
           </div>
 
           {message ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-200">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-muted)]">
               {message}
             </div>
           ) : null}
 
           {lastBackup ? (
-            <div className="rounded-2xl border border-teal-200 bg-teal-50/80 px-3 py-2 text-xs leading-5 text-teal-800 dark:border-accent-teal/30 dark:bg-accent-teal/10 dark:text-accent-teal">
+            <div className="rounded-2xl border border-teal-200 bg-teal-50/80 px-3 py-2 text-xs leading-5 text-teal-800 dark:border-[color-mix(in_srgb,var(--pq-accent)_30%,transparent)] dark:bg-[var(--pq-accent)] dark:text-[var(--pq-accent)]">
               {l(
                 `最近备份：上传 ${lastBackup.uploadedCount}，跳过 ${lastBackup.skippedCount}，数据库 ${lastBackup.databaseCount}，PDF ${lastBackup.pdfCount}，缓存 ${lastBackup.derivedCount}`,
-                `Last backup: uploaded ${lastBackup.uploadedCount}, skipped ${lastBackup.skippedCount}, database ${lastBackup.databaseCount}, PDFs ${lastBackup.pdfCount}, caches ${lastBackup.derivedCount}`,
+                `Last backup: uploaded ${lastBackup.uploadedCount}, skipped ${lastBackup.skippedCount}, databases ${lastBackup.databaseCount}, PDFs ${lastBackup.pdfCount}, caches ${lastBackup.derivedCount}`,
               )}
             </div>
           ) : null}
@@ -340,7 +340,7 @@ export function ReaderPreferencesBackupSection({
               {latestBackup.available
                 ? l(
                     `最新远端备份：${latestBackup.backupId ?? 'unknown'}，上传 ${latestBackup.uploadedCount}，PDF ${latestBackup.pdfCount}，缓存 ${latestBackup.derivedCount}`,
-                    `Latest remote backup: ${latestBackup.backupId ?? 'unknown'}, uploaded ${latestBackup.uploadedCount}, PDFs ${latestBackup.pdfCount}, caches ${latestBackup.derivedCount}`,
+                    `Latest remote backup: ${latestBackup.backupId ?? 'unknown'}, uploaded ${latestBackup.uploadedCount}, databases ${latestBackup.databaseCount}, PDFs ${latestBackup.pdfCount}, caches ${latestBackup.derivedCount}`,
                   )
                 : l('远端还没有 latest 备份。', 'No latest backup exists on WebDAV yet.')}
             </div>
@@ -360,7 +360,7 @@ export function ReaderPreferencesBackupSection({
               type="button"
               onClick={() => void handleSave()}
               disabled={working}
-              className="inline-flex rounded-xl border border-teal-200 bg-white px-4 py-2 text-sm font-semibold text-teal-700 transition hover:bg-teal-50 disabled:opacity-60 dark:border-accent-teal/30 dark:bg-chrome-700 dark:text-accent-teal dark:hover:bg-accent-teal/10"
+              className="inline-flex rounded-xl border border-teal-200 bg-white px-4 py-2 text-sm font-semibold text-teal-700 transition hover:bg-teal-50 disabled:opacity-60 dark:border-[color-mix(in_srgb,var(--pq-accent)_30%,transparent)] dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-accent)] dark:hover:bg-[var(--pq-accent-soft)]"
             >
               <ShieldCheck className="mr-2 h-4 w-4" strokeWidth={1.8} />
               {l('保存 WebDAV 设置', 'Save WebDAV Settings')}
@@ -369,7 +369,7 @@ export function ReaderPreferencesBackupSection({
               type="button"
               onClick={() => void handleTestConnection()}
               disabled={working}
-              className="inline-flex rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-100 dark:hover:bg-chrome-600"
+              className="inline-flex rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-60 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text)] dark:hover:bg-[var(--pq-surface-3)]"
             >
               <RefreshCw className={working ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} strokeWidth={1.8} />
               {l('测试连接', 'Test Connection')}
@@ -378,7 +378,7 @@ export function ReaderPreferencesBackupSection({
               type="button"
               onClick={() => void handleRunBackup()}
               disabled={working}
-              className="inline-flex rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-accent-teal dark:text-chrome-950 dark:hover:bg-accent-teal/90"
+              className="inline-flex rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-[var(--pq-accent)] dark:text-[var(--pq-accent-text)] dark:hover:bg-[var(--pq-accent-soft)]"
             >
               <Cloud className="mr-2 h-4 w-4" strokeWidth={1.8} />
               {working ? l('处理中...', 'Working...') : l('立即手动备份', 'Back Up Now')}
@@ -414,7 +414,7 @@ export function ReaderPreferencesBackupSection({
           </div>
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-500 dark:border-white/10 dark:bg-chrome-700 dark:text-chrome-300">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-500 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text-muted)]">
           {loaded
             ? message || l('WebDAV 备份设置不可用', 'WebDAV backup settings unavailable')
             : l('正在读取 WebDAV 备份设置...', 'Loading WebDAV backup settings...')}

@@ -1,27 +1,28 @@
 <h1 align="center">PaperQuay</h1>
 
 <p align="center">
-  English | <a href="./README.zh-CN.md">中文</a>
+  English | <a href="./README.zh-CN.md">Chinese</a>
 </p>
 
 <p align="center">
-  <strong>A desktop-first literature manager for PDF reading, translation, paper overviews, and AI agent workflows.</strong>
+  <strong>A desktop-first literature manager for PDF reading, translation, paper overviews, rich notes, and AI agent workflows.</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-v0.1.6-2563eb?style=flat-square" alt="Version v0.1.6">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
-  <img src="https://img.shields.io/badge/built%20with-Tauri%202-f97316?style=flat-square" alt="Tauri 2">
+  <img src="https://img.shields.io/badge/built%20with-Electron-47848f?style=flat-square" alt="Electron">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
-  <img src="https://img.shields.io/badge/database-SQLite-111827?style=flat-square" alt="SQLite">
+  <img src="https://img.shields.io/badge/storage-local%20SQLite-111827?style=flat-square" alt="Local SQLite storage">
+  <img src="https://img.shields.io/badge/editor-Tiptap-0d9488?style=flat-square" alt="Tiptap editor">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--only-b91c1c?style=flat-square" alt="AGPL-3.0-only">
 </p>
 
 <p align="center">
-  <a href="#quick-navigation">Quick Navigation</a> ·
-  <a href="#paperquay--ai-assisted-literature-management-that-keeps-reading-flow-intact">Why PaperQuay</a> ·
-  <a href="#current-features">Features</a> ·
-  <a href="#first-run-workflow">Quick Start</a> ·
+  <a href="#quick-navigation">Quick Navigation</a> |
+  <a href="#paperquay---ai-assisted-literature-management-that-keeps-reading-flow-intact">Why PaperQuay</a> |
+  <a href="#current-features">Features</a> |
+  <a href="#first-run-workflow">Quick Start</a> |
   <a href="#development">Development</a>
 </p>
 
@@ -29,35 +30,34 @@
   <img src="./docs/assets/readme-hero.svg" alt="PaperQuay feature overview" width="920">
 </p>
 
-
-
 ---
 
 ## Quick Navigation
 
 <p>
-  <a href="#paperquay--ai-assisted-literature-management-that-keeps-reading-flow-intact">Problem & Positioning</a> ·
-  <a href="#what-makes-paperquay-different">What Makes It Different</a> ·
-  <a href="#core-workflow">Core Workflow</a> ·
-  <a href="#current-features">Current Features</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#zotero-compatibility">Zotero Compatibility</a> ·
+  <a href="#paperquay---ai-assisted-literature-management-that-keeps-reading-flow-intact">Problem & Positioning</a> |
+  <a href="#what-makes-paperquay-different">What Makes It Different</a> |
+  <a href="#core-workflow">Core Workflow</a> |
+  <a href="#current-features">Current Features</a> |
+  <a href="#architecture">Architecture</a> |
+  <a href="#zotero-compatibility">Zotero Compatibility</a> |
   <a href="#roadmap">Roadmap</a>
 </p>
 
 ---
 
-## PaperQuay — AI-Assisted Literature Management That Keeps Reading Flow Intact
+## PaperQuay - AI-Assisted Literature Management That Keeps Reading Flow Intact
 
-**PaperQuay is more than a PDF reader or a Zotero add-on.** It is a local-first desktop literature manager designed for students, researchers, and paper writers who want to manage papers, read PDFs, annotate, translate, screen papers quickly, and use AI agents without leaving the same workspace.
+**PaperQuay is more than a PDF reader or a Zotero add-on.** It is a local-first desktop literature manager designed for students, researchers, and paper writers who want to manage papers, read PDFs, annotate, translate, take notes, screen papers quickly, and use AI agents without leaving the same workspace.
 
-Many paper tools force the user to choose between fragmented workflows: one app for PDF reading, another tool for translation, another chat window for paper summaries, and another library manager for metadata. PaperQuay combines these into a single desktop workflow while keeping Zotero compatibility optional rather than mandatory.
+Many paper tools force the user to choose between fragmented workflows: one app for PDF reading, another tool for translation, another chat window for paper summaries, another note app, and another library manager for metadata. PaperQuay combines these into a single desktop workflow while keeping Zotero compatibility optional rather than mandatory.
 
 | Research workflow problem                 | Traditional tools                                                  | PaperQuay                                                                                  |
 | ----------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | Translation latency interrupts reading    | Translate only after selecting text, often with visible API delay  | Pre-translate MinerU structural blocks and jump instantly to cached translations           |
 | Side-by-side translation hurts focus      | Two columns require constant eye movement and can break formatting | Keep the original PDF visible while navigating to precise translated blocks on demand      |
 | Pure translated files lose source context | Original wording, terminology, and academic expression are hidden  | Keep source text, parsed blocks, translation, notes, and overview linked together          |
+| Paper notes become detached               | Notes live in a separate app and lose PDF position context         | Store rich notes, tags, links, paper references, and backlinks in the local library        |
 | Fast paper screening is repetitive        | Upload PDFs to an LLM one by one and manually organize outputs     | Generate and store structured paper overviews inside the local library                     |
 | AI model choices are locked down          | Built-in models or platform-specific token pricing                 | Bring your own OpenAI-compatible endpoint, model, and runtime parameters                   |
 | Large libraries are hard to clean         | Manual renaming, tagging, metadata fixes, and classification       | Agent tools can assist with batch rename, metadata completion, tagging, and classification |
@@ -79,13 +79,17 @@ Many paper tools force the user to choose between fragmented workflows: one app 
 
 PaperQuay uses a translation workflow designed for long paper reading sessions. It can translate and cache MinerU-parsed structural blocks in advance. Later, when reading, clicking a source block can instantly jump to its translated counterpart. Translation no longer needs to happen only after each click or selection.
 
+### Tiptap-Based Notes Workspace
+
+PaperQuay includes a dedicated Notes workspace built on Tiptap. Notes are stored locally with Tiptap JSON, rendered HTML, plain text for search, tags, wiki-style `[[note]]` links, `@paper` references, and backlinks. The editor is designed to keep research notes connected with papers instead of becoming a separate note silo.
+
 ### Fast Paper Screening from the Overview Panel
 
-PaperQuay is designed not only for deep reading, but also for screening large numbers of papers quickly. In the overview panel, each paper can directly surface AI-generated fields such as background, research question, method, experiment setup, key findings, conclusions, and limitations. This allows you to judge whether a paper deserves deeper reading directly inside the library workflow before opening the full PDF in detail.
+PaperQuay is designed not only for deep reading, but also for screening large numbers of papers quickly. In the overview panel, each paper can directly surface AI-generated fields such as background, research question, method, experiment setup, key findings, conclusions, and limitations.
 
 ### Literature Library, Not Just Import
 
-PaperQuay can build an independent local library with PDF import, a configurable storage folder, categories, tags, metadata editing, search, filtering, notes, and SQLite-based local persistence. Zotero remains supported as an optional import source, not a required dependency.
+PaperQuay can build an independent local library with PDF import, a configurable storage folder, categories, tags, metadata editing, search, filtering, notes, and local SQLite persistence. Zotero remains supported as an optional import source, not a required dependency.
 
 ### Agent Operations for Paper Management
 
@@ -104,7 +108,8 @@ The agent workspace is designed for library operations, not just conversation. I
 | 5. Generate overviews  | Produce reusable paper overviews for fast screening and later review.                 |
 | 6. Translate full text | Cache translated blocks so reading can jump instantly between source and translation. |
 | 7. Read and annotate   | Highlight, write, add notes, jump to annotations, and export annotated PDFs.          |
-| 8. Use the agent       | Ask the agent to rename, classify, tag, clean metadata, or summarize selected papers. |
+| 8. Write notes         | Create rich Tiptap notes, link notes with `[[title]]`, add `#tags`, and reference papers. |
+| 9. Use the agent       | Ask the agent to rename, classify, tag, clean metadata, or summarize selected papers. |
 
 ---
 
@@ -115,7 +120,7 @@ The agent workspace is designed for library operations, not just conversation. I
 </p>
 
 <p align="center">
-  <em>Main library workspace: manage papers, categories, metadata, reading progress, and AI-generated overviews in one desktop view.</em>
+  <em>Main library workspace: manage papers, categories, metadata, reading progress, notes, and AI-generated overviews in one desktop view.</em>
 </p>
 
 <p align="center">
@@ -126,19 +131,19 @@ The agent workspace is designed for library operations, not just conversation. I
   <em>Agent workspace: chat with the paper assistant, inspect execution traces, review tool calls, and run batch library operations with human confirmation.</em>
 </p>
 
-
 ---
 
 ## Current Features
 
 | Area            | Available now                                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Local library   | SQLite storage for papers, authors, categories, tags, attachments, notes, annotations, and import records                            |
+| Local library   | Local SQLite storage for papers, authors, categories, tags, attachments, notes, annotations, import records, and RAG indexes          |
 | PDF import      | File picker and drag-and-drop import with confirmation before files enter the library                                                |
 | File management | Configurable storage folder, copy / move / keep-path import modes, naming rules, and original-path tracking                          |
-| Metadata        | Crossref enrichment by DOI or title, with manual editing before confirmation                                                         |
+| Metadata        | OpenAlex enrichment by DOI or title, optional OpenAlex API key / mailto settings, Crossref fallback, and manual editing before import |
 | Categories      | System categories, custom categories, nested subcategories, collapsible branches, context menus, drag sorting, and hierarchy changes |
 | Paper details   | Title, authors, year, venue, DOI, URL, abstract, keywords, tags, notes, citation, and favorite state                                 |
+| Notes workspace | Tiptap rich-text editor, local autosave, full-text search, tags, wiki links, paper references, outline, and backlinks                |
 | Reader          | PDF reader with MinerU structured block views and region-based linkage                                                               |
 | Translation     | Full-text translation, cached block translations, and selection translation through OpenAI-compatible models                         |
 | Paper overview  | AI-generated screening fields for background, research questions, methods, experiment setup, findings, conclusions, and limitations  |
@@ -153,18 +158,19 @@ The agent workspace is designed for library operations, not just conversation. I
 1. Open Settings and choose a default paper storage folder.
 2. Import PDFs by drag and drop or by clicking the import button.
 3. Confirm or edit metadata in the import confirmation dialog.
-4. Let PaperQuay copy PDFs into its storage folder and save records in the local SQLite library.
+4. Let PaperQuay copy PDFs into its storage folder and save records in the local library.
 5. Create categories and subcategories from the left sidebar.
 6. Drag papers into categories, add tags, mark favorites, and open papers in the reader.
-7. Configure an OpenAI-compatible endpoint and model if you want AI features.
-8. Configure a MinerU API key if you want MinerU parsing.
-9. Optionally connect a Zotero data directory and import existing Zotero collections and PDFs.
+7. Open Notes to create rich-text notes, link related ideas, and connect notes to papers.
+8. Configure an OpenAI-compatible endpoint and model if you want AI features.
+9. Configure a MinerU API key if you want MinerU parsing.
+10. Optionally connect a Zotero data directory and import existing Zotero collections and PDFs.
 
 ---
 
 ## Architecture
 
-PaperQuay is desktop-first, not a browser demo wrapped at the end.
+PaperQuay uses Electron as its desktop host. The React renderer talks to a local Electron backend through IPC for filesystem access, persistence, Zotero import, PDF handling, and packaging.
 
 | Path                       | Responsibility                                                                                                    |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -174,24 +180,27 @@ PaperQuay is desktop-first, not a browser demo wrapped at the end.
 | `src/features/pdf/`        | PDF rendering, overlays, annotation surface, and PDF-specific interactions                                        |
 | `src/features/blocks/`     | MinerU block rendering and structured content views                                                               |
 | `src/features/agent/`      | Agent chat UI, execution traces, tool cards, and library operation entry points                                   |
-| `src/services/`            | Frontend bridges to Tauri commands                                                                                |
-| `src-tauri/src/commands/`  | Rust commands for files, SQLite, Zotero import, MinerU, metadata, translation, overview, QA, and agent operations |
-| `src-tauri/`               | Tauri v2 configuration, icons, installer assets, and Rust crate                                                   |
+| `src/features/notes/`      | Tiptap-based notes workspace, editor toolbar, custom autocomplete extensions, outline, and backlinks              |
+| `src/stores/useNotesStore.ts` | Zustand state for notes, tags, active note selection, autosave, and workspace errors                           |
+| `src/services/`            | Frontend bridges to Electron IPC commands                                                                         |
+| `src/platform/electron/`   | Renderer-side bridge wrappers for commands, events, window controls, and file-drop events                         |
+| `electron/`                | Electron main process, preload bridge, command backend, packaging helpers, and local persistence                   |
+
+The Notes editor uses the official Tiptap packages and was implemented against the upstream source at [ueberdosis/tiptap](https://github.com/ueberdosis/tiptap). The local `WikiLink`, `HashTag`, and `PaperReference` extensions follow the same architecture as Tiptap's official `Mention` node and `@tiptap/suggestion` plugin: a Tiptap inline node stores structured attributes, and the Suggestion plugin handles matching, rendering, keyboard navigation, and insertion. The editor also follows Tiptap's React NodeView examples for component blocks: custom blocks are real Tiptap nodes rendered through `ReactNodeViewRenderer`, with `NodeViewWrapper` and `NodeViewContent` separating non-editable controls from editable content.
 
 ---
 
 ## Requirements
 
 - Node.js 18 or newer
-- Rust stable toolchain
-- Platform requirements for Tauri v2 on your OS
 - Windows, macOS, or Linux
 
 Optional external services:
 
 - MinerU API key for cloud PDF structure parsing.
 - OpenAI-compatible API key for paper overviews, translation, QA, and agent tasks.
-- Internet access for Crossref metadata enrichment.
+- Internet access for OpenAlex and Crossref metadata enrichment.
+- Optional OpenAlex premium API key and `mailto` polite-pool email for steadier batch metadata lookup.
 
 ---
 
@@ -206,7 +215,7 @@ npm install
 Start the desktop app in development mode:
 
 ```bash
-npm run tauri:dev
+npm run dev
 ```
 
 Build the frontend only:
@@ -215,17 +224,16 @@ Build the frontend only:
 npm run build
 ```
 
-Check the Rust host:
+Preview the built web assets:
 
 ```bash
-cd src-tauri
-cargo check
+npm run preview
 ```
 
 Build the desktop installer:
 
 ```bash
-npm run tauri:build
+npm run electron:build
 ```
 
 ---
@@ -242,9 +250,9 @@ Zotero is an optional compatibility source, not a required dependency. You can b
 
 ## Data and Privacy
 
-PaperQuay is local-first. The literature database is stored as SQLite, and imported PDFs are stored in the paper storage folder you configure.
+PaperQuay is local-first. The literature library, notes, and local RAG indexes are stored in SQLite databases, and imported PDFs are stored in the paper storage folder you configure.
 
-Do not commit local data, API keys, PDFs, parser outputs, or backups. The `.gitignore` excludes common local runtime folders, SQLite databases, API key files, build output, backup archives, and private PDFs by default.
+Do not commit local data, API keys, PDFs, parser outputs, notes databases, or backups. The `.gitignore` excludes common local runtime folders, SQLite databases, legacy JSON library data, API key files, build output, backup archives, and private PDFs by default.
 
 ---
 
@@ -252,7 +260,7 @@ Do not commit local data, API keys, PDFs, parser outputs, or backups. The `.giti
 
 - Better metadata extraction from PDF first pages.
 - DOI / arXiv / Semantic Scholar enrichment options.
-- More advanced PDF annotations and export.
+- Deeper PDF annotation and note binding.
 - Citation style generation.
 - Database backup and restore UI.
 - Folder watching for automatic import queues.

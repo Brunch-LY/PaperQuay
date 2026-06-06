@@ -94,7 +94,7 @@ jobs:
             core.setOutput('tag_name', tagName);
             core.setOutput('version', version);
 
-  publish-tauri:
+  build-electron:
     name: Build ${{ matrix.name }}
     needs: create-release
     runs-on: ${{ matrix.platform }}
@@ -104,52 +104,76 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS Apple Silicon
-            platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - name: macOS Intel
-            platform: macos-latest
-            args: "--target x86_64-apple-darwin"
-          - name: Linux x64
-            platform: ubuntu-22.04
-            args: ""
           - name: Windows x64
             platform: windows-latest
-            args: ""
+            args: "--win --x64 --publish never"
+          - name: Linux x64
+            platform: ubuntu-22.04
+            args: "--linux --x64 --publish never"
+          - name: macOS Universal
+            platform: macos-latest
+            args: "--mac --universal --publish never"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Linux dependencies
+      - name: Install Linux packaging dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libarchive-tools rpm
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 24
           cache: npm
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build and upload release assets
-        uses: tauri-apps/tauri-action@v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Electron package
+        run: npm run electron:build -- ${{ matrix.args }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
+          name: paperquay-${{ matrix.name }}
+          path: |
+            release/*.exe
+            release/*.msi
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.create-release.outputs.tag_name }}
+        run: |
+          shopt -s nullglob
+          assets=(
+            release/*.exe
+            release/*.msi
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
+            release/*.blockmap
+            release/latest*.yml
+          )
+
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets were generated."
+            exit 1
+          fi
+
+          gh release upload "$TAG_NAME" "${assets[@]}" --clobber

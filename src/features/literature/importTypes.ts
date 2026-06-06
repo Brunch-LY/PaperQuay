@@ -5,5 +5,7 @@ export interface ImportDraftItem {
   year: string;
   publication: string;
   doi: string;
+  url: string;
+  abstractText: string;
   categoryId: string;
 }

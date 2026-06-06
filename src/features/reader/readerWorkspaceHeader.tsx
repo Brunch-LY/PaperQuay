@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
+  BookOpen,
   ChevronDown,
   ChevronUp,
+  Columns2,
   FileJson,
+  FileText,
   Languages,
-  LayoutGrid,
+  Maximize2,
   MoreHorizontal,
   Settings2,
   Sparkles,
@@ -39,6 +42,7 @@ export interface ReaderWorkspaceHeaderProps {
   onCloudParse: () => void;
   onTranslateDocument: () => void;
   onOpenPreferences: () => void;
+  onEnterImmersive: () => void;
 }
 
 function HeaderStageTabs({
@@ -48,7 +52,7 @@ function HeaderStageTabs({
   const l = useLocaleText();
 
   return (
-    <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-chrome-800">
+    <div className="inline-flex shrink-0 whitespace-nowrap rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-[var(--pq-surface-1)]">
       {[
         {
           key: 'overview' as const,
@@ -58,22 +62,23 @@ function HeaderStageTabs({
         {
           key: 'reading' as const,
           label: l('阅读', 'Reading'),
-          icon: <LayoutGrid className="h-4 w-4" strokeWidth={1.8} />,
+          icon: <BookOpen className="h-4 w-4" strokeWidth={1.8} />,
         },
       ].map((tab) => (
         <button
           key={tab.key}
           type="button"
           onClick={() => onStageChange(tab.key)}
+          title={tab.label}
           className={cn(
-            'inline-flex items-center gap-2 rounded-[14px] px-3 py-2 text-sm font-medium transition-all duration-200',
+            'inline-flex h-9 min-w-9 items-center justify-center gap-2 rounded-[14px] px-2 text-sm font-medium transition-all duration-200 xl:px-3',
             workspaceStage === tab.key
-              ? 'bg-white text-slate-900 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:bg-chrome-700 dark:text-chrome-100 dark:shadow-[0_6px_18px_rgba(0,0,0,0.16)]'
-              : 'text-slate-500 hover:text-slate-800 dark:text-chrome-400 dark:hover:text-chrome-100',
+              ? 'bg-white text-slate-900 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.16)]'
+              : 'text-slate-500 hover:text-slate-800 dark:text-[var(--pq-text-faint)] dark:hover:text-[var(--pq-text)]',
           )}
         >
           {tab.icon}
-          {tab.label}
+          <span className="hidden xl:inline">{tab.label}</span>
         </button>
       ))}
     </div>
@@ -87,25 +92,38 @@ function HeaderReadingModeTabs({
   const l = useLocaleText();
 
   return (
-    <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-chrome-800">
+    <div className="inline-flex shrink-0 whitespace-nowrap rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-[var(--pq-surface-1)]">
       {[
         { key: 'pdf-only' as const, label: l('PDF 阅读', 'PDF Only') },
         { key: 'dual-pane' as const, label: l('双栏对照', 'Dual Pane') },
-      ].map((mode) => (
-        <button
-          key={mode.key}
-          type="button"
-          onClick={() => onReadingViewModeChange(mode.key)}
-          className={cn(
-            'rounded-[14px] px-3 py-2 text-sm font-medium transition-all duration-200',
-            readingViewMode === mode.key
-              ? 'bg-white text-slate-900 shadow-[0_6px_18px_rgba(15,23,42,0.08)]'
-              : 'text-slate-500 hover:text-slate-800',
-          )}
-        >
-          {mode.label}
-        </button>
-      ))}
+      ].map((mode) => {
+        const modeIcon =
+          mode.key === 'pdf-only' ? (
+            <FileText className="h-4 w-4" strokeWidth={1.8} />
+          ) : (
+            <Columns2 className="h-4 w-4" strokeWidth={1.8} />
+          );
+        const shortLabel = mode.key === 'pdf-only' ? 'PDF' : l('\u53cc\u680f', 'Dual');
+
+        return (
+          <button
+            key={mode.key}
+            type="button"
+            onClick={() => onReadingViewModeChange(mode.key)}
+            title={mode.label}
+            className={cn(
+              'inline-flex h-9 min-w-9 items-center justify-center gap-2 rounded-[14px] px-2 text-sm font-medium transition-all duration-200 2xl:px-3',
+              readingViewMode === mode.key
+                ? 'bg-white text-slate-900 shadow-[0_6px_18px_rgba(15,23,42,0.08)]'
+                : 'text-slate-500 hover:text-slate-800',
+            )}
+          >
+            {modeIcon}
+            <span className="hidden xl:inline 2xl:hidden">{shortLabel}</span>
+            <span className="hidden 2xl:inline">{mode.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -127,8 +145,8 @@ function HeaderPdfVersionControl({
 
   if (availablePdfOptions.length > 1) {
     return (
-      <label className="flex min-w-[240px] max-w-[420px] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300">
-        <span className="shrink-0 text-xs font-medium text-slate-500 dark:text-chrome-400">
+      <label className="flex min-w-[180px] max-w-[260px] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-muted)] 2xl:min-w-[240px] 2xl:max-w-[420px]">
+        <span className="hidden shrink-0 text-xs font-medium text-slate-500 dark:text-[var(--pq-text-faint)] 2xl:inline">
           {l('PDF 版本', 'PDF Version')}
         </span>
         <div className="relative min-w-0 flex-1">
@@ -136,7 +154,7 @@ function HeaderPdfVersionControl({
             value={currentPdfPath || availablePdfOptions[0]?.path || ''}
             onChange={(event) => onCurrentPdfPathChange(event.target.value)}
             title={selectedPdfOption?.label || ''}
-            className="block w-full min-w-0 appearance-none truncate bg-transparent pr-8 text-sm leading-6 text-slate-700 outline-none dark:text-chrome-200"
+            className="block w-full min-w-0 appearance-none truncate bg-transparent pr-8 text-sm leading-6 text-slate-700 outline-none dark:text-[var(--pq-text-muted)]"
           >
             {availablePdfOptions.map((option) => (
               <option key={option.path} value={option.path}>
@@ -145,7 +163,7 @@ function HeaderPdfVersionControl({
             ))}
           </select>
           <ChevronDown
-            className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-chrome-500"
+            className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-[var(--pq-text-faint)]"
             strokeWidth={1.8}
           />
         </div>
@@ -158,7 +176,7 @@ function HeaderPdfVersionControl({
   }
 
   return (
-    <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300">
+    <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-muted)]">
       {currentPdfVariantLabel}
     </div>
   );
@@ -188,15 +206,16 @@ function HeaderToolsMenu({
       <button
         type="button"
         onClick={() => setToolbarOpen((current) => !current)}
-        className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-white/15 dark:hover:bg-chrome-700"
+        className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-2 text-[0px] font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-muted)] dark:hover:border-white/15 dark:hover:bg-[var(--pq-surface-2)] 2xl:px-3 2xl:text-sm"
+        title={l('工具', 'Tools')}
       >
-        <MoreHorizontal className="mr-2 h-4 w-4" strokeWidth={1.8} />
+        <MoreHorizontal className="mr-0 h-4 w-4 2xl:mr-2" strokeWidth={1.8} />
         {l('工具', 'Tools')}
-        <ChevronDown className="ml-2 h-4 w-4" strokeWidth={1.8} />
+        <ChevronDown className="hidden h-4 w-4 2xl:ml-2 2xl:block" strokeWidth={1.8} />
       </button>
 
       {toolbarOpen ? (
-        <div className="absolute right-0 top-[calc(100%+8px)] z-[90] w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-[0_18px_42px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-chrome-800 dark:shadow-[0_18px_42px_rgba(0,0,0,0.24)]">
+        <div className="absolute right-0 top-[calc(100%+8px)] z-[90] w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-[0_18px_42px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:shadow-[0_18px_42px_rgba(0,0,0,0.24)]">
           {[
             {
               label: l('打开 JSON', 'Open JSON'),
@@ -233,7 +252,7 @@ function HeaderToolsMenu({
                 action.onClick();
               }}
               disabled={action.disabled}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-chrome-300 dark:hover:bg-chrome-700"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-[var(--pq-text-muted)] dark:hover:bg-[var(--pq-surface-2)]"
             >
               {action.icon}
               <span>{action.label}</span>
@@ -265,6 +284,7 @@ export function ReaderWorkspaceHeader({
   onCloudParse,
   onTranslateDocument,
   onOpenPreferences,
+  onEnterImmersive,
 }: ReaderWorkspaceHeaderProps) {
   const l = useLocaleText();
   const [headerCollapsed, setHeaderCollapsed] = useState(() =>
@@ -278,30 +298,30 @@ export function ReaderWorkspaceHeader({
   return (
     <div
       className={cn(
-        'relative z-20 overflow-visible border-b border-slate-200/80 bg-white/70 backdrop-blur-xl transition-all duration-200 dark:border-white/10 dark:bg-chrome-950',
-        headerCollapsed ? 'px-4 py-2' : 'px-6 py-4',
+        'relative z-20 overflow-visible border-b border-slate-200/80 bg-white/70 backdrop-blur-xl transition-all duration-200 dark:border-white/10 dark:bg-[var(--pq-bg-primary)]',
+        headerCollapsed ? 'px-4 py-2' : 'px-4 py-3 2xl:px-6',
       )}
     >
       <div
         className={cn(
-          'flex flex-wrap gap-4',
+          'grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] gap-3',
           headerCollapsed ? 'items-center' : 'items-start',
         )}
       >
-        <div className="min-w-0 flex-1 basis-[360px]">
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-chrome-400">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-[var(--pq-text-faint)]">
             {sourceLabel}
           </div>
           <div
             className={cn(
-              'truncate font-semibold tracking-tight text-slate-950 transition-all duration-200 dark:text-chrome-100',
-              headerCollapsed ? 'mt-0.5 max-w-[720px] text-base' : 'mt-2 text-[24px]',
+              'truncate font-semibold tracking-tight text-slate-950 transition-all duration-200 dark:text-[var(--pq-text)]',
+              headerCollapsed ? 'mt-0.5 max-w-[720px] text-base' : 'mt-1 text-lg 2xl:text-[22px]',
             )}
           >
             {documentTitle}
           </div>
           {!headerCollapsed ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-chrome-300">
+            <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-sm text-slate-500 dark:text-[var(--pq-text-muted)]">
               <span>{documentCreators || l('未知作者', 'Unknown Author')}</span>
               {documentYear ? <span>· {documentYear}</span> : null}
               {currentPdfName ? <span>· {currentPdfName}</span> : null}
@@ -309,8 +329,8 @@ export function ReaderWorkspaceHeader({
           ) : null}
         </div>
 
-        <div className="order-3 flex w-full justify-center md:order-none md:flex-1">
-          <div className="flex flex-wrap items-center justify-center gap-2">
+        <div className="flex shrink-0 justify-center">
+          <div className="flex flex-nowrap items-center justify-center gap-2">
             <HeaderStageTabs
               workspaceStage={workspaceStage}
               onStageChange={onStageChange}
@@ -325,7 +345,7 @@ export function ReaderWorkspaceHeader({
           </div>
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2">
           {workspaceStage === 'reading' ? (
             <HeaderPdfVersionControl
               currentPdfVariantLabel={currentPdfVariantLabel}
@@ -335,16 +355,29 @@ export function ReaderWorkspaceHeader({
             />
           ) : null}
 
+          {workspaceStage === 'reading' ? (
+            <button
+              type="button"
+              onClick={onEnterImmersive}
+              className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-2 text-[0px] font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-muted)] dark:hover:border-white/15 dark:hover:bg-[var(--pq-surface-2)] 2xl:px-3 2xl:text-sm"
+              title={l('沉浸阅读', 'Immersive Reading')}
+              aria-label={l('沉浸阅读', 'Immersive Reading')}
+            >
+              <Maximize2 className="mr-0 h-4 w-4 2xl:mr-2" strokeWidth={1.8} />
+              {l('沉浸', 'Immersive')}
+            </button>
+          ) : null}
+
           <button
             type="button"
             onClick={() => setHeaderCollapsed((current) => !current)}
-            className="inline-flex items-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-white/15 dark:hover:bg-chrome-700"
+            className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-2 text-[0px] font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-[var(--pq-surface-1)] dark:text-[var(--pq-text-muted)] dark:hover:border-white/15 dark:hover:bg-[var(--pq-surface-2)] 2xl:px-3 2xl:text-sm"
             title={headerCollapsed ? l('展开状态栏', 'Expand Header') : l('收起状态栏', 'Collapse Header')}
           >
             {headerCollapsed ? (
-              <ChevronDown className="mr-2 h-4 w-4" strokeWidth={1.8} />
+              <ChevronDown className="mr-0 h-4 w-4 2xl:mr-2" strokeWidth={1.8} />
             ) : (
-              <ChevronUp className="mr-2 h-4 w-4" strokeWidth={1.8} />
+              <ChevronUp className="mr-0 h-4 w-4 2xl:mr-2" strokeWidth={1.8} />
             )}
             {headerCollapsed ? l('展开状态栏', 'Expand Header') : l('收起状态栏', 'Collapse Header')}
           </button>

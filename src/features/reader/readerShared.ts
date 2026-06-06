@@ -3,6 +3,7 @@ import type {
   ModelReasoningEffort,
   ModelRuntimeConfig,
   ModelRuntimeRole,
+  OpenAICompatibleApiMode,
   PaperSummary,
   PositionedMineruBlock,
   QaModelPreset,
@@ -16,6 +17,7 @@ import type {
   WorkspaceItem,
 } from '../../types/reader';
 import type { LiteraturePaper, LiteraturePaperTaskState } from '../../types/library';
+import { resolvePaperPdfAttachment } from '../../utils/libraryPaper';
 import { getFileNameFromPath } from '../../utils/text';
 
 export const SETTINGS_STORAGE_KEY = 'paper-reader-settings-v3';
@@ -223,6 +225,8 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   localRagTopK: 6,
   ragSourceMode: 'hybrid',
   libraryBatchConcurrency: 1,
+  showLibraryReadingHeatmap: true,
+  enablePdfReadingHeatmap: true,
   autoTranslateSelection: false,
   smoothScroll: true,
   compactReading: false,
@@ -264,6 +268,7 @@ export const DEFAULT_QA_PRESET: QaModelPreset = {
   baseUrl: 'https://api.openai.com',
   apiKey: '',
   model: 'gpt-4o-mini',
+  apiMode: 'chat_completions',
   labelCustomized: false,
 };
 
@@ -312,6 +317,36 @@ export const MODEL_REASONING_OPTIONS: Array<{
     descriptionZh: '更适合复杂推理、Agent 工具选择和长上下文分析。',
     descriptionEn: 'Better for complex reasoning, Agent tool choice, and long-context analysis.',
   },
+  {
+    value: 'xhigh',
+    labelZh: '极高',
+    labelEn: 'XHigh',
+    descriptionZh: '用于最复杂的长上下文推理，速度和成本会更高。',
+    descriptionEn: 'For the hardest long-context reasoning; slower and more expensive.',
+  },
+];
+
+export const MODEL_API_MODE_OPTIONS: Array<{
+  value: OpenAICompatibleApiMode;
+  labelZh: string;
+  labelEn: string;
+  descriptionZh: string;
+  descriptionEn: string;
+}> = [
+  {
+    value: 'chat_completions',
+    labelZh: 'Chat Completions',
+    labelEn: 'Chat Completions',
+    descriptionZh: '使用 /v1/chat/completions，兼容多数 OpenAI-compatible 服务。',
+    descriptionEn: 'Use /v1/chat/completions. Compatible with most OpenAI-compatible services.',
+  },
+  {
+    value: 'responses',
+    labelZh: 'Responses API',
+    labelEn: 'Responses API',
+    descriptionZh: '使用 /v1/responses，适合支持 OpenAI Responses API 的服务。',
+    descriptionEn: 'Use /v1/responses for services that support the OpenAI Responses API.',
+  },
 ];
 
 export function normalizeModelTemperature(value: unknown): number | undefined {
@@ -332,6 +367,10 @@ export function normalizeModelReasoningEffort(value: unknown): ModelReasoningEff
   return MODEL_REASONING_OPTIONS.some((option) => option.value === value)
     ? (value as ModelReasoningEffort)
     : 'auto';
+}
+
+export function normalizeModelApiMode(value: unknown): OpenAICompatibleApiMode {
+  return value === 'responses' ? 'responses' : 'chat_completions';
 }
 
 export function normalizeModelRuntimeConfig(value: unknown): ModelRuntimeConfig {
@@ -393,12 +432,13 @@ export function createQaPreset(partial?: Partial<QaModelPreset>): QaModelPreset 
     baseUrl: partial?.baseUrl ?? DEFAULT_QA_PRESET.baseUrl,
     apiKey: partial?.apiKey ?? '',
     model: nextModel,
+    apiMode: normalizeModelApiMode(partial?.apiMode),
     labelCustomized,
   };
 }
 
 function getQaModelPresetKey(preset: QaModelPreset) {
-  return `${preset.baseUrl.trim()}::${preset.model.trim()}::${preset.apiKey.trim()}`;
+  return `${preset.apiMode}::${preset.baseUrl.trim()}::${preset.model.trim()}::${preset.apiKey.trim()}`;
 }
 
 function getQaModelPresetScore(preset: QaModelPreset) {
@@ -756,6 +796,8 @@ export function normalizeReaderSettings(value?: Partial<ReaderSettings> | null):
     localRagTopK: clampLocalRagTopK(merged.localRagTopK),
     ragSourceMode: normalizeRagSourceMode(merged.ragSourceMode),
     libraryBatchConcurrency: clampBatchConcurrency(merged.libraryBatchConcurrency),
+    showLibraryReadingHeatmap: merged.showLibraryReadingHeatmap !== false,
+    enablePdfReadingHeatmap: merged.enablePdfReadingHeatmap !== false,
     translationBatchSize: clampTranslationBatchSize(merged.translationBatchSize),
     translationConcurrency: clampTranslationConcurrency(merged.translationConcurrency),
     translationRequestsPerMinute: clampTranslationRequestsPerMinute(
@@ -924,12 +966,13 @@ export function createStandaloneItem(path: string, locale: UiLanguage): Workspac
 }
 
 export function createNativeLibraryWorkspaceItem(paper: LiteraturePaper): WorkspaceItem | null {
-  const attachment = paper.attachments.find((item) => item.kind === 'pdf' && item.storedPath.trim());
+  const resolvedAttachment = resolvePaperPdfAttachment(paper);
 
-  if (!attachment) {
+  if (!resolvedAttachment) {
     return null;
   }
 
+  const { attachment, path } = resolvedAttachment;
   const workspaceId = `native-library:${paper.id}`;
 
   return {
@@ -941,7 +984,7 @@ export function createNativeLibraryWorkspaceItem(paper: LiteraturePaper): Worksp
     year: paper.year ?? '',
     itemType: 'pdf',
     attachmentFilename: attachment.fileName,
-    localPdfPath: attachment.storedPath,
+    localPdfPath: path,
     source: 'native-library',
     workspaceId,
     groupKey: workspaceId,

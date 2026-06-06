@@ -1,58 +1,40 @@
-import type { FormEvent, Ref, WheelEventHandler } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type Ref, type WheelEventHandler } from 'react';
+import { createPortal } from 'react-dom';
 import {
+  Brain,
   Camera,
   BookOpen,
-  Bot,
-  BrainCircuit,
   Check,
-  CheckCircle2,
-  Clock3,
   Database,
   ImagePlus,
-  GitBranch,
-  Layers3,
   Loader2,
-  MessageSquareText,
-  Minus,
-  Moon,
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
-  PlayCircle,
   Plus,
   RefreshCw,
   Search,
   Send,
-  Settings2,
-  ShieldCheck,
-  Square,
-  Sun,
   Tags,
   X,
 } from 'lucide-react';
+import { ModelPresetPicker } from '../../components/ModelPresetPicker';
 import type { LibraryAgentPlan } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
-import type { DocumentChatAttachment, QaModelPreset, UiLanguage } from '../../types/reader';
-import { toolFunctionName } from './AgentWorkspace.model';
+import type { DocumentChatAttachment, ModelReasoningEffort, QaModelPreset, UiLanguage } from '../../types/reader';
 import type {
-  AgentCapability,
   AgentChatMessage,
   AgentHistorySession,
   AgentToolCallView,
 } from './AgentWorkspace.types';
-import { PlanDiffCard } from './AgentExecutionCards';
 import { AssistantMessageCard, UserMessageCard } from './AgentWorkspaceMessages';
 import { formatFileSize } from '../../utils/files';
-
-type ThemeMode = 'light' | 'dark' | 'system';
 
 interface AgentWorkspaceViewProps {
   activeSessionId: string;
   activeSessionRunning: boolean;
   agentAttachments: DocumentChatAttachment[];
-  agentCapabilities: AgentCapability[];
   agentModelPresets: QaModelPreset[];
-  agentPresetName: string;
   agentRagEnabled: boolean;
   applyingPlan: boolean;
   approvedItemIds: Set<string>;
@@ -65,7 +47,7 @@ interface AgentWorkspaceViewProps {
   filteredPapers: LiteraturePaper[];
   formatHistoryTime: (timestamp: number) => string;
   formatPaperMeta: (paper: LiteraturePaper, locale: UiLanguage) => string;
-  handleAgentChoice: (instruction: string) => void;
+  handleAgentChoice: (instruction: string, paperScopeIds?: string[]) => void;
   handleClearAgentHistory: () => void;
   handleConversationWheelCapture: WheelEventHandler<HTMLElement>;
   handleDeleteHistorySession: (sessionId: string) => void;
@@ -73,72 +55,199 @@ interface AgentWorkspaceViewProps {
   handleModifyPreviousParameters: () => void;
   handleNewAgentSession: () => void;
   handleOpenHistorySession: (session: AgentHistorySession) => void;
-  handleOpenPreferences: () => void;
-  handleInspectorWheelCapture: WheelEventHandler<HTMLElement>;
-  handlePaperWheelCapture: WheelEventHandler<HTMLElement>;
   handlePreviewOnly: () => void;
   handleRetryAgent: (instruction: string) => void;
-  handleToggleThemeMode: () => void;
-  handleWindowClose: () => void;
-  handleWindowMinimize: () => void;
-  handleWindowToggleMaximize: () => void;
   historySidebarCollapsed: boolean;
   historySidebarRef: Ref<HTMLElement>;
-  inspectorSidebarRef: Ref<HTMLElement>;
   l: (zh: string, en: string) => string;
   lastInstruction: string;
   loading: boolean;
   locale: UiLanguage;
-  localizedCapabilityTitles: Record<string, string>;
   localizedToolLabel: (tool: LibraryAgentPlan['tool']) => string;
   messages: AgentChatMessage[];
   onApplyPlan: () => void;
   onAgentPresetChange: (presetId: string) => void;
+  onAgentReasoningEffortChange: (reasoningEffort: ModelReasoningEffort) => void;
   onCancelPlan: () => void;
   onCaptureScreenshot: () => void;
   onClearSelection: () => void;
   onComposerChange: (value: string) => void;
   onCopyToolParameters: (toolCall: AgentToolCallView) => void;
   onHistorySidebarCollapsedChange: (collapsed: boolean) => void;
+  onInlinePaperSelectionContinue: (instruction: string, paperIds: string[]) => void;
   onInspectPlanItem: (itemId: string, paperTitle: string) => void;
   onPaperSearchQueryChange: (value: string) => void;
   onRefreshPapers: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
+  onFindPapers: () => void;
+  onRecommendPapers: () => void;
   onSelectAllVisible: () => void;
   onSelectFileAttachments: () => void;
   onSelectImageAttachments: () => void;
   onSubmitPrompt: (event: FormEvent<HTMLFormElement>) => void;
   onToggleAgentRag: () => void;
   onTogglePaper: (paperId: string) => void;
+  onUseFullLibraryRag: () => void;
   onTogglePlanItem: (itemId: string) => void;
   onToggleStep: (stepKey: string) => void;
   onToggleTool: (toolCallId: string) => void;
   paperSearchQuery: string;
-  paperSidebarRef: Ref<HTMLElement>;
   papers: LiteraturePaper[];
   plan: LibraryAgentPlan | null;
   promptSuggestions: string[];
-  selectedInspectorItem: LibraryAgentPlan['items'][number] | null;
   selectedAgentPresetId: string;
+  selectedAgentReasoningEffort: ModelReasoningEffort;
   selectedPaperIds: Set<string>;
   selectedPapers: LiteraturePaper[];
-  selectedPlanItems: LibraryAgentPlan['items'];
   selectedTags: string[];
   screenshotLoading: boolean;
   setStatusMessage: (message: string) => void;
   sortedHistorySessions: AgentHistorySession[];
-  statusMessage: string;
   submitPromptFromEnter: () => void;
-  themeMode: ThemeMode;
+}
+
+const agentIconButtonClass =
+  'pq-icon-button h-9 w-9 border border-[var(--pq-border)] bg-white/60 disabled:opacity-50';
+const agentHistoryIconButtonClass =
+  'pq-icon-button h-8 w-8 border border-transparent bg-transparent text-[var(--pq-text-muted)] hover:border-[var(--pq-border)] hover:bg-[var(--pq-surface-2)] disabled:opacity-50';
+const agentToolbarButtonClass = 'pq-button px-3 py-1.5 text-xs';
+const agentToolbarPrimaryButtonClass = 'pq-button-primary px-3 py-1.5 text-xs';
+const agentTagClass = 'pq-chip px-2 py-0.5 text-[11px] font-semibold';
+const agentComposerIconButtonClass =
+  'pq-icon-button h-10 w-10 shrink-0 border border-[var(--pq-border)] bg-white/60 disabled:cursor-not-allowed disabled:opacity-50';
+const agentReasoningOptions: Array<{ value: ModelReasoningEffort; labelZh: string; labelEn: string }> = [
+  { value: 'auto', labelZh: '自动', labelEn: 'Auto' },
+  { value: 'low', labelZh: '低', labelEn: 'Low' },
+  { value: 'medium', labelZh: '中', labelEn: 'Medium' },
+  { value: 'high', labelZh: '高', labelEn: 'High' },
+  { value: 'xhigh', labelZh: '极高', labelEn: 'XHigh' },
+];
+
+function AgentReasoningPicker({
+  l,
+  onChange,
+  value,
+}: {
+  l: (zh: string, en: string) => string;
+  onChange: (reasoningEffort: ModelReasoningEffort) => void;
+  value: ModelReasoningEffort;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const selectedOption = agentReasoningOptions.find((option) => option.value === value) ?? agentReasoningOptions[0];
+  const updateMenuPosition = useCallback(() => {
+    const button = buttonRef.current;
+
+    if (!button || typeof window === 'undefined') {
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const width = Math.min(190, Math.max(160, window.innerWidth - 24));
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+
+    setMenuStyle({
+      bottom: Math.max(12, window.innerHeight - rect.top + 8),
+      left,
+      width,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    updateMenuPosition();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (
+        target instanceof Node &&
+        (rootRef.current?.contains(target) || menuRef.current?.contains(target))
+      ) {
+        return;
+      }
+
+      setOpen(false);
+    };
+    const handleViewportChange = () => updateMenuPosition();
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+    };
+  }, [open, updateMenuPosition]);
+
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      className="pq-card fixed z-[9999] overflow-hidden p-1 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
+      style={menuStyle}
+    >
+      {agentReasoningOptions.map((option) => {
+        const selected = option.value === value;
+
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => {
+              onChange(option.value);
+              setOpen(false);
+            }}
+            className={[
+              'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition',
+              selected
+                ? 'bg-[var(--pq-accent-soft)] text-[var(--pq-accent)]'
+                : 'text-[var(--pq-text)] hover:bg-[var(--pq-surface-2)]',
+            ].join(' ')}
+          >
+            <span>{l(option.labelZh, option.labelEn)}</span>
+            {selected ? <Check className="h-4 w-4" strokeWidth={2.2} /> : null}
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        title={`${l('思考强度', 'Reasoning effort')}: ${l(selectedOption.labelZh, selectedOption.labelEn)}`}
+        aria-label={l('选择思考强度', 'Choose reasoning effort')}
+        aria-expanded={open}
+        className={[
+          'pq-icon-button h-10 w-10 border bg-white/60',
+          value === 'auto'
+            ? 'border-[var(--pq-border)] text-slate-400 dark:bg-white/5 dark:text-[var(--pq-text-faint)]'
+            : 'border-[var(--pq-accent)] bg-[var(--pq-accent-soft)] text-[var(--pq-accent)]',
+        ].join(' ')}
+      >
+        <Brain className="h-4 w-4" strokeWidth={1.8} />
+      </button>
+
+      {typeof document === 'undefined' || !menu ? null : createPortal(menu, document.body)}
+    </div>
+  );
 }
 
 export default function AgentWorkspaceView({
   activeSessionId,
   activeSessionRunning,
   agentAttachments,
-  agentCapabilities,
   agentModelPresets,
-  agentPresetName,
   agentRagEnabled,
   applyingPlan,
   approvedItemIds,
@@ -159,185 +268,87 @@ export default function AgentWorkspaceView({
   handleModifyPreviousParameters,
   handleNewAgentSession,
   handleOpenHistorySession,
-  handleOpenPreferences,
-  handleInspectorWheelCapture,
-  handlePaperWheelCapture,
   handlePreviewOnly,
   handleRetryAgent,
-  handleToggleThemeMode,
-  handleWindowClose,
-  handleWindowMinimize,
-  handleWindowToggleMaximize,
   historySidebarCollapsed,
   historySidebarRef,
-  inspectorSidebarRef,
   l,
   lastInstruction,
   loading,
   locale,
-  localizedCapabilityTitles,
   localizedToolLabel,
   messages,
   onApplyPlan,
   onAgentPresetChange,
+  onAgentReasoningEffortChange,
   onCancelPlan,
   onCaptureScreenshot,
   onClearSelection,
   onComposerChange,
   onCopyToolParameters,
   onHistorySidebarCollapsedChange,
+  onInlinePaperSelectionContinue,
   onInspectPlanItem,
   onPaperSearchQueryChange,
   onRefreshPapers,
   onRemoveAttachment,
+  onFindPapers,
+  onRecommendPapers,
   onSelectAllVisible,
   onSelectFileAttachments,
   onSelectImageAttachments,
   onSubmitPrompt,
   onToggleAgentRag,
   onTogglePaper,
+  onUseFullLibraryRag,
   onTogglePlanItem,
   onToggleStep,
   onToggleTool,
   paperSearchQuery,
-  paperSidebarRef,
   papers,
   plan,
   promptSuggestions,
-  selectedInspectorItem,
   selectedAgentPresetId,
+  selectedAgentReasoningEffort,
   selectedPaperIds,
   selectedPapers,
-  selectedPlanItems,
   selectedTags,
   screenshotLoading,
   setStatusMessage,
   sortedHistorySessions,
-  statusMessage,
   submitPromptFromEnter,
-  themeMode,
 }: AgentWorkspaceViewProps) {
+  const [paperToolOpen, setPaperToolOpen] = useState(false);
+  const isFreshAgentSession =
+    messages.length === 1 &&
+    messages[0]?.role === 'assistant' &&
+    Boolean(messages[0]?.trace?.some((step) => step.id === 'welcome-intent')) &&
+    !activeSessionRunning &&
+    !plan;
+
   return (
-    <div className="relative h-full min-h-0 overflow-hidden bg-[linear-gradient(180deg,#eef2f8,#e7edf5)] text-slate-900 dark:bg-chrome-950 dark:text-chrome-100">
-      <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-white/70 bg-white/55 shadow-[0_26px_70px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-white/8 dark:bg-chrome-950 dark:shadow-none">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/72 px-4 backdrop-blur-xl dark:border-white/10 dark:bg-chrome-950">
-          <div
-            className="flex min-w-0 items-center gap-3"
-            data-tauri-drag-region
-            onDoubleClick={handleWindowToggleMaximize}
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_10px_28px_rgba(15,23,42,0.16)] ring-1 ring-slate-200/80 dark:bg-teal-300 dark:text-slate-950 dark:shadow-[0_10px_28px_rgba(0,0,0,0.28)] dark:ring-white/10">
-              <Bot className="h-4 w-4" strokeWidth={2.2} />
-            </span>
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-teal-600 dark:text-teal-300">
-                PaperQuay Agent
-              </div>
-              <div className="mt-0.5 truncate text-sm font-black text-slate-950 dark:text-white">
-                {l('论文助手 · 工具调用工作台', 'Paper Assistant · Tool Workspace')}
-              </div>
-            </div>
-          </div>
-
-          <div
-            className="mx-4 min-w-8 flex-1 self-stretch"
-            data-tauri-drag-region
-            onDoubleClick={handleWindowToggleMaximize}
-          />
-
-          <div className="flex items-center gap-2">
-            <div className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-500 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-400 md:block">
-              {agentPresetName
-                ? `Agent · ${agentPresetName}`
-                : l('Agent · 使用设置中的 Agent 模型', 'Agent · Using the model configured in Settings')}
-            </div>
-            <button
-              type="button"
-              onClick={onRefreshPapers}
-              disabled={loading || applyingPlan}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
-            >
-              <RefreshCw className={loading ? 'mr-2 h-4 w-4 animate-spin' : 'mr-2 h-4 w-4'} strokeWidth={1.8} />
-              {l('刷新', 'Refresh')}
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenPreferences}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
-              title={l('设置', 'Settings')}
-            >
-              <Settings2 className="mr-2 h-4 w-4" strokeWidth={1.8} />
-              {l('设置', 'Settings')}
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleThemeMode}
-              className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 dark:border-chrome-700 dark:bg-chrome-800 dark:text-chrome-200 dark:hover:border-chrome-600 dark:hover:bg-chrome-700"
-              title={l('切换主题', 'Toggle Theme')}
-            >
-              {themeMode === 'dark' ? (
-                <Moon className="mr-2 h-4 w-4" strokeWidth={1.8} />
-              ) : (
-                <Sun className="mr-2 h-4 w-4" strokeWidth={1.8} />
-              )}
-              {themeMode === 'light'
-                ? l('浅色', 'Light')
-                : themeMode === 'dark'
-                  ? l('深色', 'Dark')
-                  : l('自动', 'Auto')}
-            </button>
-            <div className="flex items-center rounded-xl border border-slate-200 bg-white p-1 dark:border-chrome-700 dark:bg-chrome-800">
-              <button
-                type="button"
-                onClick={handleWindowMinimize}
-                className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 dark:text-chrome-400 dark:hover:bg-chrome-700 dark:hover:text-chrome-200"
-                aria-label={l('最小化窗口', 'Minimize Window')}
-                title={l('最小化', 'Minimize')}
-              >
-                <Minus className="h-4 w-4" strokeWidth={1.9} />
-              </button>
-              <button
-                type="button"
-                onClick={handleWindowToggleMaximize}
-                className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 dark:text-chrome-400 dark:hover:bg-chrome-700 dark:hover:text-chrome-200"
-                aria-label={l('最大化或还原窗口', 'Maximize or Restore Window')}
-                title={l('最大化/还原', 'Maximize/Restore')}
-              >
-                <Square className="h-3.5 w-3.5" strokeWidth={1.9} />
-              </button>
-              <button
-                type="button"
-                onClick={handleWindowClose}
-                className="rounded-lg p-2 text-slate-500 transition-all duration-200 hover:bg-rose-50 hover:text-rose-600 dark:text-chrome-400 dark:hover:bg-rose-400/10 dark:hover:text-rose-400"
-                aria-label={l('关闭窗口', 'Close Window')}
-                title={l('关闭', 'Close')}
-              >
-                <X className="h-4 w-4" strokeWidth={1.9} />
-              </button>
-            </div>
-          </div>
-        </header>
-
+    <div className="pq-saas-scope pq-agent-workspace pq-workspace-surface relative h-full min-h-0 overflow-hidden text-[var(--pq-text)]">
+      <div className="flex h-full min-h-0 flex-col bg-transparent">
         <main
           className="grid min-h-0 flex-1 overflow-hidden"
           style={{
             gridTemplateColumns: historySidebarCollapsed
-              ? '76px 350px minmax(0,1fr) 420px'
-              : '280px 350px minmax(0,1fr) 420px',
+              ? '64px minmax(0,1fr)'
+              : '260px minmax(0,1fr)',
             gridTemplateRows: 'minmax(0, 1fr)',
           }}
         >
           <aside
             ref={historySidebarRef}
             onWheelCapture={handleHistoryWheelCapture}
-            className="min-h-0 border-r border-slate-200/80 bg-white/64 backdrop-blur-xl dark:border-white/10 dark:bg-[#101720]/86"
+            className="pq-agent-pane min-h-0 border-r"
           >
             {historySidebarCollapsed ? (
               <div className="flex h-full min-h-0 flex-col items-center gap-3 px-2 py-4">
                 <button
                   type="button"
                   onClick={() => onHistorySidebarCollapsedChange(false)}
-                  className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                  className={agentHistoryIconButtonClass}
                   title={l('展开历史记录', 'Expand History')}
                 >
                   <PanelLeftOpen className="h-4 w-4" strokeWidth={1.8} />
@@ -345,7 +356,7 @@ export default function AgentWorkspaceView({
                 <button
                   type="button"
                   onClick={handleNewAgentSession}
-                  className="rounded-xl bg-slate-950 p-2 text-white transition hover:bg-slate-800 dark:bg-teal-300 dark:text-slate-950"
+                  className="pq-button-primary h-9 w-9 rounded-full p-0"
                   title={l('新建对话', 'New Chat')}
                 >
                   <Plus className="h-4 w-4" strokeWidth={2} />
@@ -362,10 +373,10 @@ export default function AgentWorkspaceView({
                       className={[
                         'h-2.5 w-2.5 rounded-full transition',
                         session.id === activeSessionId
-                          ? 'bg-teal-500 shadow-[0_0_0_4px_rgba(20,184,166,0.14)]'
+                          ? 'bg-[#55a99b] ring-4 ring-[#55a99b]/15'
                           : session.status === 'error'
                             ? 'bg-rose-400 hover:bg-rose-500'
-                            : 'bg-slate-300 hover:bg-slate-400 dark:bg-chrome-600 dark:hover:bg-chrome-500',
+                            : 'bg-slate-300 hover:bg-slate-400 dark:bg-[var(--pq-surface-3)] dark:hover:bg-[var(--pq-surface-3)]',
                       ].join(' ')}
                       title={session.title}
                     />
@@ -374,53 +385,35 @@ export default function AgentWorkspaceView({
               </div>
             ) : (
               <div className="flex h-full min-h-0 flex-col">
-                <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                        <Clock3 className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
-                        {l('历史记录', 'History')}
-                      </div>
-                      <div className="mt-1 truncate text-xs text-slate-500 dark:text-chrome-400">
-                        {l(
-                          `${sortedHistorySessions.length} 个 Agent 对话`,
-                          `${sortedHistorySessions.length} Agent chats`,
-                        )}
-                      </div>
+                <div className="border-b border-[var(--pq-border-subtle)] px-3 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="truncate px-1 text-sm font-semibold text-[var(--pq-text)]">
+                      {l('对话', 'Chats')}
                     </div>
                     <button
                       type="button"
                       onClick={() => onHistorySidebarCollapsedChange(true)}
-                      className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                      className={agentHistoryIconButtonClass}
                       title={l('折叠历史记录', 'Collapse History')}
                     >
                       <PanelLeftClose className="h-4 w-4" strokeWidth={1.8} />
                     </button>
                   </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={handleNewAgentSession}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-800 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
-                    >
-                      <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-                      {l('新对话', 'New Chat')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleClearAgentHistory}
-                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
-                    >
-                      {l('清空', 'Clear')}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNewAgentSession}
+                    className="mt-3 flex h-9 w-full items-center gap-2 rounded-[var(--pq-radius-sm)] px-2.5 text-left text-sm font-medium text-[var(--pq-text)] transition hover:bg-[var(--pq-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--pq-focus-ring)]"
+                  >
+                    <Plus className="h-4 w-4 shrink-0 text-[var(--pq-text-muted)]" strokeWidth={2} />
+                    <span className="truncate">{l('新对话', 'New Chat')}</span>
+                  </button>
                 </div>
 
                 <div
                   data-wheel-scroll-target
-                  className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3"
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 py-2"
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-0.5">
                     {sortedHistorySessions.map((session) => (
                       <div
                         key={session.id}
@@ -434,263 +427,85 @@ export default function AgentWorkspaceView({
                           }
                         }}
                         className={[
-                          'group w-full cursor-pointer rounded-[22px] border p-3 text-left transition',
+                          'group relative w-full cursor-pointer rounded-[var(--pq-radius-sm)] px-2.5 py-2 text-left transition',
                           session.id === activeSessionId
-                            ? 'border-teal-300 bg-teal-50 shadow-[0_14px_35px_rgba(20,184,166,0.12)] dark:border-teal-300/30 dark:bg-teal-300/10'
-                            : 'border-transparent bg-white/70 hover:border-slate-200 hover:bg-white dark:bg-chrome-900/54 dark:hover:border-white/10 dark:hover:bg-chrome-900',
+                            ? 'bg-[var(--pq-surface-2)]'
+                            : 'bg-transparent hover:bg-[var(--pq-surface-2)]',
                         ].join(' ')}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-black text-slate-950 dark:text-white">
-                            {session.title}
-                          </span>
-                          <span className="flex shrink-0 items-center gap-1.5">
+                        {session.id === activeSessionId ? (
+                          <span className="absolute bottom-2 left-0 top-2 w-0.5 rounded-full bg-[var(--pq-accent)]" />
+                        ) : null}
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="min-w-0 flex-1">
                             <span
                               className={[
-                                'h-2 w-2 rounded-full',
-                                session.status === 'error'
-                                  ? 'bg-rose-400'
-                                  : session.status === 'running'
-                                    ? 'bg-amber-400'
-                                    : 'bg-teal-400',
+                                'block truncate text-sm',
+                                session.id === activeSessionId
+                                  ? 'font-semibold text-[var(--pq-text)]'
+                                  : 'font-medium text-[var(--pq-text-muted)] group-hover:text-[var(--pq-text)]',
                               ].join(' ')}
-                            />
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleDeleteHistorySession(session.id);
-                              }}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded-full text-slate-400 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100 focus:opacity-100 dark:hover:bg-rose-400/10 dark:hover:text-rose-300"
-                              aria-label={l('删除历史对话', 'Delete history item')}
-                              title={l('删除历史对话', 'Delete history item')}
                             >
-                              <X className="h-3.5 w-3.5" strokeWidth={2} />
-                            </button>
+                              {session.title}
+                            </span>
+                            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--pq-text-faint)]">
+                              <span
+                                className={[
+                                  'h-1.5 w-1.5 shrink-0 rounded-full',
+                                  session.status === 'error'
+                                    ? 'bg-rose-400'
+                                    : session.status === 'running'
+                                      ? 'bg-amber-400'
+                                      : 'bg-slate-300 dark:bg-white/20',
+                                ].join(' ')}
+                              />
+                              <span className="truncate">{formatHistoryTime(session.updatedAt)}</span>
+                              {session.selectedPaperIds.length > 0 ? (
+                                <span className="shrink-0">
+                                  {l(`${session.selectedPaperIds.length} 篇`, `${session.selectedPaperIds.length} papers`)}
+                                </span>
+                              ) : null}
+                            </span>
                           </span>
-                        </div>
-                        <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-chrome-400">
-                          {session.summary}
-                        </div>
-                        <div className="mt-3 flex items-center justify-between text-[11px] font-semibold text-slate-400 dark:text-chrome-500">
-                          <span>{formatHistoryTime(session.updatedAt)}</span>
-                          <span>{session.selectedPaperIds.length} papers</span>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleDeleteHistorySession(session.id);
+                            }}
+                            className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--pq-radius-sm)] text-slate-400 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100 focus:opacity-100 dark:hover:bg-rose-400/10 dark:hover:text-rose-300"
+                            aria-label={l('删除历史对话', 'Delete history item')}
+                            title={l('删除历史对话', 'Delete history item')}
+                          >
+                            <X className="h-3.5 w-3.5" strokeWidth={2} />
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
+                <div className="border-t border-[var(--pq-border-subtle)] px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={handleClearAgentHistory}
+                    className="flex h-8 w-full items-center rounded-[var(--pq-radius-sm)] px-2.5 text-left text-xs font-medium text-[var(--pq-text-faint)] transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-400/10 dark:hover:text-rose-300"
+                  >
+                    {l('清空历史记录', 'Clear history')}
+                  </button>
+                </div>
               </div>
             )}
-          </aside>
-
-          <aside
-            ref={paperSidebarRef}
-            onWheelCapture={handlePaperWheelCapture}
-            className="min-h-0 border-r border-slate-200/80 bg-white/70 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74"
-          >
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                      <BookOpen className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
-                      {l('上下文文献', 'Context Papers')}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
-                      {l(
-                        `已选择 ${selectedPaperIds.size} · 当前结果 ${filteredPapers.length} · 全部 ${papers.length}`,
-                        `Selected ${selectedPaperIds.size} · Results ${filteredPapers.length} · Total ${papers.length}`,
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={onSelectAllVisible}
-                      disabled={filteredPapers.length === 0}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
-                    >
-                      {l('选择结果', 'Select Results')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onClearSelection}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
-                    >
-                      {l('清空', 'Clear')}
-                    </button>
-                  </div>
-                </div>
-
-                <label className="mt-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5 text-sm text-slate-600 shadow-sm dark:border-white/10 dark:bg-chrome-900/84 dark:text-chrome-300">
-                  <Search className="h-4 w-4 shrink-0 text-slate-400 dark:text-chrome-500" strokeWidth={2} />
-                  <input
-                    value={paperSearchQuery}
-                    onChange={(event) => onPaperSearchQueryChange(event.target.value)}
-                    placeholder={l('搜索标题、作者、年份、标签...', 'Search title, author, year, tags...')}
-                    className="min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400 dark:text-chrome-100 dark:placeholder:text-chrome-500"
-                  />
-                </label>
-
-                {selectedTags.length > 0 ? (
-                  <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50/80 p-3 dark:border-white/10 dark:bg-chrome-950/60">
-                    <div className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-chrome-400">
-                      <Tags className="h-3.5 w-3.5" />
-                      {l('当前标签', 'Current Tags')}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedTags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              <div
-                data-wheel-scroll-target
-                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-3"
-              >
-                {loading ? (
-                  <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={2} />
-                    {l('正在加载文库...', 'Loading library...')}
-                  </div>
-                ) : papers.length === 0 ? (
-                  <div className="rounded-[24px] border border-dashed border-slate-200 bg-white/70 p-5 text-sm leading-7 text-slate-500 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-400">
-                    {l(
-                      '当前文库为空。先在文库工作区导入 PDF，再回到 Agent 页面批处理。',
-                      'The library is empty. Import PDFs in the Library workspace first, then return to Agent for batch operations.',
-                    )}
-                  </div>
-                ) : filteredPapers.length === 0 ? (
-                  <div className="rounded-[24px] border border-dashed border-slate-200 bg-white/70 p-5 text-sm leading-7 text-slate-500 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-400">
-                    {l('没有匹配的文献。换一个关键词再试。', 'No matching papers. Try another keyword.')}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredPapers.map((paper) => {
-                      const selected = selectedPaperIds.has(paper.id);
-
-                      return (
-                        <button
-                          key={paper.id}
-                          type="button"
-                          onClick={() => onTogglePaper(paper.id)}
-                          className={[
-                            'flex w-full items-start gap-3 rounded-[22px] border p-3 text-left transition',
-                            selected
-                              ? 'border-teal-300 bg-teal-50 shadow-[0_14px_35px_rgba(20,184,166,0.12)] dark:border-teal-300/30 dark:bg-teal-300/10'
-                              : 'border-transparent bg-white/74 hover:border-slate-200 hover:bg-white dark:bg-chrome-900/58 dark:hover:border-white/10 dark:hover:bg-chrome-900',
-                          ].join(' ')}
-                        >
-                          <span
-                            className={[
-                              'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
-                              selected
-                                ? 'border-teal-500 bg-teal-500 text-white'
-                                : 'border-slate-300 bg-white text-transparent dark:border-white/20 dark:bg-chrome-950',
-                            ].join(' ')}
-                          >
-                            <Check className="h-3.5 w-3.5" strokeWidth={2.2} />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="line-clamp-2 text-sm font-bold text-slate-950 dark:text-white">
-                              {paper.title}
-                            </span>
-                            <span className="mt-1 block truncate text-xs text-slate-500 dark:text-chrome-400">
-                              {formatPaperMeta(paper, locale) || l('暂无元数据', 'No metadata')}
-                            </span>
-                            <span className="mt-2 flex flex-wrap gap-1.5">
-                              {paper.tags.slice(0, 4).map((tag) => (
-                                <span
-                                  key={tag.id}
-                                  className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500 dark:border-white/10 dark:bg-chrome-950 dark:text-chrome-400"
-                                >
-                                  {tag.name}
-                                </span>
-                              ))}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
           </aside>
 
           <section
             ref={conversationPanelRef}
             onWheelCapture={handleConversationWheelCapture}
-            className="flex min-h-0 flex-col"
+            className={isFreshAgentSession ? 'flex min-h-0 flex-col justify-center px-6 py-10' : 'flex min-h-0 flex-col'}
           >
-            <div className="border-b border-slate-200/70 bg-white/50 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#0f141b]/60">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-200">
-                    <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} />
-                    Human-in-the-loop · Tool Use
-                  </div>
-                  <h1 className="mt-3 text-xl font-black tracking-tight text-slate-950 dark:text-white">
-                    {l('对话驱动的论文 Agent 执行链路', 'Conversation-driven Paper Agent workflow')}
-                  </h1>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-chrome-300">
-                    {l(
-                      'Agent 会把你的自然语言指令转换成可审查时间线、工具调用和 diff 计划。本地文库只有在你点击确认后才会被修改。',
-                      'The Agent converts natural-language requests into reviewable timelines, tool calls, and diff plans. Your local library is modified only after confirmation.',
-                    )}
-                  </p>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-2xl border border-slate-200 bg-white/82 px-3 py-2 text-center dark:border-white/10 dark:bg-chrome-900/70">
-                    <div className="text-lg font-black text-slate-950 dark:text-white">{selectedPaperIds.size}</div>
-                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">papers</div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white/82 px-3 py-2 text-center dark:border-white/10 dark:bg-chrome-900/70">
-                    <div className="text-lg font-black text-slate-950 dark:text-white">{plan?.items.length ?? 0}</div>
-                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">steps</div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white/82 px-3 py-2 text-center dark:border-white/10 dark:bg-chrome-900/70">
-                    <div className="text-lg font-black text-slate-950 dark:text-white">{selectedPlanItems.length}</div>
-                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">approved</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-2 sm:grid-cols-2 2xl:grid-cols-5">
-                {agentCapabilities.map((capability) => {
-                  const Icon = capability.icon;
-
-                  return (
-                    <div
-                      key={capability.key}
-                      className="rounded-[20px] border border-white/80 bg-white/66 p-3 dark:border-white/10 dark:bg-chrome-900/54"
-                    >
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
-                        <Icon className="h-3.5 w-3.5 text-teal-600 dark:text-teal-300" strokeWidth={2} />
-                        {localizedCapabilityTitles[capability.key] ?? capability.title}
-                      </div>
-                      <div className="mt-1 truncate font-mono text-[10px] text-slate-400 dark:text-chrome-500">
-                        {capability.functionName}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
             <div
               ref={chatScrollRef}
               data-wheel-scroll-target
-              className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-5 py-5"
+              className={isFreshAgentSession ? 'hidden' : 'min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-5 py-4'}
             >
               <div className="mx-auto max-w-5xl space-y-5">
                 {messages.map((message) =>
@@ -705,6 +520,7 @@ export default function AgentWorkspaceView({
                       composerValue={composerValue}
                       expandedStepKeys={expandedStepKeys}
                       expandedToolIds={expandedToolIds}
+                      formatPaperMeta={formatPaperMeta}
                       handleAgentChoice={handleAgentChoice}
                       handleModifyPreviousParameters={handleModifyPreviousParameters}
                       handlePreviewOnly={handlePreviewOnly}
@@ -712,15 +528,19 @@ export default function AgentWorkspaceView({
                       isActivePlan={Boolean(message.plan && plan?.id === message.plan.id)}
                       l={l}
                       lastInstruction={lastInstruction}
+                      loading={loading}
+                      locale={locale}
                       localizedToolLabel={localizedToolLabel}
                       message={message}
                       onApplyPlan={onApplyPlan}
                       onCancelPlan={onCancelPlan}
                       onCopyToolParameters={onCopyToolParameters}
+                      onContinueWithSelectedPapers={onInlinePaperSelectionContinue}
                       onInspectPlanItem={onInspectPlanItem}
                       onTogglePlanItem={onTogglePlanItem}
                       onToggleStep={onToggleStep}
                       onToggleTool={onToggleTool}
+                      papers={papers}
                       setStatusMessage={setStatusMessage}
                     />
                   ),
@@ -728,9 +548,18 @@ export default function AgentWorkspaceView({
               </div>
             </div>
 
-            <div className="border-t border-slate-200/70 bg-white/68 px-5 py-4 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/72">
-              <div className="mx-auto max-w-5xl">
-                <div className="mb-3 flex flex-wrap gap-2">
+            <div className={isFreshAgentSession ? 'bg-transparent px-0 py-0' : 'border-t border-[var(--pq-border)] bg-white/62 px-5 py-4 backdrop-blur-xl dark:bg-white/5'}>
+              <div className={isFreshAgentSession ? 'mx-auto w-full max-w-3xl' : 'mx-auto max-w-5xl'}>
+                {isFreshAgentSession ? (
+                  <div className="mb-7 text-center">
+                    <div className="text-2xl font-semibold tracking-tight text-[var(--pq-text)]">PaperQuay Agent</div>
+                    <div className="mt-2 text-sm text-[var(--pq-text-muted)]">
+                      {l('直接提问，或用 Paper Skill 调用文库上下文。', 'Ask directly, or use Paper Skill for library context.')}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className={isFreshAgentSession ? 'hidden' : 'mb-3 flex flex-wrap gap-2'}>
                   {promptSuggestions.map((suggestion) => (
                     <button
                       key={suggestion}
@@ -744,7 +573,7 @@ export default function AgentWorkspaceView({
                           ),
                         );
                       }}
-                      className="rounded-full border border-slate-200 bg-white/82 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-300 dark:hover:border-teal-300/30 dark:hover:bg-teal-300/10 dark:hover:text-teal-200"
+                      className={agentToolbarButtonClass}
                     >
                       {suggestion}
                     </button>
@@ -752,14 +581,8 @@ export default function AgentWorkspaceView({
                 </div>
 
                 {error ? (
-                  <div className="mb-3 whitespace-pre-wrap rounded-[20px] border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm leading-6 text-rose-700 dark:border-rose-300/20 dark:bg-rose-400/10 dark:text-rose-200">
+                  <div className="mb-3 whitespace-pre-wrap rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm leading-6 text-rose-700 dark:border-rose-300/20 dark:bg-rose-400/10 dark:text-rose-200">
                     {error}
-                  </div>
-                ) : null}
-
-                {statusMessage ? (
-                  <div className="mb-3 rounded-[20px] border border-slate-200 bg-white/72 px-4 py-2.5 text-xs text-slate-500 dark:border-white/10 dark:bg-chrome-900/70 dark:text-chrome-400">
-                    {statusMessage}
                   </div>
                 ) : null}
 
@@ -776,32 +599,32 @@ export default function AgentWorkspaceView({
                       return (
                         <div
                           key={attachment.id}
-                          className="group inline-flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-[0_8px_18px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-300"
+                          className="pq-card group inline-flex items-center gap-3 px-3 py-2 text-xs text-[var(--pq-text-muted)]"
                         >
                           {attachment.dataUrl &&
                           (attachment.kind === 'image' || attachment.kind === 'screenshot') ? (
                             <img
                               src={attachment.dataUrl}
                               alt={attachment.name}
-                              className="h-10 w-10 rounded-xl border border-slate-200 object-cover dark:border-white/10"
+                              className="h-10 w-10 rounded-lg border border-[var(--pq-border)] object-cover"
                             />
                           ) : (
-                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-chrome-800 dark:text-chrome-400">
+                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--pq-accent-soft)] text-[var(--pq-accent)]">
                               <AttachmentIcon className="h-4 w-4" strokeWidth={1.8} />
                             </span>
                           )}
                           <div className="min-w-0">
-                            <div className="max-w-[180px] truncate font-medium text-slate-700 dark:text-chrome-200">
+                            <div className="max-w-[180px] truncate font-medium text-slate-700 dark:text-[var(--pq-text-muted)]">
                               {attachment.name}
                             </div>
-                            <div className="mt-0.5 text-[11px] text-slate-400 dark:text-chrome-500">
+                            <div className="mt-0.5 text-[11px] text-slate-400 dark:text-[var(--pq-text-faint)]">
                               {formatFileSize(attachment.size)}
                             </div>
                           </div>
                           <button
                             type="button"
                             onClick={() => onRemoveAttachment(attachment.id)}
-                            className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-chrome-800 dark:hover:text-chrome-200"
+                            className="pq-icon-button h-7 w-7 rounded-lg"
                             aria-label={l('移除附件', 'Remove attachment')}
                           >
                             <X className="h-3.5 w-3.5" />
@@ -812,7 +635,174 @@ export default function AgentWorkspaceView({
                   </div>
                 ) : null}
 
-                <form onSubmit={onSubmitPrompt} className="rounded-[28px] border border-slate-200 bg-white/92 p-3 shadow-[0_20px_44px_rgba(15,23,42,0.07)] dark:border-white/10 dark:bg-chrome-900/90 dark:shadow-none">
+                {paperToolOpen ? (
+                  <div className="pq-card mb-3 overflow-hidden p-0">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--pq-border)] px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-[var(--pq-text)]">
+                          <BookOpen className="h-4 w-4 text-[var(--pq-accent)]" strokeWidth={2} />
+                          Paper Skill
+                          <span className="rounded-md bg-[var(--pq-accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--pq-accent)]">
+                            {agentRagEnabled ? 'RAG on' : 'RAG off'}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500 dark:text-[var(--pq-text-faint)]">
+                          {l(
+                            `手动选择 ${selectedPaperIds.size} · 搜索结果 ${filteredPapers.length} · 全库 ${papers.length}。未选择时，检索/推荐类问题会自动使用全库候选。`,
+                            `Manual ${selectedPaperIds.size} · Results ${filteredPapers.length} · Library ${papers.length}. Retrieval and recommendation requests can auto-scope to the full library.`,
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={onRefreshPapers}
+                          disabled={loading || applyingPlan}
+                          className={agentIconButtonClass}
+                          title={l('刷新文库', 'Refresh Library')}
+                          aria-label={l('刷新文库', 'Refresh Library')}
+                        >
+                          <RefreshCw
+                            className={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'}
+                            strokeWidth={1.8}
+                          />
+                        </button>
+                        <button type="button" onClick={onFindPapers} className={agentToolbarButtonClass}>
+                          {l('找文献', 'Find Papers')}
+                        </button>
+                        <button type="button" onClick={onRecommendPapers} className={agentToolbarButtonClass}>
+                          {l('推荐论文', 'Recommend')}
+                        </button>
+                        <button type="button" onClick={onUseFullLibraryRag} className={agentToolbarPrimaryButtonClass}>
+                          {l('全库 RAG', 'Full-library RAG')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaperToolOpen(false)}
+                          className={agentIconButtonClass}
+                          aria-label={l('收起 Paper Skill', 'Collapse Paper Skill')}
+                          title={l('收起 Paper Skill', 'Collapse Paper Skill')}
+                        >
+                          <X className="h-4 w-4" strokeWidth={1.8} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-4">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <label className="pq-input flex min-w-[240px] flex-1 items-center gap-2 px-3 py-2.5 text-sm text-[var(--pq-text-muted)]">
+                          <Search className="h-4 w-4 shrink-0 text-slate-400 dark:text-[var(--pq-text-faint)]" strokeWidth={2} />
+                          <input
+                            value={paperSearchQuery}
+                            onChange={(event) => onPaperSearchQueryChange(event.target.value)}
+                            placeholder={l('搜索标题、作者、年份、标签...', 'Search title, author, year, tags...')}
+                            className="min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400 dark:text-[var(--pq-text)] dark:placeholder:text-[var(--pq-text-faint)]"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={onSelectAllVisible}
+                          disabled={filteredPapers.length === 0}
+                          className={agentToolbarButtonClass}
+                        >
+                          {l('选择结果', 'Select Results')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onClearSelection}
+                          className={agentToolbarButtonClass}
+                        >
+                          {l('清空', 'Clear')}
+                        </button>
+                      </div>
+
+                      {selectedTags.length > 0 ? (
+                        <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1">
+                          <Tags className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                          {selectedTags.map((tag) => (
+                            <span key={tag} className={agentTagClass}>
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      <div
+                        data-wheel-scroll-target
+                        className="max-h-72 overflow-y-auto overscroll-y-contain rounded-xl border border-[var(--pq-border)] bg-[var(--pq-surface-1)]"
+                      >
+                        {loading ? (
+                          <div className="flex h-40 items-center justify-center text-sm text-slate-500">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={2} />
+                            {l('正在加载文库...', 'Loading library...')}
+                          </div>
+                        ) : papers.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-[var(--pq-border)] p-4 text-sm leading-7 text-[var(--pq-text-muted)]">
+                            {l(
+                              '当前文库为空。先在文库工作区导入 PDF，再回到 Agent 进行检索、推荐或批处理。',
+                              'The library is empty. Import PDFs in the Library workspace first, then return to Agent for retrieval, recommendation, or batch work.',
+                            )}
+                          </div>
+                        ) : filteredPapers.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-[var(--pq-border)] p-4 text-sm leading-7 text-[var(--pq-text-muted)]">
+                            {l('没有匹配的文献。换一个关键词再试。', 'No matching papers. Try another keyword.')}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-[var(--pq-border-subtle)]">
+                            {filteredPapers.map((paper) => {
+                              const selected = selectedPaperIds.has(paper.id);
+
+                              return (
+                                <button
+                                  key={paper.id}
+                                  type="button"
+                                  onClick={() => onTogglePaper(paper.id)}
+                                  className={[
+                                    'flex w-full items-center gap-3 px-3 py-2.5 text-left transition',
+                                    selected
+                                      ? 'bg-[var(--pq-accent-soft)]'
+                                      : 'bg-transparent hover:bg-[var(--pq-surface-2)]',
+                                  ].join(' ')}
+                                >
+                                  <span
+                                    className={[
+                                      'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                                      selected
+                                        ? 'border-[var(--pq-accent)] bg-[var(--pq-accent)] text-[var(--pq-accent-text)]'
+                                        : 'border-slate-300 bg-white text-transparent dark:border-white/20 dark:bg-[var(--pq-bg-primary)]',
+                                    ].join(' ')}
+                                  >
+                                    <Check className="h-3.5 w-3.5" strokeWidth={2.2} />
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="truncate text-sm font-semibold text-[var(--pq-text)]">
+                                      {paper.title}
+                                    </span>
+                                    <span className="mt-1 block truncate text-xs text-slate-500 dark:text-[var(--pq-text-faint)]">
+                                      {formatPaperMeta(paper, locale) || l('暂无元数据', 'No metadata')}
+                                    </span>
+                                  </span>
+                                  <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">
+                                    {paper.year || ''}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <form
+                  onSubmit={onSubmitPrompt}
+                  className={
+                    isFreshAgentSession
+                      ? 'pq-chat-composer p-3 shadow-[0_18px_48px_rgba(15,23,42,0.12)]'
+                      : 'pq-chat-composer p-3'
+                  }
+                >
                   <textarea
                     value={composerValue}
                     onChange={(event) => onComposerChange(event.target.value)}
@@ -822,17 +812,21 @@ export default function AgentWorkspaceView({
                         submitPromptFromEnter();
                       }
                     }}
-                    className="min-h-[96px] w-full resize-none rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-slate-800 outline-none dark:text-chrome-100"
+                    className={
+                      isFreshAgentSession
+                        ? 'min-h-[72px] w-full resize-none rounded-xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-[var(--pq-text)] outline-none placeholder:text-[var(--pq-text-faint)]'
+                        : 'min-h-[96px] w-full resize-none rounded-xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-[var(--pq-text)] outline-none placeholder:text-[var(--pq-text-faint)]'
+                    }
                     placeholder={l('在此处发送消息...', 'Send a message here...')}
                   />
-                  <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                  <div className="mt-3 flex flex-nowrap items-end justify-between gap-3">
+                    <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       <button
                         type="button"
                         onClick={onSelectImageAttachments}
                         title={l('添加图片', 'Add images')}
                         aria-label={l('添加图片', 'Add images')}
-                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100"
+                        className={agentComposerIconButtonClass}
                       >
                         <ImagePlus className="h-4 w-4" strokeWidth={1.8} />
                       </button>
@@ -841,7 +835,7 @@ export default function AgentWorkspaceView({
                         onClick={onSelectFileAttachments}
                         title={l('添加文件', 'Add files')}
                         aria-label={l('添加文件', 'Add files')}
-                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100"
+                        className={agentComposerIconButtonClass}
                       >
                         <Paperclip className="h-4 w-4" strokeWidth={1.8} />
                       </button>
@@ -851,7 +845,7 @@ export default function AgentWorkspaceView({
                         disabled={screenshotLoading}
                         title={screenshotLoading ? l('截图中...', 'Capturing...') : l('截图', 'Screenshot')}
                         aria-label={screenshotLoading ? l('截图中...', 'Capturing...') : l('截图', 'Screenshot')}
-                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100"
+                        className={agentComposerIconButtonClass}
                       >
                         {screenshotLoading ? (
                           <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
@@ -865,35 +859,49 @@ export default function AgentWorkspaceView({
                         title={agentRagEnabled ? l('关闭 RAG', 'Disable RAG') : l('开启 RAG', 'Enable RAG')}
                         aria-label={agentRagEnabled ? l('关闭 RAG', 'Disable RAG') : l('开启 RAG', 'Enable RAG')}
                         className={[
-                          'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition',
+                          'pq-icon-button relative h-10 w-10 shrink-0 border transition',
                           agentRagEnabled
-                            ? 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-300/30 dark:bg-teal-300/10 dark:text-teal-200'
-                            : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300 dark:hover:border-white/20 dark:hover:bg-chrome-700 dark:hover:text-chrome-100',
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-[0_0_0_3px_rgba(16,185,129,0.12)] dark:border-emerald-400/40 dark:bg-emerald-400/12 dark:text-emerald-200'
+                            : 'border-[var(--pq-border)] bg-white/60 text-slate-400 dark:bg-white/5 dark:text-[var(--pq-text-faint)]',
                         ].join(' ')}
                       >
                         <Database className="h-4 w-4" strokeWidth={1.8} />
                       </button>
-                      <label className="flex h-10 min-w-[210px] items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-white/10 dark:bg-chrome-800 dark:text-chrome-300">
-                        <Bot className="h-4 w-4 shrink-0 text-slate-400 dark:text-chrome-500" strokeWidth={1.8} />
-                        <select
-                          value={selectedAgentPresetId}
-                          onChange={(event) => onAgentPresetChange(event.target.value)}
-                          className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none dark:text-chrome-100"
-                          title={l('选择 Agent 模型', 'Choose Agent model')}
-                        >
-                          {agentModelPresets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label || preset.model}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setPaperToolOpen((open) => !open)}
+                        title={l('Paper Skill：选择文献范围', 'Paper Skill: choose paper scope')}
+                        aria-label={l('Paper Skill：选择文献范围', 'Paper Skill: choose paper scope')}
+                        className={[
+                          'pq-icon-button h-10 shrink-0 gap-2 border px-3 text-xs font-semibold',
+                          selectedPaperIds.size > 0 || paperToolOpen
+                            ? 'border-[var(--pq-accent)] bg-[var(--pq-accent-soft)] text-[var(--pq-accent)]'
+                            : 'border-[var(--pq-border)] bg-white/60',
+                        ].join(' ')}
+                      >
+                        <BookOpen className="h-4 w-4" strokeWidth={1.8} />
+                        {selectedPaperIds.size > 0
+                          ? l(`${selectedPaperIds.size} 篇`, `${selectedPaperIds.size} papers`)
+                          : 'Paper Skill'}
+                      </button>
+                      <ModelPresetPicker
+                        l={l}
+                        presets={agentModelPresets}
+                        selectedPresetId={selectedAgentPresetId}
+                        onChange={onAgentPresetChange}
+                        title={l('选择 Agent 模型', 'Choose Agent model')}
+                      />
+                      <AgentReasoningPicker
+                        l={l}
+                        value={selectedAgentReasoningEffort}
+                        onChange={onAgentReasoningEffortChange}
+                      />
                     </div>
 
                     <button
                       type="submit"
                       disabled={activeSessionRunning || !composerValue.trim()}
-                      className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-black text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:opacity-50 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
+                      className="pq-button-primary h-11 shrink-0 px-5 text-sm disabled:opacity-50"
                     >
                       {activeSessionRunning ? (
                         <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
@@ -908,195 +916,6 @@ export default function AgentWorkspaceView({
             </div>
           </section>
 
-          <aside
-            ref={inspectorSidebarRef}
-            onWheelCapture={handleInspectorWheelCapture}
-            className="min-h-0 border-l border-slate-200/80 bg-white/72 backdrop-blur-xl dark:border-white/10 dark:bg-[#121922]/74"
-          >
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="border-b border-slate-200/70 p-4 dark:border-white/10">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                      <GitBranch className="h-4 w-4 text-teal-600 dark:text-teal-300" strokeWidth={2} />
-                      Inspector
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-chrome-400">
-                      {plan
-                        ? l(
-                          `${approvedItemIds.size} / ${plan.items.length} 项待执行`,
-                          `${approvedItemIds.size} / ${plan.items.length} items pending`,
-                        )
-                        : l('等待 Agent 计划', 'Waiting for Agent plan')}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onApplyPlan}
-                    disabled={!plan || approvedItemIds.size === 0 || applyingPlan || activeSessionRunning}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-teal-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
-                  >
-                    {applyingPlan ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                    )}
-                    {l('执行', 'Run')}
-                  </button>
-                </div>
-              </div>
-
-              <div
-                data-wheel-scroll-target
-                className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain p-4"
-              >
-                <div className="space-y-4">
-                  <section className="rounded-[26px] border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-chrome-950/58">
-                    <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                      <Database className="h-4 w-4 text-teal-600 dark:text-teal-300" />
-                      {l('当前上下文', 'Current Context')}
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center dark:border-white/10 dark:bg-chrome-900">
-                        <div className="text-lg font-black">{selectedPapers.length}</div>
-                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                          {l('论文', 'Papers')}
-                        </div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center dark:border-white/10 dark:bg-chrome-900">
-                        <div className="text-lg font-black">{selectedTags.length}</div>
-                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                          {l('标签', 'Tags')}
-                        </div>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center dark:border-white/10 dark:bg-chrome-900">
-                        <div className="text-lg font-black">
-                          {new Set(selectedPapers.flatMap((paper) => paper.categoryIds)).size}
-                        </div>
-                        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                          {l('分类', 'Collections')}
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-
-                  {!plan ? (
-                    <section className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50/80 p-5 text-sm leading-7 text-slate-500 dark:border-white/10 dark:bg-chrome-900/60 dark:text-chrome-400">
-                      {l(
-                        '发送对话后，Agent 会在这里展示工具、参数、返回结果、diff 和审批按钮。',
-                        'After you send a message, the Agent will show tools, parameters, results, diffs, and approval controls here.',
-                      )}
-                    </section>
-                  ) : (
-                    <>
-                      <section className="rounded-[26px] border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-chrome-900/72">
-                        <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                          <BrainCircuit className="h-4 w-4 text-teal-600 dark:text-teal-300" />
-                          {l('计划概览', 'Plan Overview')}
-                        </div>
-                        <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-chrome-400">
-                          {plan.description}
-                        </div>
-                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-chrome-950">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                            Tool
-                          </div>
-                          <div className="mt-1 text-sm font-black text-slate-950 dark:text-white">
-                            {localizedToolLabel(plan.tool)}
-                          </div>
-                          <div className="font-mono text-[11px] text-slate-400">{toolFunctionName(plan.tool)}</div>
-                        </div>
-                      </section>
-
-                      <section className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                            <Layers3 className="h-4 w-4 text-teal-600 dark:text-teal-300" />
-                            {l('审批项', 'Approval Items')}
-                          </div>
-                          <span className="text-xs font-bold text-slate-400">
-                            {selectedPlanItems.length} selected
-                          </span>
-                        </div>
-                        {plan.items.map((item) => (
-                          <PlanDiffCard
-                            key={item.id}
-                            item={item}
-                            approved={approvedItemIds.has(item.id)}
-                            onToggle={() => onTogglePlanItem(item.id)}
-                            onInspect={() => onInspectPlanItem(item.id, item.paperTitle)}
-                          />
-                        ))}
-                      </section>
-                    </>
-                  )}
-
-                  {selectedInspectorItem ? (
-                    <section className="rounded-[26px] border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-chrome-900/72">
-                      <div className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
-                        <MessageSquareText className="h-4 w-4 text-teal-600 dark:text-teal-300" />
-                        {l('选中项详情', 'Selected Item Details')}
-                      </div>
-                      <div className="mt-3 space-y-3">
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-chrome-950">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                            Paper
-                          </div>
-                          <div className="mt-1 text-xs font-bold leading-5 text-slate-700 dark:text-chrome-200">
-                            {selectedInspectorItem.paperTitle}
-                          </div>
-                        </div>
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/10 dark:bg-chrome-950">
-                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                            Action
-                          </div>
-                          <div className="mt-1 text-xs leading-5 text-slate-600 dark:text-chrome-300">
-                            {selectedInspectorItem.description}
-                          </div>
-                        </div>
-                        {selectedInspectorItem.targetCategoryName ? (
-                          <div className="rounded-2xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs leading-5 text-teal-700 dark:border-teal-300/20 dark:bg-teal-300/10 dark:text-teal-200">
-                            Collection · {selectedInspectorItem.targetCategoryParentName} / {selectedInspectorItem.targetCategoryName}
-                          </div>
-                        ) : null}
-                      </div>
-                    </section>
-                  ) : null}
-                </div>
-              </div>
-
-              {plan && plan.items.length > 0 ? (
-                <div className="border-t border-slate-200/70 p-4 dark:border-white/10">
-                  <div className="mb-3 text-xs text-slate-500 dark:text-chrome-400">
-                    {l(
-                      `将应用 ${selectedPlanItems.length} 个已勾选计划项。`,
-                      `${selectedPlanItems.length} checked plan items will be applied.`,
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={onApplyPlan}
-                      disabled={selectedPlanItems.length === 0 || applyingPlan || activeSessionRunning}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:opacity-60 dark:bg-teal-300 dark:text-slate-950 dark:hover:bg-teal-200"
-                    >
-                      <PlayCircle className="h-4 w-4" />
-                      {l('确认执行', 'Confirm Execution')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onCancelPlan}
-                      disabled={applyingPlan || activeSessionRunning}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60 dark:border-white/10 dark:bg-chrome-900 dark:text-chrome-200"
-                    >
-                      <X className="h-4 w-4" />
-                      {l('取消', 'Cancel')}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </aside>
         </main>
       </div>
     </div>

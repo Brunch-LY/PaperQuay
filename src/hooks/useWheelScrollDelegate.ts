@@ -111,12 +111,10 @@ export function useWheelScrollDelegate({
   targetSelector = DEFAULT_TARGET_SELECTOR,
   ignoreSelector = DEFAULT_IGNORE_SELECTOR,
 }: UseWheelScrollDelegateOptions): WheelEventHandler<HTMLElement> {
-  const wheelHandler = useCallback<WheelEventHandler<HTMLElement>>(
-    (event) => {
-      handleWheelDelegation(rootRef.current, targetSelector, ignoreSelector, event);
-    },
-    [ignoreSelector, rootRef, targetSelector],
-  );
+  const wheelHandler = useCallback<WheelEventHandler<HTMLElement>>(() => {
+    // React attaches wheel listeners as passive in this runtime, so preventDefault()
+    // must stay in the native passive:false listener below.
+  }, []);
 
   useEffect(() => {
     const root = rootRef.current;

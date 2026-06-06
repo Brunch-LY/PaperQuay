@@ -5,7 +5,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
-import { Bot, Languages, Quote, Sparkles } from 'lucide-react';
+import { Bot, Languages, PanelRightClose, Quote, Sparkles } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import type { PaperSummary, SelectedExcerpt } from '../../types/reader';
 import { cn } from '../../utils/cn';
@@ -385,6 +385,7 @@ function SelectionPanel({
   onAppendSelectedExcerptToQa,
   onTranslateSelectedExcerpt,
   onClearSelectedExcerpt,
+  onCollapse,
 }: {
   selectedExcerpt: SelectedExcerpt | null;
   selectedExcerptTranslation: string;
@@ -394,6 +395,7 @@ function SelectionPanel({
   onAppendSelectedExcerptToQa: () => void;
   onTranslateSelectedExcerpt: () => void;
   onClearSelectedExcerpt: () => void;
+  onCollapse?: () => void;
 }) {
   const l = useLocaleText();
 
@@ -406,6 +408,19 @@ function SelectionPanel({
       )}
       icon={<Languages className="h-4 w-4" strokeWidth={1.8} />}
       contentClassName="space-y-4"
+      actions={
+        onCollapse ? (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="pq-icon-button h-8 w-8"
+            title={l('收起侧边栏', 'Collapse sidebar')}
+            aria-label={l('收起侧边栏', 'Collapse sidebar')}
+          >
+            <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
+          </button>
+        ) : null
+      }
     >
       {!selectedExcerpt ? (
         <HintPanel icon={<Quote className="h-4 w-4" strokeWidth={1.8} />}>

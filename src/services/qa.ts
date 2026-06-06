@@ -1,8 +1,9 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { invoke } from '../platform/electron/core';
+import { listen } from '../platform/electron/event';
 import type {
   OpenAICompatibleQaOptions,
 } from '../types/reader';
+import { cleanQaAssistantOutput } from '../utils/qaOutput';
 
 const QA_STREAM_EVENT = 'paperquay://qa-stream';
 
@@ -35,7 +36,7 @@ export async function askDocumentOpenAICompatible(
   options: OpenAICompatibleQaOptions,
 ): Promise<string> {
   try {
-    return await invoke<string>('ask_document_openai_compatible', { options });
+    return cleanQaAssistantOutput(await invoke<string>('ask_document_openai_compatible', { options }));
   } catch (error) {
     throw new Error(toErrorMessage(error, '调用论文问答接口失败'));
   }
@@ -63,7 +64,7 @@ export async function askDocumentOpenAICompatibleStream(
       }
 
       answer += delta;
-      handlers.onDelta?.(delta, answer);
+      handlers.onDelta?.(delta, cleanQaAssistantOutput(answer));
       return;
     }
 
@@ -73,7 +74,7 @@ export async function askDocumentOpenAICompatibleStream(
       return;
     }
 
-    handlers.onDone?.(answer);
+    handlers.onDone?.(cleanQaAssistantOutput(answer));
   });
 
   try {
@@ -86,7 +87,7 @@ export async function askDocumentOpenAICompatibleStream(
       throw new Error(streamError);
     }
 
-    return answer;
+    return cleanQaAssistantOutput(answer);
   } catch (error) {
     const message = toErrorMessage(error, streamError || '调用论文问答流式接口失败');
     handlers.onError?.(message);

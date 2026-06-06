@@ -33,8 +33,8 @@ export const PDF_ANNOTATION_COLOR_PRESETS: PdfAnnotationColorPreset[] = [
   {
     id: 'blue',
     label: 'Blue',
-    highlightHex: '#93c5fd',
-    editorHex: '#2563eb',
+    highlightHex: '#99f6e4',
+    editorHex: '#0d9488',
   },
   {
     id: 'pink',

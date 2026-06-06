@@ -18,6 +18,7 @@ import type {
   LibraryAgentPlanItem,
   RenameOperation,
 } from './libraryAgent';
+import { paperPdfPath as resolveLibraryPaperPdfPath } from '../utils/libraryPaper';
 
 const AUTO_CLASSIFY_PARENT_NAME = 'Agent 自动归类';
 const GENERIC_COLLECTION_NAMES = new Set([
@@ -206,12 +207,7 @@ export function uniqueTags(tags: string[]): string[] {
 }
 
 export function paperPdfPath(paper: LiteraturePaper): string | null {
-  const storedPath = paper.attachments
-    .find((attachment) => attachment.kind === 'pdf' && attachment.storedPath.trim())
-    ?.storedPath
-    .trim();
-
-  return storedPath || null;
+  return resolveLibraryPaperPdfPath(paper);
 }
 
 export function paperAuthors(paper: LiteraturePaper): string[] {

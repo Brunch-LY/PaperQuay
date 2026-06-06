@@ -5,12 +5,20 @@ import {
   downloadRemoteFileToPath,
   loadPdfBinary,
   listLocalDirectoryFiles,
+  localPathExists,
   readLocalTextFile,
+  readLocalTextFileIfExists,
   runMineruCloudParse,
   selectChatAttachmentPaths,
   selectLocalMineruJsonPath,
-  writeLocalTextFile,
 } from '../../services/desktop';
+import {
+  createNote as createStoredNote,
+  deleteNote as deleteStoredNote,
+  listNotes as listStoredNotes,
+  type NoteMutationOptions,
+  updateNote as updateStoredNote,
+} from '../../services/notes';
 import type { LocalDirectoryFileEntry } from '../../services/desktop';
 import {
   extractTextFromMineruBlock,
@@ -20,6 +28,12 @@ import {
 import { askDocumentOpenAICompatibleStream } from '../../services/qa';
 import { resolveLocalRag } from '../../services/localRag';
 import { summarizeDocumentOpenAICompatible } from '../../services/summary';
+import {
+  emitJumpToNoteAnchor,
+  NOTE_CHANGED_EVENT,
+  type JumpToNoteAnchorEventDetail,
+  type NoteChangedEventDetail,
+} from '../../app/appEvents';
 import {
   buildMineruMarkdownDocument,
   buildSummaryBlockInputs,
@@ -34,6 +48,13 @@ import {
 } from '../../services/zotero';
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
 import type { LiteraturePaperTaskState } from '../../types/library';
+import type {
+  CreateNoteRequest,
+  Note,
+  NoteAnchor,
+  NoteAnchorInsertRequest,
+  UpdateNoteRequest,
+} from '../../types/notes';
 import {
   buildPaperTaskState as buildLocalizedPaperTaskState,
   isPaperTaskRunning,
@@ -43,11 +64,15 @@ import type {
   DocumentChatAttachment,
   DocumentChatCitation,
   DocumentChatMessage,
+  DocumentChatRenderMode,
   DocumentChatSession,
   MineruPage,
+  ModelReasoningEffort,
   PaperAnnotation,
   PaperSummary,
   PdfHighlightTarget,
+  PdfReadingHeatmap,
+  PdfScrollPosition,
   PdfSource,
   PositionedMineruBlock,
   QaModelPreset,
@@ -63,29 +88,25 @@ import type {
   ZoteroRelatedNote,
 } from '../../types/reader';
 import {
-  buildMineruCachePathCandidates,
   buildMineruCachePaths,
-  buildMineruSummaryCachePathCandidates,
-  buildMineruSummaryCachePath,
   guessSiblingJsonPath,
-  guessSiblingMarkdownPath,
 } from '../../utils/mineruCache';
-import { loadPaperHistory, savePaperHistory } from '../../utils/paperHistory';
-import { getParentDirectory } from '../../utils/path';
+import {
+  loadPaperHistory,
+  PAPER_READING_HEATMAP_UPDATED_EVENT,
+  savePaperHistory,
+} from '../../utils/paperHistory';
 import { getFileNameFromPath } from '../../utils/text';
+import { getPdfSourceSignature } from '../pdf/pdfDocumentSource';
 import {
   appendMarkdownSection,
-  appendUniqueLocalPath,
   buildAttachmentFromPath,
   buildQaSessionTitle,
   buildRemotePdfDownloadPath,
   buildScreenshotAttachmentFromPath,
   clampPaneRatio,
-  blobToDataUrl,
-  createAttachmentId,
   createChatMessage,
   createQaSession,
-  cropScreenshotBlob,
   getMineruJsonDisplayName,
   getPreviewPdfName,
   isEditableTarget,
@@ -97,11 +118,21 @@ import {
   PANE_RATIO_STORAGE_KEY,
   ReaderDocumentTranslationSnapshot,
   ReaderTabBridgeState,
-  ScreenshotSelectionRect,
-  ScreenshotSelectionState,
   updateQaSession,
   formatQuoteMarkdown,
 } from './documentReaderShared';
+import { appendUniqueChatAttachments } from './documentReaderAttachments';
+import {
+  removeQaSession,
+  resolveActiveQaSession,
+  resolveQaModelPreset,
+  resolveQaSessionSelection,
+} from './documentReaderQaSessions';
+import {
+  buildQuoteMarkdown as buildNoteQuoteMarkdown,
+  createNoteAnchorFromSelection,
+  titleFromText,
+} from '../notes/noteUtils';
 import {
   chunkItems,
   getModelRuntimeConfig,
@@ -109,21 +140,52 @@ import {
   ONBOARDING_WELCOME_CACHE_DIR,
   pickLocaleText,
   resolveModelPreset,
-  type MineruCacheManifest,
   type SummaryCacheEnvelope,
 } from './readerShared';
 import type { LocalRagResolution } from './readerQaContext';
 import { buildQaContext, formatQaContextStatus } from './readerQaContext';
 import { useDocumentTranslation } from './useDocumentTranslation';
+import {
+  buildPendingNoteAnchorInsert,
+  buildNoteAnchorJumpDetail,
+  buildNoteAnchorPdfHighlightTarget,
+  buildNotePdfHighlightTarget,
+  buildReaderNotesEditorSourceId,
+  buildSelectedExcerptNoteCreateRequest,
+  isNoteEventRecord,
+  resolveReaderNoteAnchorTarget,
+  resolveNoteAnchorWorkspaceId,
+  sortReaderNotes,
+} from './documentReaderNotes';
+import {
+  buildReaderLocalPdfPathCandidates,
+  restorePdfSourceHistory,
+  upsertRecentPdfReadingHeatmap,
+  upsertRecentPdfScrollPosition,
+} from './documentReaderHistory';
+import {
+  buildAvailablePdfOptions,
+  canSwitchToOriginalPdf,
+  resolveAnnotationSaveDirectory,
+  resolveCurrentLocalPdfPath,
+  resolveCurrentPdfVariantLabel,
+  resolveOriginalPdfPath,
+} from './documentReaderPdfOptions.ts';
+import {
+  writeMineruParseCache,
+  writePreviewSummaryCache,
+} from './readerLibraryPreview';
+import {
+  loadSavedMineruPages,
+  loadSavedSummaryCache,
+  resolveSavedPdfPath,
+} from './documentReaderCache';
+import {
+  buildPaperSummarySourceKey,
+  loadMineruMarkdownDocument,
+} from './documentReaderSummarySource';
 
-function isManifestShape(value: unknown): value is MineruCacheManifest {
-  return Boolean(
-    value &&
-      typeof value === 'object' &&
-      typeof (value as MineruCacheManifest).documentKey === 'string' &&
-      typeof (value as MineruCacheManifest).pdfPath === 'string',
-  );
-}
+type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 
 interface DocumentReaderTabProps {
   tabId: string;
@@ -147,6 +209,44 @@ interface DocumentReaderTabProps {
   onBridgeStateChange: (tabId: string, bridge: ReaderTabBridgeState | null) => void;
   onTranslationDisplayModeChange: (mode: TranslationDisplayMode) => void;
   translationTargetLanguageLabel: string;
+  assistantActivePanel: AssistantPanelKey;
+  setAssistantActivePanel: StateSetter<AssistantPanelKey>;
+  assistantDetached: boolean;
+  setAssistantDetached: StateSetter<boolean>;
+  qaSessions: DocumentChatSession[];
+  setQaSessions: StateSetter<DocumentChatSession[]>;
+  selectedQaSessionId: string;
+  setSelectedQaSessionId: StateSetter<string>;
+  qaInput: string;
+  setQaInput: StateSetter<string>;
+  qaAttachments: DocumentChatAttachment[];
+  setQaAttachments: StateSetter<DocumentChatAttachment[]>;
+  selectedQaPresetId: string;
+  setSelectedQaPresetId: StateSetter<string>;
+  qaRagEnabled: boolean;
+  setQaRagEnabled: StateSetter<boolean>;
+  qaAnswerRenderMode: DocumentChatRenderMode;
+  setQaAnswerRenderMode: StateSetter<DocumentChatRenderMode>;
+  qaReasoningEffort: ModelReasoningEffort;
+  setQaReasoningEffort: StateSetter<ModelReasoningEffort>;
+  qaLoading: boolean;
+  setQaLoading: StateSetter<boolean>;
+  qaError: string;
+  setQaError: StateSetter<string>;
+  workspaceNoteMarkdown: string;
+  setWorkspaceNoteMarkdown: StateSetter<string>;
+  notes: Note[];
+  setNotes: StateSetter<Note[]>;
+  activeNoteId: string | null;
+  setActiveNoteId: StateSetter<string | null>;
+  notesLoading: boolean;
+  setNotesLoading: StateSetter<boolean>;
+  notesSaving: boolean;
+  setNotesSaving: StateSetter<boolean>;
+  notesError: string;
+  setNotesError: StateSetter<string>;
+  pendingNoteAnchorJump?: JumpToNoteAnchorEventDetail | null;
+  onPendingNoteAnchorJumpHandled?: (requestId?: string) => void;
   translationSnapshot?: ReaderDocumentTranslationSnapshot | null;
   onboardingWorkspaceStage?: WorkspaceStage | null;
   onboardingDemoReveal?: {
@@ -179,15 +279,52 @@ function DocumentReaderTab({
   onBridgeStateChange,
   onTranslationDisplayModeChange,
   translationTargetLanguageLabel,
+  assistantActivePanel,
+  setAssistantActivePanel,
+  assistantDetached,
+  setAssistantDetached,
+  qaSessions,
+  setQaSessions,
+  selectedQaSessionId,
+  setSelectedQaSessionId,
+  qaInput,
+  setQaInput,
+  qaAttachments,
+  setQaAttachments,
+  selectedQaPresetId,
+  setSelectedQaPresetId,
+  qaRagEnabled,
+  setQaRagEnabled,
+  qaAnswerRenderMode,
+  setQaAnswerRenderMode,
+  qaReasoningEffort,
+  setQaReasoningEffort,
+  qaLoading,
+  setQaLoading,
+  qaError,
+  setQaError,
+  workspaceNoteMarkdown,
+  setWorkspaceNoteMarkdown,
+  notes,
+  setNotes,
+  activeNoteId,
+  setActiveNoteId,
+  notesLoading,
+  setNotesLoading,
+  notesSaving,
+  setNotesSaving,
+  notesError,
+  setNotesError,
+  pendingNoteAnchorJump = null,
+  onPendingNoteAnchorJumpHandled,
   translationSnapshot = null,
   onboardingWorkspaceStage = null,
   onboardingDemoReveal,
 }: DocumentReaderTabProps) {
   const locale = useAppLocale();
   const l = useLocaleText();
+  const readerNoteEditorSourceId = useMemo(() => buildReaderNotesEditorSourceId(tabId), [tabId]);
   const layoutRef = useRef<HTMLDivElement>(null);
-  const screenshotSelectionRef = useRef<ScreenshotSelectionState | null>(null);
-  const screenshotPointerIdRef = useRef<number | null>(null);
   const summaryRequestIdRef = useRef(0);
   const lastDocumentSignatureRef = useRef('');
   const lastCapturedSelectionRef = useRef<{
@@ -212,16 +349,18 @@ function DocumentReaderTab({
   const [pdfSource, setPdfSource] = useState<PdfSource>(null);
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [pdfPath, setPdfPath] = useState('');
+  const pdfScrollPositionsRef = useRef<Record<string, PdfScrollPosition>>({});
+  const pdfReadingHeatmapsRef = useRef<Record<string, PdfReadingHeatmap>>({});
   const [mineruPath, setMineruPath] = useState('');
   const [mineruPages, setMineruPages] = useState<MineruPage[]>([]);
   const [flatBlocks, setFlatBlocks] = useState<PositionedMineruBlock[]>([]);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [activePdfHighlight, setActivePdfHighlight] = useState<PdfHighlightTarget | null>(null);
+  const [pdfHighlightSignal, setPdfHighlightSignal] = useState(0);
   const [blockScrollSignal, setBlockScrollSignal] = useState(0);
   const [leftPaneWidthRatio, setLeftPaneWidthRatio] = useState(loadPaneRatio);
   const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
-  const [assistantActivePanel, setAssistantActivePanel] = useState<AssistantPanelKey>('chat');
   const [workspaceStage, setWorkspaceStage] = useState<WorkspaceStage>('reading');
   const [readingViewMode, setReadingViewMode] = useState<ReaderViewMode>('dual-pane');
   const [loading, setLoading] = useState(false);
@@ -232,24 +371,10 @@ function DocumentReaderTab({
   const [paperSummaryError, setPaperSummaryError] = useState('');
   const [paperSummarySourceKey, setPaperSummarySourceKey] = useState('');
   const [libraryOperation, setLibraryOperation] = useState<LiteraturePaperTaskState | null>(null);
-  const [qaSessions, setQaSessions] = useState<DocumentChatSession[]>(() => {
-    const initialSession = createQaSession(locale);
-
-    return [initialSession];
-  });
-  const [selectedQaSessionId, setSelectedQaSessionId] = useState(
-    () => qaSessions[0]?.id ?? '',
-  );
-  const [qaInput, setQaInput] = useState('');
-  const [qaAttachments, setQaAttachments] = useState<DocumentChatAttachment[]>([]);
-  const [selectedQaPresetId, setSelectedQaPresetId] = useState(settings.qaActivePresetId);
-  const [qaRagEnabled, setQaRagEnabled] = useState(true);
-  const [qaLoading, setQaLoading] = useState(false);
-  const [qaError, setQaError] = useState('');
   const [capturingScreenshot, setCapturingScreenshot] = useState(false);
-  const [screenshotSelection, setScreenshotSelection] = useState<ScreenshotSelectionState | null>(null);
   const [selectedExcerpt, setSelectedExcerpt] = useState<SelectedExcerpt | null>(null);
-  const [assistantDetached, setAssistantDetached] = useState(false);
+  const [pendingNoteAnchorInsert, setPendingNoteAnchorInsert] = useState<NoteAnchorInsertRequest | null>(null);
+  const [readerNoteExternalUpdate, setReaderNoteExternalUpdate] = useState<Note | null>(null);
   const updateLibraryOperation = useCallback(
     (
       kind: LiteraturePaperTaskState['kind'],
@@ -271,7 +396,6 @@ function DocumentReaderTab({
     },
     [],
   );
-  const [workspaceNoteMarkdown, setWorkspaceNoteMarkdown] = useState('');
   const [annotations, setAnnotations] = useState<PaperAnnotation[]>([]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [zoteroRelatedNotes, setZoteroRelatedNotes] = useState<ZoteroRelatedNote[]>([]);
@@ -303,13 +427,9 @@ function DocumentReaderTab({
     translationModelPreset;
   const summaryModelPreset =
     resolveModelPreset(qaModelPresets, settings.summaryModelPresetId) ?? translationModelPreset;
-  const activeQaPreset =
-    qaModelPresets.find((preset) => preset.id === selectedQaPresetId) ?? qaModelPresets[0] ?? null;
+  const activeQaPreset = resolveQaModelPreset(qaModelPresets, selectedQaPresetId);
   const activeQaSession = useMemo(
-    () =>
-      qaSessions.find((session) => session.id === selectedQaSessionId) ??
-      qaSessions[0] ??
-      null,
+    () => resolveActiveQaSession(qaSessions, selectedQaSessionId),
     [qaSessions, selectedQaSessionId],
   );
   const qaMessages = activeQaSession?.messages ?? [];
@@ -376,83 +496,123 @@ function DocumentReaderTab({
       ? mineruPath.replace(/^cloud:/, '')
       : getFileNameFromPath(mineruPath)
     : l('未加载', 'Not Loaded');
-  const originalPdfPath = useMemo(() => {
-    if (document.localPdfPath?.trim()) {
-      return document.localPdfPath;
-    }
-
-    if (document.attachmentKey && settings.remotePdfDownloadDir.trim()) {
-      return buildRemotePdfDownloadPath(settings.remotePdfDownloadDir, document);
-    }
-
-    return '';
-  }, [document, settings.remotePdfDownloadDir]);
-  const currentLocalPdfPath =
-    pdfPath || (pdfSource?.kind === 'local-path' ? pdfSource.path : '');
-  const currentPdfVariantLabel = useMemo(() => {
-    if (!currentLocalPdfPath) {
-      return pdfSource?.kind === 'remote-url' ? l('远程 PDF', 'Remote PDF') : '';
-    }
-
-    if (originalPdfPath && isSameLocalPath(currentLocalPdfPath, originalPdfPath)) {
-      return l('原始 PDF', 'Original PDF');
-    }
-
-    return l('批注版 PDF', 'Annotated PDF');
-  }, [currentLocalPdfPath, l, originalPdfPath, pdfSource]);
-  const canOpenOriginalPdf = Boolean(
-    originalPdfPath &&
-      currentLocalPdfPath &&
-      !isSameLocalPath(currentLocalPdfPath, originalPdfPath),
+  const originalPdfPath = useMemo(
+    () => resolveOriginalPdfPath(document, settings.remotePdfDownloadDir),
+    [document, settings.remotePdfDownloadDir],
   );
-  const annotationSaveDirectory = useMemo(() => {
-    if (settings.mineruCacheDir.trim()) {
-      return buildMineruCachePaths(settings.mineruCacheDir.trim(), document).directory;
-    }
-
-    if (originalPdfPath) {
-      return getParentDirectory(originalPdfPath);
-    }
-
-    if (currentLocalPdfPath) {
-      return getParentDirectory(currentLocalPdfPath);
-    }
-
-    return '';
-  }, [currentLocalPdfPath, document, originalPdfPath, settings.mineruCacheDir]);
-  const availablePdfOptions = useMemo(() => {
-    const options: Array<{ path: string; label: string }> = [];
-    const appendOption = (path: string, label: string) => {
-      if (!path.trim()) {
+  const currentLocalPdfPath = resolveCurrentLocalPdfPath(pdfPath, pdfSource);
+  const pdfScrollSourceKey = useMemo(
+    () => (pdfSource ? getPdfSourceSignature(pdfSource, pdfPath || currentDocument.workspaceId) : ''),
+    [currentDocument.workspaceId, pdfPath, pdfSource],
+  );
+  const pdfScrollPosition = pdfScrollSourceKey
+    ? pdfScrollPositionsRef.current[pdfScrollSourceKey] ?? null
+    : null;
+  const pdfReadingHeatmap = pdfScrollSourceKey
+    ? pdfReadingHeatmapsRef.current[pdfScrollSourceKey] ?? null
+    : null;
+  const saveCurrentPaperHistory = useCallback(
+    (
+      nextPdfScrollPositions = pdfScrollPositionsRef.current,
+      nextPdfReadingHeatmaps = pdfReadingHeatmapsRef.current,
+    ) => {
+      if (!currentDocument.workspaceId || !pdfSource) {
         return;
       }
 
-      if (options.some((option) => isSameLocalPath(option.path, path))) {
-        return;
-      }
+      savePaperHistory({
+        version: 6,
+        workspaceId: currentDocument.workspaceId,
+        document: currentDocument,
+        lastOpenedAt: paperOpenedAtRef.current,
+        lastUpdatedAt: Date.now(),
+        lastPdfPath:
+          pdfPath || (pdfSource.kind === 'local-path' ? pdfSource.path : ''),
+        pdfScrollPositions: nextPdfScrollPositions,
+        pdfReadingHeatmaps: nextPdfReadingHeatmaps,
+        lastMineruPath: mineruPath,
+        lastActiveBlockId: activeBlockId,
+        workspaceStage,
+        readingViewMode,
+        selectedQaPresetId,
+        selectedQaSessionId: null,
+        paperSummary,
+        paperSummarySourceKey,
+        workspaceNoteMarkdown: '',
+        annotations,
+        qaSessions: [],
+      });
+    },
+    [
+      activeBlockId,
+      annotations,
+      currentDocument,
+      mineruPath,
+      paperSummary,
+      paperSummarySourceKey,
+      pdfPath,
+      pdfSource,
+      readingViewMode,
+      selectedQaPresetId,
+      workspaceStage,
+    ],
+  );
+  const handlePdfScrollPositionChange = useCallback((position: PdfScrollPosition) => {
+    const next = upsertRecentPdfScrollPosition(pdfScrollPositionsRef.current, position);
 
-      options.push({ path, label });
-    };
-
-    if (originalPdfPath) {
-      appendOption(originalPdfPath, `Original - ${getFileNameFromPath(originalPdfPath)}`);
+    if (!next) {
+      return;
     }
 
-    projectPdfFiles.forEach((entry) => {
-      const prefix =
-        originalPdfPath && isSameLocalPath(entry.path, originalPdfPath) ? 'Original' : 'Project';
-      appendOption(entry.path, `${prefix} - ${entry.name}`);
-    });
+    pdfScrollPositionsRef.current = next;
+    saveCurrentPaperHistory(next, pdfReadingHeatmapsRef.current);
+  }, [saveCurrentPaperHistory]);
+  const handlePdfReadingHeatmapChange = useCallback((heatmap: PdfReadingHeatmap) => {
+    const next = upsertRecentPdfReadingHeatmap(pdfReadingHeatmapsRef.current, heatmap);
 
-    if (currentLocalPdfPath) {
-      appendOption(
-        currentLocalPdfPath,
-        `${currentPdfVariantLabel || 'Current'} - ${getFileNameFromPath(currentLocalPdfPath)}`,
-      );
+    if (!next) {
+      return;
     }
 
-    return options;
-  }, [currentLocalPdfPath, currentPdfVariantLabel, originalPdfPath, projectPdfFiles]);
+    pdfReadingHeatmapsRef.current = next;
+    saveCurrentPaperHistory(pdfScrollPositionsRef.current, next);
+    window.dispatchEvent(
+      new CustomEvent(PAPER_READING_HEATMAP_UPDATED_EVENT, {
+        detail: {
+          workspaceId: currentDocument.workspaceId,
+          sourceKey: heatmap.sourceKey,
+        },
+      }),
+    );
+  }, [saveCurrentPaperHistory]);
+  const currentPdfVariantLabel = useMemo(
+    () => resolveCurrentPdfVariantLabel({
+      currentLocalPdfPath,
+      originalPdfPath,
+      pdfSource,
+      localize: l,
+    }),
+    [currentLocalPdfPath, l, originalPdfPath, pdfSource],
+  );
+  const canOpenOriginalPdf = canSwitchToOriginalPdf(currentLocalPdfPath, originalPdfPath);
+  const annotationSaveDirectory = useMemo(
+    () => resolveAnnotationSaveDirectory({
+      mineruCacheDir: settings.mineruCacheDir,
+      document,
+      originalPdfPath,
+      currentLocalPdfPath,
+    }),
+    [currentLocalPdfPath, document, originalPdfPath, settings.mineruCacheDir],
+  );
+  const availablePdfOptions = useMemo(
+    () => buildAvailablePdfOptions({
+      originalPdfPath,
+      projectPdfFiles,
+      currentLocalPdfPath,
+      currentPdfVariantLabel,
+    }),
+    [currentLocalPdfPath, currentPdfVariantLabel, originalPdfPath, projectPdfFiles],
+  );
 
   useEffect(() => {
     const fallbackFiles: LocalDirectoryFileEntry[] = currentLocalPdfPath
@@ -513,32 +673,25 @@ function DocumentReaderTab({
   );
 
   const paperSummaryNextSourceKey = useMemo(() => {
-    if (!currentDocument) {
-      return '';
-    }
-
-    const summaryLanguage = resolveSummaryOutputLanguage(settings);
-
-    if (settings.summarySourceMode === 'pdf-text') {
-      if (!pdfData) {
-        return '';
-      }
-
-      return `${currentDocument.itemKey}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::pdf-text::${pdfPath || currentPdfName}::${pdfData.byteLength}`;
-    }
-
-    if (!mineruPath && flatBlocks.length === 0) {
-      return '';
-    }
-
-    return `${currentDocument.itemKey}::${SUMMARY_PROMPT_VERSION}::${summaryLanguage}::mineru-markdown::${mineruPath || currentJsonName}::${flatBlocks.length}`;
+    return buildPaperSummarySourceKey({
+      item: currentDocument,
+      promptVersion: SUMMARY_PROMPT_VERSION,
+      summaryLanguage: resolveSummaryOutputLanguage(settings),
+      summarySourceMode: settings.summarySourceMode,
+      pdfSource,
+      pdfPath,
+      currentPdfName,
+      mineruPath,
+      currentJsonName,
+      blockCount: flatBlocks.length,
+    });
   }, [
     currentDocument,
     currentJsonName,
     currentPdfName,
     flatBlocks.length,
     mineruPath,
-    pdfData,
+    pdfSource,
     pdfPath,
     settings.summaryOutputLanguage,
     settings.summarySourceMode,
@@ -613,13 +766,7 @@ function DocumentReaderTab({
     };
   }, [currentDocument, onboardingDemoReveal?.summarized, paperSummary]);
 
-  useEffect(() => {
-    screenshotSelectionRef.current = screenshotSelection;
-  }, [screenshotSelection]);
-
   const resetDocumentState = useCallback(() => {
-    const initialSession = createQaSession(localeRef.current);
-
     // Allow the next opened document, including reopening the same workspace item,
     // to restore cached reading history before any auto-generation runs.
     restoredHistoryRef.current = '';
@@ -631,6 +778,8 @@ function DocumentReaderTab({
     setHoveredBlockId(null);
     setActivePdfHighlight(null);
     setBlockScrollSignal(0);
+    pdfScrollPositionsRef.current = {};
+    pdfReadingHeatmapsRef.current = {};
     setPaperSummary(null);
     setPaperSummaryLoading(false);
     setPaperSummaryError('');
@@ -638,24 +787,14 @@ function DocumentReaderTab({
     setLibraryOperation(null);
     autoSummarySourceKeyRef.current = '';
     setSelectedAnnotationId(null);
-    setQaSessions([initialSession]);
-    setSelectedQaSessionId(initialSession.id);
-    setQaInput('');
-    setQaAttachments([]);
-    setQaLoading(false);
-    setQaError('');
     setCapturingScreenshot(false);
-    setScreenshotSelection(null);
-    screenshotPointerIdRef.current = null;
     setSelectedExcerpt(null);
-    setWorkspaceNoteMarkdown('');
     setAnnotations([]);
     setZoteroRelatedNotes([]);
     setZoteroRelatedNotesLoading(false);
     setZoteroRelatedNotesError('');
     lastCapturedSelectionRef.current = null;
     autoTranslatedSelectionKeyRef.current = '';
-    setAssistantDetached(false);
   }, [resetDocumentTranslationState]);
 
   const applyMineruPages = useCallback(
@@ -726,7 +865,7 @@ function DocumentReaderTab({
     }: {
       item: WorkspaceItem;
       pdfPath: string;
-      sourceKind: MineruCacheManifest['sourceKind'];
+      sourceKind: Parameters<typeof writeMineruParseCache>[0]['sourceKind'];
       contentJsonText?: string | null;
       middleJsonText?: string | null;
       markdownText?: string | null;
@@ -735,193 +874,69 @@ function DocumentReaderTab({
       fileName?: string;
       zipEntries?: string[];
     }) => {
-      if (!settings.mineruCacheDir.trim()) {
-        return null;
-      }
-
-      const cachePaths = buildMineruCachePaths(settings.mineruCacheDir.trim(), item);
-      const writeTasks: Promise<void>[] = [];
-
-      if (contentJsonText?.trim()) {
-        writeTasks.push(writeLocalTextFile(cachePaths.contentJsonPath, contentJsonText));
-      }
-
-      if (middleJsonText?.trim()) {
-        writeTasks.push(writeLocalTextFile(cachePaths.middleJsonPath, middleJsonText));
-      }
-
-      if (markdownText?.trim()) {
-        writeTasks.push(writeLocalTextFile(cachePaths.markdownPath, markdownText));
-      }
-
-      const manifest: MineruCacheManifest = {
-        version: 1,
-        documentKey: item.itemKey,
-        title: item.title,
+      return writeMineruParseCache({
+        item,
         pdfPath: currentPdfPath,
-        savedAt: new Date().toISOString(),
         sourceKind,
+        contentJsonText,
+        middleJsonText,
+        markdownText,
         batchId,
         dataId,
         fileName,
         zipEntries,
-      };
-
-      writeTasks.push(
-        writeLocalTextFile(cachePaths.manifestPath, JSON.stringify(manifest, null, 2)),
-      );
-
-      await Promise.all(writeTasks);
-
-      return cachePaths;
+        mineruCacheDir: settings.mineruCacheDir,
+      });
     },
     [settings.mineruCacheDir],
   );
 
   const saveSummaryCache = useCallback(
     async (item: WorkspaceItem, sourceKey: string, summary: PaperSummary) => {
-      if (!settings.mineruCacheDir.trim() || !sourceKey.trim()) {
-        return;
-      }
-
-      const cachePath = buildMineruSummaryCachePath(
-        settings.mineruCacheDir.trim(),
+      await writePreviewSummaryCache({
         item,
+        mineruCacheDir: settings.mineruCacheDir,
         sourceKey,
-      );
-      const payload: SummaryCacheEnvelope = {
-        version: 1,
-        sourceKey,
-        summarizedAt: new Date().toISOString(),
         summary,
-      };
-
-      await writeLocalTextFile(cachePath, JSON.stringify(payload, null, 2));
+      });
     },
     [settings.mineruCacheDir],
   );
 
   const tryLoadSavedSummary = useCallback(
     async (item: WorkspaceItem, sourceKey: string) => {
-      if (!settings.mineruCacheDir.trim() || !sourceKey.trim()) {
-        return null;
-      }
-
-      const candidatePaths = buildMineruSummaryCachePathCandidates(
-        settings.mineruCacheDir.trim(),
+      return loadSavedSummaryCache({
         item,
+        mineruCacheDir: settings.mineruCacheDir,
         sourceKey,
-      );
-
-      for (const candidatePath of candidatePaths) {
-        try {
-          const raw = await readLocalTextFile(candidatePath);
-          const parsed = JSON.parse(raw) as Partial<SummaryCacheEnvelope>;
-
-          if (
-            !parsed ||
-            typeof parsed !== 'object' ||
-            parsed.sourceKey !== sourceKey ||
-            !parsed.summary
-          ) {
-            continue;
-          }
-
-          return parsed.summary as PaperSummary;
-        } catch {
-          continue;
-        }
-      }
-
-      return null;
+        readText: readLocalTextFileIfExists,
+      });
     },
     [settings.mineruCacheDir],
   );
 
   const tryLoadSavedMineruPages = useCallback(
     async (item: WorkspaceItem) => {
-      if (isOnboardingWelcomeItem(item)) {
-        if (onboardingDemoReveal && !onboardingDemoReveal.parsed) {
-          return null;
-        }
-
-        const response = await fetch(`${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`);
-
-        if (!response.ok) {
-          return null;
-        }
-
-        const jsonText = await response.text();
-
-        return {
-          pages: parseMineruPages(jsonText),
-          path: `${ONBOARDING_WELCOME_CACHE_DIR}/content_list_v2.json`,
-          message: lRef.current(
-            '已加载 Welcome 内置 MinerU 解析结果',
-            'Loaded the built-in Welcome MinerU parse result',
-          ),
-        };
-      }
-
-      if (!settings.mineruCacheDir.trim()) {
-        return null;
-      }
-
-      const candidateCaches = buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item);
-
-      for (const cachePaths of candidateCaches) {
-        for (const candidatePath of [cachePaths.contentJsonPath, cachePaths.middleJsonPath]) {
-          try {
-            const jsonText = await readLocalTextFile(candidatePath);
-
-            return {
-              pages: parseMineruPages(jsonText),
-              path: candidatePath,
-              message: lRef.current(
-                `已从本地缓存恢复《${item.title}》的解析结果`,
-                `Restored the parsing result for "${item.title}" from the local cache`,
-              ),
-            };
-          } catch {
-            continue;
-          }
-        }
-      }
-
-      return null;
+      return loadSavedMineruPages({
+        item,
+        mineruCacheDir: settings.mineruCacheDir,
+        onboardingDemoReveal,
+        l: lRef.current,
+        readText: readLocalTextFileIfExists,
+        parsePages: parseMineruPages,
+      });
     },
     [onboardingDemoReveal, settings.mineruCacheDir],
   );
 
   const tryResolveSavedPdfPath = useCallback(
     async (item: WorkspaceItem) => {
-      if (!settings.mineruCacheDir.trim()) {
-        return null;
-      }
-
-      const candidateCaches = buildMineruCachePathCandidates(settings.mineruCacheDir.trim(), item);
-
-      for (const cachePaths of candidateCaches) {
-        try {
-          const manifestText = await readLocalTextFile(cachePaths.manifestPath);
-          const parsed = JSON.parse(manifestText);
-
-          if (!isManifestShape(parsed) || !parsed.pdfPath.trim()) {
-            continue;
-          }
-
-          try {
-            await loadPdfBinary({ kind: 'local-path', path: parsed.pdfPath });
-            return parsed.pdfPath;
-          } catch {
-            continue;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return null;
+      return resolveSavedPdfPath({
+        item,
+        mineruCacheDir: settings.mineruCacheDir,
+        readText: readLocalTextFileIfExists,
+        loadPdf: loadPdfBinary,
+      });
     },
     [settings.mineruCacheDir],
   );
@@ -949,11 +964,16 @@ function DocumentReaderTab({
         syncBlockList?: boolean;
       },
     ) => {
+      const nextPdfHighlight =
+        options?.syncPdfHighlight === false ? null : createHighlightTarget(block);
+
       setActiveBlockId(block.blockId);
       setHoveredBlockId(block.blockId);
-      setActivePdfHighlight(
-        options?.syncPdfHighlight === false ? null : createHighlightTarget(block),
-      );
+      setActivePdfHighlight(nextPdfHighlight);
+
+      if (nextPdfHighlight) {
+        setPdfHighlightSignal((current) => current + 1);
+      }
 
       if (options?.syncBlockList !== false) {
         setBlockScrollSignal((current) => current + 1);
@@ -976,6 +996,18 @@ function DocumentReaderTab({
     setStatusMessage(lRef.current('已重置为默认布局', 'Restored the default layout'));
   }, []);
 
+  const restorePdfScrollPositionsForSource = useCallback(
+    (workspaceId: string, source: Exclude<PdfSource, null>, fallback: string) => {
+      const history = loadPaperHistory(workspaceId);
+      const sourceKey = getPdfSourceSignature(source, fallback || workspaceId);
+      const nextHistory = restorePdfSourceHistory(history, sourceKey);
+
+      pdfScrollPositionsRef.current = nextHistory.pdfScrollPositions;
+      pdfReadingHeatmapsRef.current = nextHistory.pdfReadingHeatmaps;
+    },
+    [],
+  );
+
   const openWorkspaceDocument = useCallback(
     async (
       item: WorkspaceItem,
@@ -987,7 +1019,6 @@ function DocumentReaderTab({
       setError('');
 
       try {
-        const binary = await loadPdfBinary(source);
         let resolvedSource = source;
         let resolvedPdfPath = source.kind === 'local-path' ? source.path : '';
         let nextStatus = openingStatus;
@@ -996,7 +1027,16 @@ function DocumentReaderTab({
 
         let nextResolvedItem = resolvedItem;
 
-        if (source.kind === 'remote-url' && binary && settings.remotePdfDownloadDir.trim()) {
+        if (source.kind === 'local-path' && !(await localPathExists(source.path))) {
+          throw new Error(
+            lRef.current(
+              `PDF 文件不存在：${source.path}`,
+              `PDF file does not exist: ${source.path}`,
+            ),
+          );
+        }
+
+        if (source.kind === 'remote-url' && settings.remotePdfDownloadDir.trim()) {
           const downloadPath = buildRemotePdfDownloadPath(
             settings.remotePdfDownloadDir,
             item,
@@ -1019,12 +1059,17 @@ function DocumentReaderTab({
           }
         }
 
+        resetDocumentState();
+        restorePdfScrollPositionsForSource(
+          nextResolvedItem.workspaceId,
+          resolvedSource,
+          resolvedPdfPath || nextResolvedItem.workspaceId,
+        );
         setPdfSource(resolvedSource);
-        setPdfData(binary);
+        setPdfData(null);
         setPdfPath(resolvedPdfPath);
         setCurrentDocument(nextResolvedItem);
         setWorkspaceStage(nextStage);
-        resetDocumentState();
         onDocumentResolved(nextResolvedItem);
 
         if (isOnboardingWelcomeItem(nextResolvedItem)) {
@@ -1054,7 +1099,11 @@ function DocumentReaderTab({
             const siblingJsonPath = guessSiblingJsonPath(resolvedSource.path);
 
             try {
-              const jsonText = await readLocalTextFile(siblingJsonPath);
+              const jsonText = await readLocalTextFileIfExists(siblingJsonPath);
+              if (!jsonText) {
+                throw new Error('Sibling MinerU JSON not found');
+              }
+
               const pages = parseMineruPages(jsonText);
 
               const siblingStatusMessage = lRef.current(
@@ -1096,6 +1145,7 @@ function DocumentReaderTab({
       applyMineruPages,
       onDocumentResolved,
       resetDocumentState,
+      restorePdfScrollPositionsForSource,
       saveMineruParseCache,
       settings.autoLoadSiblingJson,
       settings.remotePdfDownloadDir,
@@ -1104,8 +1154,6 @@ function DocumentReaderTab({
   );
 
   const openDocumentItem = useCallback(async () => {
-    setCurrentDocument(document);
-
     if (isOnboardingWelcomeItem(document)) {
       await openWorkspaceDocument(
         document,
@@ -1116,29 +1164,17 @@ function DocumentReaderTab({
       return;
     }
 
-    const candidateLocalPaths: string[] = [];
     const history = loadPaperHistory(document.workspaceId);
-
-    if (history?.lastPdfPath?.trim()) {
-      appendUniqueLocalPath(candidateLocalPaths, history.lastPdfPath);
-    }
-
-    if (document.localPdfPath?.trim()) {
-      appendUniqueLocalPath(candidateLocalPaths, document.localPdfPath);
-    }
-
-    if (document.attachmentKey && settings.remotePdfDownloadDir.trim()) {
-      appendUniqueLocalPath(
-        candidateLocalPaths,
-        buildRemotePdfDownloadPath(settings.remotePdfDownloadDir, document),
-      );
-    }
-
     const cachedPdfPath = await tryResolveSavedPdfPath(document);
-
-    if (cachedPdfPath) {
-      appendUniqueLocalPath(candidateLocalPaths, cachedPdfPath);
-    }
+    const candidateLocalPaths = buildReaderLocalPdfPathCandidates({
+      historyLastPdfPath: history?.lastPdfPath,
+      documentLocalPdfPath: document.localPdfPath,
+      remotePdfDownloadPath:
+        document.attachmentKey && settings.remotePdfDownloadDir.trim()
+          ? buildRemotePdfDownloadPath(settings.remotePdfDownloadDir, document)
+          : null,
+      cachedPdfPath,
+    });
 
     if (candidateLocalPaths.length > 0) {
       for (const candidatePath of candidateLocalPaths) {
@@ -1166,18 +1202,22 @@ function DocumentReaderTab({
     }
 
     if (!document.attachmentKey) {
+      resetDocumentState();
       setPdfSource(null);
       setPdfData(null);
       setPdfPath('');
+      setCurrentDocument(document);
       setError(lRef.current('该条目没有可打开的 PDF 附件', 'This item has no PDF attachment that can be opened'));
       setStatusMessage(lRef.current('该条目没有可打开的 PDF 附件', 'This item has no PDF attachment that can be opened'));
       return;
     }
 
     if (!zoteroApiKey.trim()) {
+      resetDocumentState();
       setPdfSource(null);
       setPdfData(null);
       setPdfPath('');
+      setCurrentDocument(document);
       onOpenPreferences();
       setError(
         lRef.current(
@@ -1240,6 +1280,7 @@ function DocumentReaderTab({
     onOpenPreferences,
     onZoteroUserIdChange,
     openWorkspaceDocument,
+    resetDocumentState,
     settings.remotePdfDownloadDir,
     tryResolveSavedPdfPath,
     zoteroApiKey,
@@ -1488,45 +1529,15 @@ function DocumentReaderTab({
   ]);
 
   const loadMineruMarkdownForSummary = useCallback(async () => {
-    const candidatePaths = new Set<string>();
-
-    if (mineruPath.trim() && !mineruPath.startsWith('cloud:')) {
-      candidatePaths.add(guessSiblingMarkdownPath(mineruPath));
-    }
-
-    if (settings.mineruCacheDir.trim()) {
-      for (const cachePaths of buildMineruCachePathCandidates(
-        settings.mineruCacheDir.trim(),
-        currentDocument,
-      )) {
-        candidatePaths.add(cachePaths.markdownPath);
-      }
-    }
-
-    for (const candidatePath of candidatePaths) {
-      try {
-        const markdownText = await readLocalTextFile(candidatePath);
-
-        if (markdownText.trim()) {
-          return markdownText;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    const fallbackMarkdown = buildMineruMarkdownDocument(flatBlocks, mineruPath);
-
-    if (fallbackMarkdown.trim()) {
-      return fallbackMarkdown;
-    }
-
-    throw new Error(
-      lRef.current(
-        '请先加载 MinerU 的 full.md，再使用 MinerU Markdown 作为概览来源。',
-        'Load MinerU full.md before using MinerU Markdown as the overview source.',
-      ),
-    );
+    return loadMineruMarkdownDocument({
+      item: currentDocument,
+      flatBlocks,
+      mineruPath,
+      mineruCacheDir: settings.mineruCacheDir,
+      readText: readLocalTextFileIfExists,
+      buildFallbackMarkdown: buildMineruMarkdownDocument,
+      l: lRef.current,
+    });
   }, [
     currentDocument,
     flatBlocks,
@@ -1534,9 +1545,39 @@ function DocumentReaderTab({
     settings.mineruCacheDir,
   ]);
 
+  const loadCachedPdfDocumentText = useCallback(async () => {
+    if (!pdfSource) {
+      return '';
+    }
+
+    const sourceForText = pdfSource;
+    const cacheKey = `${currentDocument.workspaceId}::${getPdfSourceSignature(pdfSource, pdfPath || currentPdfName)}`;
+
+    if (pdfTextCacheRef.current?.key === cacheKey) {
+      return pdfTextCacheRef.current.text;
+    }
+
+    if (!pdfTextPendingRef.current) {
+      pdfTextPendingRef.current = loadPdfBinary(sourceForText)
+        .then((bytes) => (bytes ? extractPdfTextByPdfJs(bytes) : ''))
+        .then((text) => {
+          pdfTextCacheRef.current = {
+            key: cacheKey,
+            text,
+          };
+          return text;
+        })
+        .finally(() => {
+          pdfTextPendingRef.current = null;
+        });
+    }
+
+    return pdfTextPendingRef.current;
+  }, [currentDocument.workspaceId, currentPdfName, pdfPath, pdfSource]);
+
   const resolveSummaryRequest = useCallback(async () => {
     if (settings.summarySourceMode === 'pdf-text') {
-      if (!pdfData) {
+      if (!pdfSource) {
         throw new Error(
           lRef.current(
             '请先加载 PDF，或切换概览来源后再生成概览。',
@@ -1545,7 +1586,7 @@ function DocumentReaderTab({
         );
       }
 
-      const documentText = await extractPdfTextByPdfJs(pdfData);
+      const documentText = await loadCachedPdfDocumentText();
 
       if (!documentText.trim()) {
         throw new Error(
@@ -1567,46 +1608,19 @@ function DocumentReaderTab({
       documentText: await loadMineruMarkdownForSummary(),
     };
   }, [
+    loadCachedPdfDocumentText,
     loadMineruMarkdownForSummary,
-    pdfData,
+    pdfSource,
     settings.summarySourceMode,
     summaryBlockInputs,
   ]);
-
-  const loadCachedPdfDocumentText = useCallback(async () => {
-    if (!pdfData) {
-      return '';
-    }
-
-    const cacheKey = `${currentDocument.workspaceId}::${pdfData.byteLength}`;
-
-    if (pdfTextCacheRef.current?.key === cacheKey) {
-      return pdfTextCacheRef.current.text;
-    }
-
-    if (!pdfTextPendingRef.current) {
-      pdfTextPendingRef.current = extractPdfTextByPdfJs(pdfData)
-        .then((text) => {
-          pdfTextCacheRef.current = {
-            key: cacheKey,
-            text,
-          };
-          return text;
-        })
-        .finally(() => {
-          pdfTextPendingRef.current = null;
-        });
-    }
-
-    return pdfTextPendingRef.current;
-  }, [currentDocument.workspaceId, pdfData]);
 
   const resolveQaRequest = useCallback(async () => {
     let pdfDocumentText = '';
     let mineruDocumentText = '';
 
     if (settings.ragSourceMode === 'pdf-text' || settings.ragSourceMode === 'hybrid' || settings.qaSourceMode === 'pdf-text') {
-      if (!pdfData) {
+      if (!pdfSource) {
         if (settings.qaSourceMode === 'pdf-text') {
           throw new Error(
             lRef.current(
@@ -1719,7 +1733,7 @@ function DocumentReaderTab({
     currentDocument,
     embeddingApiKey,
     flatBlocks,
-    pdfData,
+    pdfSource,
     qaInput,
     selectedExcerpt?.text,
     settings,
@@ -1880,6 +1894,7 @@ function DocumentReaderTab({
           baseUrl: summaryModelPreset.baseUrl,
           apiKey: summaryModelPreset.apiKey.trim(),
           model: summaryModelPreset.model,
+          apiMode: summaryModelPreset.apiMode,
           temperature: getModelRuntimeConfig(settings, 'summary').temperature,
           reasoningEffort: getModelRuntimeConfig(settings, 'summary').reasoningEffort,
           title: currentDocument.title,
@@ -1971,6 +1986,7 @@ function DocumentReaderTab({
       anchorClientX: selection.anchorClientX,
       anchorClientY: selection.anchorClientY,
       placement: selection.placement,
+      pdfLocation: selection.pdfLocation,
     });
     resetSelectedExcerptTranslationState();
     setStatusMessage(
@@ -2018,10 +2034,18 @@ function DocumentReaderTab({
 
       try {
         const nextSource: Exclude<PdfSource, null> = { kind: 'local-path', path };
-        const nextBytes = await loadPdfBinary(nextSource);
+
+        if (!(await localPathExists(path))) {
+          throw new Error(
+            lRef.current(
+              `PDF 文件不存在：${path}`,
+              `PDF file does not exist: ${path}`,
+            ),
+          );
+        }
 
         setPdfSource(nextSource);
-        setPdfData(nextBytes);
+        setPdfData(null);
         setPdfPath(path);
         setCurrentDocument((current) => ({ ...current, localPdfPath: path }));
         setStatusMessage(nextStatusMessage);
@@ -2117,7 +2141,7 @@ function DocumentReaderTab({
         return;
       }
 
-      const nextSession = qaSessions.find((session) => session.id === sessionId);
+      const nextSession = resolveQaSessionSelection(qaSessions, sessionId);
 
       if (!nextSession) {
         return;
@@ -2136,23 +2160,20 @@ function DocumentReaderTab({
 
   const handleDeleteQaSession = useCallback(
     (sessionId: string) => {
-      const nextSessions = qaSessions.filter((session) => session.id !== sessionId);
+      const nextSelection = removeQaSession(
+        qaSessions,
+        sessionId,
+        () => createQaSession(localeRef.current),
+      );
 
-      if (nextSessions.length === qaSessions.length) {
+      if (!nextSelection.removed) {
         return;
       }
 
-      if (nextSessions.length === 0) {
-        const initialSession = createQaSession(localeRef.current);
-
-        setQaSessions([initialSession]);
-        setSelectedQaSessionId(initialSession.id);
-      } else {
-        setQaSessions(nextSessions);
-        setSelectedQaSessionId((current) =>
-          current === sessionId ? nextSessions[0].id : current,
-        );
-      }
+      setQaSessions(nextSelection.sessions);
+      setSelectedQaSessionId((current) =>
+        current === sessionId ? nextSelection.selectedSessionId : current,
+      );
 
       setQaInput('');
       setQaAttachments([]);
@@ -2165,8 +2186,7 @@ function DocumentReaderTab({
 
   const handleQaPresetChange = useCallback(
     (presetId: string) => {
-      const nextPreset =
-        qaModelPresets.find((preset) => preset.id === presetId) ?? qaModelPresets[0] ?? null;
+      const nextPreset = resolveQaModelPreset(qaModelPresets, presetId);
 
       if (!nextPreset) {
         return;
@@ -2184,6 +2204,312 @@ function DocumentReaderTab({
   const handleRemoveAttachment = useCallback((attachmentId: string) => {
     setQaAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
   }, []);
+
+  const reloadNotes = useCallback(async () => {
+    setNotesLoading(true);
+    setNotesError('');
+
+    try {
+      const nextNotes = await listStoredNotes({ limit: 1000 });
+
+      setNotes(nextNotes);
+      setReaderNoteExternalUpdate((current) =>
+        current && nextNotes.some((note) => note.id === current.id) ? current : null,
+      );
+      setActiveNoteId((current) =>
+        current && nextNotes.some((note) => note.id === current)
+          ? current
+          : nextNotes[0]?.id ?? null,
+      );
+    } catch (nextError) {
+      setNotes([]);
+      setActiveNoteId(null);
+      setNotesError(
+        nextError instanceof Error
+          ? nextError.message
+          : lRef.current('加载笔记失败', 'Failed to load notes'),
+      );
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [setActiveNoteId, setNotes, setNotesError, setNotesLoading]);
+
+  const handleSelectNote = useCallback((note: Note) => {
+    setActiveNoteId(note.id);
+    setAssistantActivePanel('notes');
+  }, []);
+
+  const handleJumpToNote = useCallback((note: Note) => {
+    setActiveNoteId(note.id);
+    setSelectedAnnotationId(null);
+    setWorkspaceStage('reading');
+    setAssistantActivePanel('notes');
+
+    if (note.paperId && note.paperId !== currentDocument.workspaceId) {
+      setStatusMessage(lRef.current('该笔记属于其他文献，请先打开对应文献', 'This note belongs to another paper. Open that paper first.'));
+      return;
+    }
+
+    const highlightTarget = buildNotePdfHighlightTarget(note);
+
+    if (!highlightTarget) {
+      setStatusMessage(lRef.current('该笔记没有绑定 PDF 位置', 'This note is not linked to a PDF location'));
+      return;
+    }
+
+    setActivePdfHighlight(highlightTarget);
+    setPdfHighlightSignal((current) => current + 1);
+    setStatusMessage(
+      lRef.current(
+        `已定位到笔记：${note.title || '未命名笔记'}`,
+        `Located note: ${note.title || 'Untitled Note'}`,
+      ),
+    );
+  }, [currentDocument.workspaceId, setActiveNoteId, setAssistantActivePanel]);
+
+  const applyNoteAnchorJump = useCallback((detail: JumpToNoteAnchorEventDetail) => {
+    const highlightTarget = buildNoteAnchorPdfHighlightTarget(detail);
+
+    if (!highlightTarget) {
+      setStatusMessage(lRef.current('该引用没有绑定 PDF 位置', 'This reference is not linked to a PDF location'));
+      return false;
+    }
+
+    setActiveNoteId(detail.noteId);
+    setSelectedAnnotationId(null);
+    setWorkspaceStage('reading');
+    setAssistantActivePanel('notes');
+    setActivePdfHighlight(highlightTarget);
+    setPdfHighlightSignal((current) => current + 1);
+    setStatusMessage(
+      lRef.current(
+        `已定位到引用：${detail.anchorLabel || detail.noteTitle || '未命名引用'}`,
+        `Located reference: ${detail.anchorLabel || detail.noteTitle || 'Untitled reference'}`,
+      ),
+    );
+    return true;
+  }, [setActiveNoteId, setAssistantActivePanel]);
+
+  const handleJumpToNoteAnchor = useCallback((note: Note, anchor: NoteAnchor) => {
+    const targetWorkspaceId = resolveNoteAnchorWorkspaceId(note, anchor);
+    const detail = buildNoteAnchorJumpDetail(note, anchor);
+
+    if (targetWorkspaceId && targetWorkspaceId !== currentDocument.workspaceId) {
+      setActiveNoteId(note.id);
+      setAssistantActivePanel('notes');
+      emitJumpToNoteAnchor(detail);
+      return;
+    }
+
+    applyNoteAnchorJump(detail);
+  }, [applyNoteAnchorJump, currentDocument.workspaceId, setActiveNoteId, setAssistantActivePanel]);
+
+  const handleCreateNote = useCallback(
+    async (request: CreateNoteRequest) => {
+      setNotesSaving(true);
+      setNotesError('');
+
+      try {
+        const created = await createStoredNote(
+          {
+            ...request,
+            paperId: request.paperId || currentDocument.workspaceId,
+          },
+          { sourceId: readerNoteEditorSourceId },
+        );
+
+        setNotes((current) => [created, ...current.filter((note) => note.id !== created.id)]);
+        setReaderNoteExternalUpdate((current) => (current?.id === created.id ? null : current));
+        setActiveNoteId(created.id);
+        setAssistantActivePanel('notes');
+        setStatusMessage(lRef.current('已创建笔记', 'Created note'));
+        return created;
+      } catch (nextError) {
+        setNotesError(
+          nextError instanceof Error
+            ? nextError.message
+            : lRef.current('创建笔记失败', 'Failed to create note'),
+        );
+        return null;
+      } finally {
+        setNotesSaving(false);
+      }
+    },
+    [currentDocument.workspaceId, readerNoteEditorSourceId],
+  );
+
+  const handleCreateStandaloneNote = useCallback(() => {
+    void handleCreateNote({
+      paperId: currentDocument.workspaceId,
+      type: 'standalone',
+      title: lRef.current('新的阅读笔记', 'New Reading Note'),
+      content: '',
+      tags: [],
+      color: '#f3f4f6',
+    });
+  }, [currentDocument.workspaceId, handleCreateNote]);
+
+  const handleUpdateNote = useCallback(async (
+    noteId: string,
+    patch: UpdateNoteRequest,
+    options: NoteMutationOptions = {},
+  ) => {
+    setNotesSaving(true);
+    setNotesError('');
+
+    try {
+      const updated = await updateStoredNote(noteId, patch, {
+        ...options,
+        sourceId: options.sourceId ?? readerNoteEditorSourceId,
+      });
+
+      setNotes((current) =>
+        sortReaderNotes(current.map((note) => (note.id === updated.id ? updated : note))),
+      );
+      setReaderNoteExternalUpdate((current) => (current?.id === updated.id ? null : current));
+      setActiveNoteId(updated.id);
+      setStatusMessage(lRef.current('已保存笔记', 'Saved note'));
+    } catch (nextError) {
+      setNotesError(
+        nextError instanceof Error
+          ? nextError.message
+          : lRef.current('保存笔记失败', 'Failed to save note'),
+      );
+    } finally {
+      setNotesSaving(false);
+    }
+  }, [readerNoteEditorSourceId]);
+
+  const handleAddSelectionToNote = useCallback(async () => {
+    if (!selectedExcerpt?.text.trim()) {
+      setStatusMessage(lRef.current('请先在 PDF 或正文中划词', 'Select text in the PDF or document first'));
+      return;
+    }
+
+    const anchor = createNoteAnchorFromSelection(selectedExcerpt, currentDocument.workspaceId, currentDocument.title);
+    let targetNote = resolveReaderNoteAnchorTarget(notes, activeNoteId);
+
+    if (!targetNote) {
+      targetNote = await handleCreateNote(
+        buildSelectedExcerptNoteCreateRequest({
+          paperId: currentDocument.workspaceId,
+          selectedExcerpt,
+          title: titleFromText(selectedExcerpt.text, lRef.current('新的阅读笔记', 'New Reading Note')),
+        }),
+      );
+
+      if (!targetNote) {
+        return;
+      }
+    }
+
+    setActiveNoteId(targetNote.id);
+    setAssistantActivePanel('notes');
+    setPendingNoteAnchorInsert(buildPendingNoteAnchorInsert(targetNote.id, anchor));
+    setStatusMessage(lRef.current('已插入当前笔记，保存后同步定位', 'Inserted into the current note. Save to sync the reference.'));
+  }, [
+    activeNoteId,
+    currentDocument.title,
+    currentDocument.workspaceId,
+    handleCreateNote,
+    notes,
+    selectedExcerpt,
+    setActiveNoteId,
+    setAssistantActivePanel,
+  ]);
+
+  const handlePendingNoteAnchorInsertHandled = useCallback((requestId: string) => {
+    setPendingNoteAnchorInsert((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }, []);
+
+  const handleDeleteNote = useCallback(async (noteId: string) => {
+    setNotesSaving(true);
+    setNotesError('');
+
+    try {
+      await deleteStoredNote(noteId, { sourceId: readerNoteEditorSourceId });
+      setReaderNoteExternalUpdate((current) => (current?.id === noteId ? null : current));
+      setNotes((current) => {
+        const nextNotes = current.filter((note) => note.id !== noteId);
+        setActiveNoteId((activeId) => (activeId === noteId ? nextNotes[0]?.id ?? null : activeId));
+        return nextNotes;
+      });
+      setStatusMessage(lRef.current('已删除笔记', 'Deleted note'));
+    } catch (nextError) {
+      setNotesError(
+        nextError instanceof Error
+          ? nextError.message
+          : lRef.current('删除笔记失败', 'Failed to delete note'),
+      );
+    } finally {
+      setNotesSaving(false);
+    }
+  }, [readerNoteEditorSourceId]);
+
+  const handleReaderNoteExternalUpdateApply = useCallback((note: Note) => {
+    setReaderNoteExternalUpdate((current) => (current?.id === note.id ? null : current));
+    setNotes((current) => {
+      const exists = current.some((item) => item.id === note.id);
+      const nextNotes = exists
+        ? current.map((item) => (item.id === note.id ? note : item))
+        : [note, ...current];
+
+      return sortReaderNotes(nextNotes);
+    });
+    setActiveNoteId((current) => current ?? note.id);
+  }, [setActiveNoteId, setNotes]);
+
+  const handleSaveAssistantMessageAsNote = useCallback(
+    (message: DocumentChatMessage) => {
+      const session =
+        qaSessions.find((item) => item.messages.some((sessionMessage) => sessionMessage.id === message.id)) ??
+        activeQaSession;
+      const messageIndex = session?.messages.findIndex((sessionMessage) => sessionMessage.id === message.id) ?? -1;
+      const question =
+        messageIndex >= 0
+          ? [...(session?.messages.slice(0, messageIndex) ?? [])]
+              .reverse()
+              .find((sessionMessage) => sessionMessage.role === 'user' && sessionMessage.content.trim())
+              ?.content.trim() ?? ''
+          : '';
+      const answer = message.content.trim();
+
+      if (!answer) {
+        setStatusMessage(lRef.current('这条 AI 回复还没有可保存的内容', 'This AI reply has no content to save yet'));
+        return;
+      }
+
+      const content = [
+        question ? `## Question\n\n${buildNoteQuoteMarkdown(question)}` : '',
+        `## Answer\n\n${answer}`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      void handleCreateNote({
+        paperId: currentDocument.workspaceId,
+        type: 'ai-chat',
+        title: titleFromText(question || answer, lRef.current('AI 对话笔记', 'AI Chat Note')),
+        content,
+        excerpt: question || undefined,
+        pdfLocation: selectedExcerpt?.pdfLocation ?? null,
+        aiChatId: session?.id ?? selectedQaSessionId,
+        aiChatMessageIds: [message.id],
+        tags: ['AI'],
+        color: '#dbeafe',
+      });
+    },
+    [
+      activeQaSession,
+      currentDocument.workspaceId,
+      handleCreateNote,
+      qaSessions,
+      selectedExcerpt?.pdfLocation,
+      selectedQaSessionId,
+    ],
+  );
 
   const handleAppendSelectedExcerptToNote = useCallback(() => {
     if (!selectedExcerpt?.text.trim()) {
@@ -2247,6 +2573,33 @@ function DocumentReaderTab({
 
   const handleSelectAnnotation = useCallback(
     (annotationId: string) => {
+      if (annotationId.startsWith('note-anchor:')) {
+        const [, noteId, anchorId] = annotationId.split(':');
+        const targetNote = notes.find((note) => note.id === noteId);
+        const targetAnchor = targetNote?.anchors.find((anchor) => anchor.id === anchorId);
+
+        if (!targetNote || !targetAnchor) {
+          setStatusMessage(lRef.current('该 PDF 摘录已不存在', 'This PDF clip no longer exists'));
+          return;
+        }
+
+        handleJumpToNoteAnchor(targetNote, targetAnchor);
+        return;
+      }
+
+      if (annotationId.startsWith('note:')) {
+        const noteId = annotationId.slice('note:'.length);
+        const targetNote = notes.find((note) => note.id === noteId);
+
+        if (!targetNote) {
+          setStatusMessage(lRef.current('该 PDF 笔记已不存在', 'This PDF note no longer exists'));
+          return;
+        }
+
+        handleJumpToNote(targetNote);
+        return;
+      }
+
       const targetAnnotation = annotations.find((annotation) => annotation.id === annotationId);
 
       if (!targetAnnotation) {
@@ -2269,7 +2622,7 @@ function DocumentReaderTab({
         ),
       );
     },
-    [activateBlock, annotations, flatBlocks],
+    [activateBlock, annotations, flatBlocks, handleJumpToNote, handleJumpToNoteAnchor, notes],
   );
 
   const handleSelectQaCitation = useCallback(
@@ -2327,17 +2680,7 @@ function DocumentReaderTab({
           paths.map((path) => buildAttachmentFromPath(path, kind, localeRef.current)),
         );
 
-        setQaAttachments((current) => {
-          const existingKeys = new Set(
-            current.map((attachment) => `${attachment.filePath || attachment.name}:${attachment.size}`),
-          );
-          const nextItems = attachments.filter(
-            (attachment) =>
-              !existingKeys.has(`${attachment.filePath || attachment.name}:${attachment.size}`),
-          );
-
-          return [...current, ...nextItems];
-        });
+        setQaAttachments((current) => appendUniqueChatAttachments(current, attachments));
         setStatusMessage(
           lRef.current(`已添加 ${attachments.length} 个附件`, `Added ${attachments.length} attachment(s)`),
         );
@@ -2349,204 +2692,6 @@ function DocumentReaderTab({
     },
     [],
   );
-
-  /*
-  const handleCaptureScreenshot = useCallback(() => {
-    if (!layoutRef.current) {
-      setQaError('当前没有可框选截图的阅读区域');
-      return;
-    }
-
-    if (capturingScreenshot || screenshotSelection) {
-      return;
-    }
-
-    const bounds = layoutRef.current.getBoundingClientRect();
-
-    if (bounds.width < 40 || bounds.height < 40) {
-      setQaError('当前阅读区域过小，无法截图');
-      return;
-    }
-
-    setQaError('');
-    setScreenshotSelection({
-      bounds: {
-        left: bounds.left,
-        top: bounds.top,
-        width: bounds.width,
-        height: bounds.height,
-      },
-      startX: null,
-      startY: null,
-      currentX: null,
-      currentY: null,
-    });
-    setStatusMessage('请拖拽选择截图区域，按 Esc 取消');
-  }, [capturingScreenshot, screenshotSelection]);
- const cancelScreenshotSelection = useCallback((message = '已取消截图选择') => {
-    setScreenshotSelection(null);
-    setStatusMessage(message);
-  }, []);
-
-  const finalizeScreenshotSelection = useCallback(
-    async (selectionRect: ScreenshotSelectionRect) => {
-      if (!layoutRef.current) {
-        setQaError('当前没有可截图的阅读区域');
-        return;
-      }
-
-      const captureNode = layoutRef.current;
-      const captureWidth = Math.max(360, captureNode.clientWidth);
-      const captureHeight = Math.max(240, captureNode.clientHeight);
-      const maxLongSide = 1800;
-      const canvasScale = Math.min(1, maxLongSide / Math.max(captureWidth, captureHeight));
-
-      try {
-        setCapturingScreenshot(true);
-        setQaError('');
-        setStatusMessage('正在生成截图，请稍候…');
-        await waitForNextPaint();
-        const blob = await toBlob(captureNode, {
-          cacheBust: true,
-          backgroundColor: '#f8fafc',
-          pixelRatio: 1,
-          skipFonts: true,
-          width: captureWidth,
-          height: captureHeight,
-          canvasWidth: Math.round(captureWidth * canvasScale),
-          canvasHeight: Math.round(captureHeight * canvasScale),
-        });
-
-        if (!blob) {
-          throw new Error('截图结果为空');
-        }
-
-        const croppedBlob = await cropScreenshotBlob(
-          blob,
-          selectionRect,
-          captureWidth,
-          captureHeight,
-        );
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const attachment: DocumentChatAttachment = {
-          id: createAttachmentId(),
-          kind: 'screenshot',
-          name: `${currentDocument.title || 'paper'}-${timestamp}.png`,
-          mimeType: croppedBlob.type || 'image/png',
-          size: croppedBlob.size,
-          dataUrl: await blobToDataUrl(croppedBlob),
-          summary: '系统截图',
-        };
-
-        setQaAttachments((current) => [...current, attachment]);
-        setStatusMessage('截图已加入问答附件');
-      } catch (nextError) {
-        setQaError(nextError instanceof Error ? nextError.message : '截图失败');
-      } finally {
-        setCapturingScreenshot(false);
-      }
-    },
-    [currentDocument.title],
-  );
-
-  useEffect(() => {
-    if (!screenshotSelection) {
-      return undefined;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      setScreenshotSelection((current) => {
-        if (!current || current.startX === null || current.startY === null) {
-          return current;
-        }
-
-        const point = normalizeSelectionPoint(event.clientX, event.clientY, current.bounds);
-
-        return {
-          ...current,
-          currentX: point.x,
-          currentY: point.y,
-        };
-      });
-    };
-
-    const handlePointerUp = () => {
-      const nextSelection = screenshotSelectionRef.current;
-      const selectionRect = buildSelectionRect(nextSelection);
-
-      setScreenshotSelection(null);
-
-      if (!selectionRect) {
-        setStatusMessage('未选择截图区域');
-        return;
-      }
-
-      void finalizeScreenshotSelection(selectionRect);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        cancelScreenshotSelection();
-      }
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [cancelScreenshotSelection, finalizeScreenshotSelection, screenshotSelection]);
-
-  */
-  /*
-  /*
-  /*
-  /*
-  const handleCaptureSystemScreenshotLegacy = useCallback(async () => {
-    if (capturingScreenshot) {
-      return;
-    }
-
-    try {
-      setCapturingScreenshot(true);
-      setQaError('');
-      setStatusMessage('legacy system screenshot');
-
-      const screenshot = await captureSystemScreenshot();
-
-      if (!screenshot) {
-        setStatusMessage('legacy screenshot cancelled');
-        return;
-      }
-
-      const attachment = await buildScreenshotAttachmentFromPath(screenshot.path);
-
-      setQaAttachments((current) => {
-        const attachmentKey = `${attachment.filePath || attachment.name}:${attachment.size}`;
-
-        if (
-          current.some(
-            (item) => `${item.filePath || item.name}:${item.size}` === attachmentKey,
-          )
-        ) {
-          return current;
-        }
-
-        return [...current, attachment];
-      });
-      setStatusMessage(`已添加系统截图：${attachment.name}`);
-    } catch (nextError) {
-      setQaError(nextError instanceof Error ? nextError.message : '截图失败');
-    } finally {
-      setCapturingScreenshot(false);
-    }
-  }, [capturingScreenshot]);
-  */
 
   const handleCaptureSystemScreenshotNative = useCallback(async () => {
     if (capturingScreenshot) {
@@ -2592,48 +2737,6 @@ function DocumentReaderTab({
     }
   }, [capturingScreenshot]);
 
-  /*
-  const handleCaptureSystemScreenshot = useCallback(async () => {
-    if (capturingScreenshot) {
-      return;
-    }
-
-    try {
-      setCapturingScreenshot(true);
-      setQaError('');
-      setStatusMessage('正在启动系统截图...');
-
-      const screenshot = await captureSystemScreenshot();
-
-      if (!screenshot) {
-        setStatusMessage('已取消系统截图');
-        return;
-      }
-
-      const attachment = await buildScreenshotAttachmentFromPath(screenshot.path);
-
-      setQaAttachments((current) => {
-        const attachmentKey = `${attachment.filePath || attachment.name}:${attachment.size}`;
-
-        if (
-          current.some(
-            (item) => `${item.filePath || item.name}:${item.size}` === attachmentKey,
-          )
-        ) {
-          return current;
-        }
-
-        return [...current, attachment];
-      });
-      setStatusMessage(`已添加截图附件：${attachment.name}`);
-    } catch (nextError) {
-      setQaError(nextError instanceof Error ? nextError.message : '系统截图失败');
-    } finally {
-      setCapturingScreenshot(false);
-    }
-  }, [capturingScreenshot]);
-  */
-
   const handleSubmitQa = useCallback(async () => {
     const question = qaInput.trim();
 
@@ -2669,6 +2772,7 @@ function DocumentReaderTab({
     const nextAssistantMessage = createChatMessage('assistant', '', {
       modelId: activeQaPreset.id,
       modelLabel: activeQaPreset.label,
+      renderMode: qaAnswerRenderMode,
     });
     const streamingMessages: DocumentChatMessage[] = [
       ...nextMessages,
@@ -2730,8 +2834,10 @@ function DocumentReaderTab({
           baseUrl: activeQaPreset.baseUrl,
           apiKey: activeQaPreset.apiKey.trim(),
           model: activeQaPreset.model,
+          apiMode: activeQaPreset.apiMode,
+          answerRenderMode: qaAnswerRenderMode,
           temperature: getModelRuntimeConfig(settings, 'qa').temperature,
-          reasoningEffort: getModelRuntimeConfig(settings, 'qa').reasoningEffort,
+          reasoningEffort: qaReasoningEffort,
           responseLanguage: settings.uiLanguage === 'en-US' ? 'English' : 'Simplified Chinese',
           title: currentDocument.title,
           authors: currentDocument.creators || undefined,
@@ -2769,46 +2875,14 @@ function DocumentReaderTab({
     onOpenPreferences,
     qaAttachments,
     qaConfigured,
+    qaAnswerRenderMode,
+    qaReasoningEffort,
     qaInput,
     qaSessions,
     resolveQaRequest,
     selectedQaSessionId,
     selectedExcerpt?.text,
   ]);
-
-  useEffect(() => {
-    const fallbackPresetId =
-      qaModelPresets.find((preset) => preset.id === settings.qaActivePresetId)?.id ??
-      qaModelPresets[0]?.id ??
-      '';
-
-    if (!fallbackPresetId) {
-      return;
-    }
-
-    if (qaModelPresets.some((preset) => preset.id === selectedQaPresetId)) {
-      return;
-    }
-
-    setSelectedQaPresetId(fallbackPresetId);
-  }, [qaModelPresets, selectedQaPresetId, settings.qaActivePresetId]);
-
-  useEffect(() => {
-    if (qaSessions.length === 0) {
-      const initialSession = createQaSession(localeRef.current);
-
-      setQaSessions([initialSession]);
-      setSelectedQaSessionId(initialSession.id);
-      return;
-    }
-
-    if (
-      !selectedQaSessionId ||
-      !qaSessions.some((session) => session.id === selectedQaSessionId)
-    ) {
-      setSelectedQaSessionId(qaSessions[0].id);
-    }
-  }, [qaSessions, selectedQaSessionId]);
 
   useEffect(() => {
     if (!currentDocument.workspaceId || !pdfSource) {
@@ -2827,26 +2901,8 @@ function DocumentReaderTab({
 
     if (!history) {
       setReadingViewMode('dual-pane');
-      setSelectedQaPresetId(
-        qaModelPresets.find((preset) => preset.id === settings.qaActivePresetId)?.id ??
-          qaModelPresets[0]?.id ??
-          '',
-      );
       return;
     }
-
-    const nextPresetId =
-      qaModelPresets.find((preset) => preset.id === history.selectedQaPresetId)?.id ??
-      qaModelPresets.find((preset) => preset.id === settings.qaActivePresetId)?.id ??
-      qaModelPresets[0]?.id ??
-      '';
-    const restoredSessions =
-      history.qaSessions.length > 0 ? history.qaSessions : [createQaSession(localeRef.current)];
-    const restoredSessionId =
-      (history.selectedQaSessionId &&
-        restoredSessions.some((session) => session.id === history.selectedQaSessionId)
-          ? history.selectedQaSessionId
-          : restoredSessions[0]?.id) ?? '';
 
     if (!onboardingWorkspaceStage) {
       setWorkspaceStage(history.workspaceStage);
@@ -2854,20 +2910,14 @@ function DocumentReaderTab({
     setReadingViewMode(history.readingViewMode);
     setPaperSummary(history.paperSummary);
     setPaperSummarySourceKey(history.paperSummarySourceKey);
-    setWorkspaceNoteMarkdown(history.workspaceNoteMarkdown);
     setAnnotations(history.annotations);
-    setQaSessions(restoredSessions);
-    setSelectedQaSessionId(restoredSessionId);
-    setSelectedQaPresetId(nextPresetId);
 
-    if (history.paperSummary || history.qaSessions.length > 0 || Boolean(history.qaMessages?.length)) {
-      setStatusMessage(lRef.current('已恢复上次阅读与问答记录', 'Restored the last reading and QA history'));
+    if (history.paperSummary || history.annotations.length > 0) {
+      setStatusMessage(lRef.current('已恢复上次阅读记录', 'Restored the last reading history'));
     }
   }, [
     currentDocument.workspaceId,
     pdfSource,
-    qaModelPresets,
-    settings.qaActivePresetId,
     onboardingWorkspaceStage,
   ]);
 
@@ -2928,6 +2978,89 @@ function DocumentReaderTab({
   }, [currentDocument.itemKey, currentDocument.source, zoteroLocalDataDir]);
 
   useEffect(() => {
+    void reloadNotes();
+  }, [reloadNotes]);
+
+  useEffect(() => {
+    const handleNoteChanged = (event: Event) => {
+      const detail = (event as CustomEvent<NoteChangedEventDetail>).detail;
+      if (!detail?.noteId) return;
+
+      if (detail.action === 'deleted') {
+        setReaderNoteExternalUpdate((current) => (current?.id === detail.noteId ? null : current));
+        setNotes((current) => {
+          const nextNotes = current.filter((note) => note.id !== detail.noteId);
+          setActiveNoteId((activeId) => (activeId === detail.noteId ? nextNotes[0]?.id ?? null : activeId));
+          return nextNotes;
+        });
+        return;
+      }
+
+      if (!isNoteEventRecord(detail.note)) {
+        void reloadNotes();
+        return;
+      }
+
+      const nextNote = detail.note;
+      const fromThisReaderSidebar = detail.sourceId === readerNoteEditorSourceId;
+      const isCurrentEditorNote = activeNoteId === nextNote.id;
+
+      if (isCurrentEditorNote && !fromThisReaderSidebar) {
+        setReaderNoteExternalUpdate(nextNote);
+        return;
+      }
+
+      if (fromThisReaderSidebar) {
+        setReaderNoteExternalUpdate((current) => (current?.id === nextNote.id ? null : current));
+      }
+
+      setNotes((current) => {
+        const exists = current.some((note) => note.id === nextNote.id);
+        const nextNotes = exists
+          ? current.map((note) => (note.id === nextNote.id ? nextNote : note))
+          : [nextNote, ...current];
+
+        return sortReaderNotes(nextNotes);
+      });
+      setActiveNoteId((current) => current ?? nextNote.id);
+    };
+
+    window.addEventListener(NOTE_CHANGED_EVENT, handleNoteChanged);
+    return () => window.removeEventListener(NOTE_CHANGED_EVENT, handleNoteChanged);
+  }, [activeNoteId, readerNoteEditorSourceId, reloadNotes, setActiveNoteId, setNotes]);
+
+  useEffect(() => {
+    if (!pendingNoteAnchorJump) {
+      return;
+    }
+
+    const targetWorkspaceId = (
+      pendingNoteAnchorJump.targetPaperId ||
+      pendingNoteAnchorJump.anchorPaperId ||
+      pendingNoteAnchorJump.notePaperId ||
+      ''
+    ).trim();
+
+    if (targetWorkspaceId && targetWorkspaceId !== currentDocument.workspaceId) {
+      return;
+    }
+
+    if (!pdfSource) {
+      return;
+    }
+
+    if (applyNoteAnchorJump(pendingNoteAnchorJump)) {
+      onPendingNoteAnchorJumpHandled?.(pendingNoteAnchorJump.requestId);
+    }
+  }, [
+    applyNoteAnchorJump,
+    currentDocument.workspaceId,
+    onPendingNoteAnchorJumpHandled,
+    pdfSource,
+    pendingNoteAnchorJump,
+  ]);
+
+  useEffect(() => {
     const pendingBlockId = pendingHistoryActiveBlockIdRef.current;
 
     if (!pendingBlockId || flatBlocks.length === 0) {
@@ -2942,51 +3075,12 @@ function DocumentReaderTab({
     }
 
     setActiveBlockId(targetBlock.blockId);
-    setActivePdfHighlight(createHighlightTarget(targetBlock));
     setBlockScrollSignal((current) => current + 1);
-  }, [createHighlightTarget, flatBlocks]);
+  }, [flatBlocks]);
 
   useEffect(() => {
-    if (!currentDocument.workspaceId || !pdfSource) {
-      return;
-    }
-
-    savePaperHistory({
-      version: 3,
-      workspaceId: currentDocument.workspaceId,
-      document: currentDocument,
-      lastOpenedAt: paperOpenedAtRef.current,
-      lastUpdatedAt: Date.now(),
-      lastPdfPath:
-        pdfPath || (pdfSource.kind === 'local-path' ? pdfSource.path : ''),
-      lastMineruPath: mineruPath,
-      lastActiveBlockId: activeBlockId,
-      workspaceStage,
-      readingViewMode,
-      selectedQaPresetId,
-      selectedQaSessionId,
-      paperSummary,
-      paperSummarySourceKey,
-      workspaceNoteMarkdown,
-      annotations,
-      qaSessions,
-    });
-  }, [
-    activeBlockId,
-    annotations,
-    currentDocument,
-    mineruPath,
-    paperSummary,
-    paperSummarySourceKey,
-    pdfPath,
-    pdfSource,
-    qaSessions,
-    readingViewMode,
-    selectedQaSessionId,
-    selectedQaPresetId,
-    workspaceNoteMarkdown,
-    workspaceStage,
-  ]);
+    saveCurrentPaperHistory();
+  }, [saveCurrentPaperHistory]);
 
   useEffect(() => {
     localStorage.setItem(PANE_RATIO_STORAGE_KEY, String(leftPaneWidthRatio));
@@ -3145,6 +3239,10 @@ function DocumentReaderTab({
     handleGeneratePaperSummary,
   ]);
 
+  if (!isActive) {
+    return <div className="relative h-full min-h-0" hidden />;
+  }
+
   return (
     <div className="relative h-full min-h-0" hidden={!isActive}>
       <ReaderWorkspace
@@ -3183,6 +3281,10 @@ function DocumentReaderTab({
         originalPdfPath={originalPdfPath}
         pdfSource={pdfSource}
         pdfData={pdfData}
+        pdfScrollPosition={pdfScrollPosition}
+        pdfReadingHeatmap={pdfReadingHeatmap}
+        onPdfScrollPositionChange={handlePdfScrollPositionChange}
+        onPdfReadingHeatmapChange={handlePdfReadingHeatmapChange}
         blocks={flatBlocks}
         translations={blockTranslations}
         translationDisplayMode={settings.translationDisplayMode}
@@ -3190,8 +3292,10 @@ function DocumentReaderTab({
         activeBlockId={activeBlockId}
         hoveredBlockId={hoveredBlockId}
         activePdfHighlight={activePdfHighlight}
+        pdfHighlightSignal={pdfHighlightSignal}
         blockScrollSignal={blockScrollSignal}
         smoothScroll={settings.smoothScroll}
+        enablePdfReadingHeatmap={settings.enablePdfReadingHeatmap}
         softPageShadow={settings.softPageShadow}
         compactReading={settings.compactReading}
         showBlockMeta={settings.showBlockMeta}
@@ -3210,6 +3314,24 @@ function DocumentReaderTab({
         onCloudParse={() => void handleCloudParse()}
         onTranslateDocument={() => void handleTranslateDocument()}
         onOpenPreferences={onOpenPreferences}
+        notes={notes}
+        activeNoteId={activeNoteId}
+        notesLoading={notesLoading}
+        notesSaving={notesSaving}
+        notesError={notesError}
+        pendingAnchorInsert={pendingNoteAnchorInsert}
+        onPendingAnchorInsertHandled={handlePendingNoteAnchorInsertHandled}
+        noteEditorSourceId={readerNoteEditorSourceId}
+        externalUpdateNote={readerNoteExternalUpdate}
+        onExternalUpdateApply={handleReaderNoteExternalUpdateApply}
+        onCreateNote={(request) => void handleCreateNote(request)}
+        onCreateStandaloneNote={handleCreateStandaloneNote}
+        onSelectNote={handleSelectNote}
+        onUpdateNote={(noteId, patch, options) => void handleUpdateNote(noteId, patch, options)}
+        onDeleteNote={(noteId) => void handleDeleteNote(noteId)}
+        onJumpToNote={handleJumpToNote}
+        onJumpToNoteAnchor={handleJumpToNoteAnchor}
+        onAddSelectionToNote={() => void handleAddSelectionToNote()}
         workspaceNoteMarkdown={workspaceNoteMarkdown}
         annotations={annotations}
         selectedAnnotationId={selectedAnnotationId}
@@ -3233,11 +3355,15 @@ function DocumentReaderTab({
         qaModelPresets={qaModelPresets}
         selectedQaPresetId={selectedQaPresetId}
         qaRagEnabled={qaRagEnabled}
+        qaAnswerRenderMode={qaAnswerRenderMode}
+        qaReasoningEffort={qaReasoningEffort}
         screenshotLoading={screenshotBusy}
         onQaInputChange={setQaInput}
         onQaSubmit={() => void handleSubmitQa()}
         onQaPresetChange={handleQaPresetChange}
         onQaRagEnabledChange={setQaRagEnabled}
+        onQaAnswerRenderModeChange={setQaAnswerRenderMode}
+        onQaReasoningEffortChange={setQaReasoningEffort}
         onQaSessionCreate={handleCreateQaSession}
         onQaSessionSelect={handleSelectQaSession}
         onQaSessionDelete={handleDeleteQaSession}
@@ -3246,6 +3372,7 @@ function DocumentReaderTab({
         onCaptureScreenshot={() => void handleCaptureSystemScreenshotNative()}
         onRemoveAttachment={handleRemoveAttachment}
         onCitationClick={handleSelectQaCitation}
+        onSaveAssistantMessageAsNote={handleSaveAssistantMessageAsNote}
         qaLoading={qaLoading}
         qaError={qaError}
         selectedExcerpt={selectedExcerpt}
@@ -3267,65 +3394,6 @@ function DocumentReaderTab({
         onAttachAssistant={handleAttachAssistant}
         showLibraryToggle={false}
       />
-      {/*
-        <div
-          className="fixed inset-0 z-[80] bg-slate-950/26 backdrop-blur-[1px]"
-          onPointerDown={(event) => {
-            const bounds = screenshotSelection.bounds;
-            const insideBounds =
-              event.clientX >= bounds.left &&
-              event.clientX <= bounds.left + bounds.width &&
-              event.clientY >= bounds.top &&
-              event.clientY <= bounds.top + bounds.height;
-
-            if (!insideBounds) {
-              cancelScreenshotSelection();
-              return;
-            }
-
-            const point = normalizeSelectionPoint(event.clientX, event.clientY, bounds);
-
-            setScreenshotSelection((current) =>
-              current
-                ? {
-                    ...current,
-                    startX: point.x,
-                    startY: point.y,
-                    currentX: point.x,
-                    currentY: point.y,
-                  }
-                : current,
-            );
-          }}
-        >
-          <div
-            className="absolute overflow-hidden rounded-[28px] border border-sky-400/80 bg-white/6 shadow-[0_24px_64px_rgba(15,23,42,0.24)]"
-            style={{
-              left: screenshotSelection.bounds.left,
-              top: screenshotSelection.bounds.top,
-              width: screenshotSelection.bounds.width,
-              height: screenshotSelection.bounds.height,
-            }}
-          >
-            <div className="absolute left-4 top-4 rounded-2xl border border-white/20 bg-slate-950/72 px-3 py-2 text-xs leading-5 text-white">
-              拖拽鼠标选择截图区域
-              <br />
-              Esc 取消
-            </div>
-            {screenshotSelectionRect ? (
-              <div
-                className="absolute rounded-2xl border-2 border-sky-400 bg-sky-300/14 shadow-[0_0_0_9999px_rgba(15,23,42,0.32)]"
-                style={{
-                  left: screenshotSelectionRect.left,
-                  top: screenshotSelectionRect.top,
-                  width: screenshotSelectionRect.width,
-                  height: screenshotSelectionRect.height,
-                }}
-              />
-            ) : null}
-          </div>
-        </div>
-      */}
     </div>
   );
 }

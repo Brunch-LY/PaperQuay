@@ -11,6 +11,7 @@ import {
 
 import { openExternalUrl } from '../../services/desktop';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
+import type { LibraryImportMode, LibrarySettings } from '../../types/library';
 import type { ReaderSettings } from '../../types/reader';
 import {
   buildLanguageOptions,
@@ -41,6 +42,7 @@ interface ReaderPreferencesContentProps
   extends Pick<
     ReaderPreferencesWindowProps,
     | 'settings'
+    | 'librarySettings'
     | 'zoteroLocalDataDir'
     | 'mineruApiToken'
     | 'embeddingApiKey'
@@ -50,6 +52,8 @@ interface ReaderPreferencesContentProps
     | 'libraryLoading'
     | 'translating'
     | 'onSettingChange'
+    | 'onNativeLibrarySettingsChange'
+    | 'onSelectLibraryStorageDir'
     | 'onZoteroLocalDataDirChange'
     | 'onMineruApiTokenChange'
     | 'onEmbeddingApiKeyChange'
@@ -59,8 +63,10 @@ interface ReaderPreferencesContentProps
     | 'onSelectLocalZoteroDir'
     | 'onReloadLocalZotero'
     | 'onImportLocalZotero'
+    | 'onEnrichAllLibraryMetadata'
     | 'onSelectMineruCacheDir'
     | 'onSelectRemotePdfDownloadDir'
+    | 'onListLlmModels'
     | 'onTestLlmConnection'
     | 'onQaModelPresetAdd'
     | 'onQaModelPresetRemove'
@@ -83,6 +89,21 @@ interface ReaderPreferencesContentProps
   activeSection: PreferencesSectionKey;
   l: ReaderPreferencesLocalizer;
 }
+
+const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
+  storageDir: '',
+  zoteroLocalDataDir: '',
+  importMode: 'copy',
+  autoRenameFiles: true,
+  fileNamingRule: '{author}_{year}_{title}',
+  createCategoryFolders: false,
+  folderWatchEnabled: false,
+  backupEnabled: false,
+  preserveOriginalPath: true,
+  openAlexEnabled: true,
+  openAlexApiKey: '',
+  openAlexMailto: '',
+};
 
 export function buildReaderPreferencesSections(
   l: ReaderPreferencesLocalizer,
@@ -173,6 +194,7 @@ export function ReaderPreferencesContent({
   activeSection,
   l,
   settings,
+  librarySettings,
   zoteroLocalDataDir,
   mineruApiToken,
   embeddingApiKey,
@@ -182,6 +204,8 @@ export function ReaderPreferencesContent({
   libraryLoading,
   translating = false,
   onSettingChange,
+  onNativeLibrarySettingsChange,
+  onSelectLibraryStorageDir,
   onZoteroLocalDataDirChange,
   onMineruApiTokenChange,
   onEmbeddingApiKeyChange,
@@ -191,8 +215,10 @@ export function ReaderPreferencesContent({
   onSelectLocalZoteroDir,
   onReloadLocalZotero,
   onImportLocalZotero,
+  onEnrichAllLibraryMetadata,
   onSelectMineruCacheDir,
   onSelectRemotePdfDownloadDir,
+  onListLlmModels,
   onTestLlmConnection,
   onQaModelPresetAdd,
   onQaModelPresetRemove,
@@ -224,6 +250,13 @@ export function ReaderPreferencesContent({
   );
   const canTriggerTranslate = Boolean(onTranslate);
   const canClearTranslations = Boolean(onClearTranslations);
+  const activeLibrarySettings = librarySettings ?? DEFAULT_LIBRARY_SETTINGS;
+  const updateLibrarySetting = <Key extends keyof LibrarySettings>(
+    key: Key,
+    value: LibrarySettings[Key],
+  ) => {
+    onNativeLibrarySettingsChange({ [key]: value } as Partial<LibrarySettings>);
+  };
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -249,6 +282,133 @@ export function ReaderPreferencesContent({
 
       {activeSection === 'library' ? (
         <>
+          <SettingsField
+            label={l('默认文献存储文件夹', 'Default paper storage folder')}
+            description={l(
+              '复制或移动导入 PDF 时，文件会进入这个文件夹；保留原路径模式不会复制文件。',
+              'When import mode is copy or move, PDFs are placed here. Keep-path mode does not copy files.',
+            )}
+          >
+            <SettingsInput
+              value={activeLibrarySettings.storageDir}
+              onChange={(event) => updateLibrarySetting('storageDir', event.target.value)}
+              placeholder={l('选择一个用于集中管理 PDF 的本地文件夹', 'Choose a local folder for managed PDFs')}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onSelectLibraryStorageDir}
+                disabled={libraryLoading}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-60 dark:border-white/10 dark:bg-[var(--pq-surface-2)] dark:text-[var(--pq-text)] dark:hover:bg-[var(--pq-hover)]"
+              >
+                <FolderOpen className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
+                {l('选择目录', 'Select Directory')}
+              </button>
+              <button
+                type="button"
+                onClick={onEnrichAllLibraryMetadata}
+                disabled={libraryLoading}
+                className="rounded-xl bg-teal-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-[var(--pq-accent-button-bg)] dark:text-[var(--pq-accent-button-text)]"
+              >
+                <Database className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
+                {l('解析全部元数据', 'Parse All Metadata')}
+              </button>
+            </div>
+          </SettingsField>
+
+          <SettingsField
+            label={l('OpenAlex 元数据源', 'OpenAlex metadata source')}
+            description={l(
+              '导入和批量解析会优先查询 OpenAlex，再使用 Crossref 兜底。API Key 可选；mailto 有助于进入 OpenAlex polite pool。',
+              'Import and batch parsing query OpenAlex first, with Crossref fallback. API key is optional; mailto helps OpenAlex place requests in the polite pool.',
+            )}
+          >
+            <ToggleRow
+              title={l('启用 OpenAlex', 'Enable OpenAlex')}
+              description={l(
+                '关闭后将跳过 OpenAlex，只使用其他可用的元数据来源。',
+                'When disabled, PaperQuay skips OpenAlex and uses other available metadata sources.',
+              )}
+              checked={activeLibrarySettings.openAlexEnabled}
+              onChange={(checked) => updateLibrarySetting('openAlexEnabled', checked)}
+            />
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                  {l('OpenAlex API Key（可选）', 'OpenAlex API Key (optional)')}
+                </div>
+                <SettingsInput
+                  value={activeLibrarySettings.openAlexApiKey}
+                  onChange={(event) => updateLibrarySetting('openAlexApiKey', event.target.value)}
+                  type="password"
+                  placeholder={l('Premium key，可留空', 'Premium key, can be empty')}
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                  {l('OpenAlex mailto（推荐）', 'OpenAlex mailto (recommended)')}
+                </div>
+                <SettingsInput
+                  value={activeLibrarySettings.openAlexMailto}
+                  onChange={(event) => updateLibrarySetting('openAlexMailto', event.target.value)}
+                  placeholder="name@example.com"
+                />
+              </div>
+            </div>
+          </SettingsField>
+
+          <SettingsField
+            label={l('导入文件处理', 'Import file handling')}
+            description={l(
+              '复制最安全；移动会整理原文件；保留原路径适合只建立索引。Zotero 导入通常建议使用复制。',
+              'Copy is safest. Move organizes original files. Keep path indexes files without copying. Copy is usually best for Zotero imports.',
+            )}
+          >
+            <SettingsSelect
+              value={activeLibrarySettings.importMode}
+              onChange={(event) =>
+                updateLibrarySetting('importMode', event.target.value as LibraryImportMode)
+              }
+            >
+              <option value="copy">{l('复制到文献库文件夹', 'Copy into library folder')}</option>
+              <option value="move">{l('移动到文献库文件夹', 'Move into library folder')}</option>
+              <option value="keep">{l('保留原路径', 'Keep original path')}</option>
+            </SettingsSelect>
+            <SettingsInput
+              value={activeLibrarySettings.fileNamingRule}
+              onChange={(event) => updateLibrarySetting('fileNamingRule', event.target.value)}
+              placeholder="{author}_{year}_{title}"
+              className="font-mono"
+            />
+          </SettingsField>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <ToggleRow
+              title={l('自动重命名 PDF', 'Automatically rename PDFs')}
+              description={l('导入时按命名规则生成更稳定的文件名。', 'Generate stable filenames during import.')}
+              checked={activeLibrarySettings.autoRenameFiles}
+              onChange={(checked) => updateLibrarySetting('autoRenameFiles', checked)}
+            />
+            <ToggleRow
+              title={l('保留原始路径记录', 'Preserve original path')}
+              description={l('复制后仍记录来源路径，便于追溯。', 'Keep the source path after copying for traceability.')}
+              checked={activeLibrarySettings.preserveOriginalPath}
+              onChange={(checked) => updateLibrarySetting('preserveOriginalPath', checked)}
+            />
+            <ToggleRow
+              title={l('按分类创建文件夹', 'Create category folders')}
+              description={l('导入时按目标分类组织子文件夹。', 'Organize imported files into category folders.')}
+              checked={activeLibrarySettings.createCategoryFolders}
+              onChange={(checked) => updateLibrarySetting('createCategoryFolders', checked)}
+            />
+            <ToggleRow
+              title={l('监听文件夹', 'Folder watch')}
+              description={l('监听新 PDF 并送入导入队列。', 'Watch for new PDFs and send them to the import queue.')}
+              checked={activeLibrarySettings.folderWatchEnabled}
+              onChange={(checked) => updateLibrarySetting('folderWatchEnabled', checked)}
+            />
+          </div>
+
           <div data-tour="zotero-settings">
             <SettingsField
               label={l('Zotero 本地数据目录', 'Zotero Local Data Directory')}
@@ -294,13 +454,23 @@ export function ReaderPreferencesContent({
                   type="button"
                   onClick={onImportLocalZotero}
                   disabled={libraryLoading}
-                  className="rounded-xl bg-teal-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-accent-teal dark:text-chrome-950 dark:hover:bg-accent-teal/90"
+                  className="rounded-xl bg-teal-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-teal-500 disabled:opacity-60 dark:bg-[var(--pq-accent)] dark:text-[var(--pq-accent-text)] dark:hover:bg-[var(--pq-accent-soft)]"
                 >
                   {l('读取并导入本地文库', 'Read and Import to Library')}
                 </button>
               </div>
             </SettingsField>
           </div>
+
+          <ToggleRow
+            title={l('文库显示阅读热力', 'Show Reading Heat in Library')}
+            description={l(
+              '在“我的文库”条目右侧显示 PDF 阅读停留分布。',
+              'Show PDF reading-time distribution on the right side of library rows.',
+            )}
+            checked={settings.showLibraryReadingHeatmap}
+            onChange={(checked) => onSettingChange('showLibraryReadingHeatmap', checked)}
+          />
 
           <SettingsField
             label={l('Zotero Web 回退', 'Zotero Web Fallback')}
@@ -391,6 +561,15 @@ export function ReaderPreferencesContent({
             )}
             checked={settings.smoothScroll}
             onChange={(checked) => onSettingChange('smoothScroll', checked)}
+          />
+          <ToggleRow
+            title={l('统计 PDF 阅读热力', 'Track PDF Reading Heat')}
+            description={l(
+              '记录 PDF 不同位置的停留时长，用于阅读热力进度和文库阅读概览。',
+              'Record time spent at different PDF positions for the reading heat progress and library overview.',
+            )}
+            checked={settings.enablePdfReadingHeatmap}
+            onChange={(checked) => onSettingChange('enablePdfReadingHeatmap', checked)}
           />
           <ToggleRow
             title={l('紧凑阅读模式', 'Compact Reading Mode')}
@@ -586,6 +765,7 @@ export function ReaderPreferencesContent({
         settings={settings}
         qaModelPresets={qaModelPresets}
         onSettingChange={onSettingChange}
+        onListLlmModels={onListLlmModels}
         onTestLlmConnection={onTestLlmConnection}
         onQaModelPresetAdd={onQaModelPresetAdd}
         onQaModelPresetRemove={onQaModelPresetRemove}
@@ -975,7 +1155,7 @@ export function ReaderPreferencesContent({
                   )
                 }
               />
-              <div className="text-xs text-slate-500 dark:text-chrome-300">
+              <div className="text-xs text-slate-500 dark:text-[var(--pq-text-muted)]">
                 {l(
                   `当前实际输出语言：${resolvedSummaryLanguage}`,
                   `Effective output language: ${resolvedSummaryLanguage}`,
