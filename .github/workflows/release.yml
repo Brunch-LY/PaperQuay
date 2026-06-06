@@ -40,6 +40,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const releaseName = `PaperQuay v${version}`;
+            const targetCommitish = context.sha;
             const releaseBodyTemplate = fs.existsSync('.github/release-notes.md')
               ? fs.readFileSync('.github/release-notes.md', 'utf8')
               : 'Download installers from Assets.';
@@ -50,17 +51,28 @@ jobs:
               repo,
               per_page: 100,
             });
-            const matches = releases
+            const exactMatches = releases
               .filter((release) => release.tag_name === tagName)
               .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
+            const untaggedVersionMatches = releases
+              .filter((release) => release.name === releaseName && /^untagged-/.test(release.tag_name))
+              .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
+            const matches = [...exactMatches, ...untaggedVersionMatches]
+              .filter((release, index, list) => list.findIndex((item) => item.id === release.id) === index);
 
-            let release = matches.find((item) => !item.draft) ?? matches[0];
+            let release =
+              exactMatches.find((item) => !item.draft) ??
+              untaggedVersionMatches.find((item) => !item.draft) ??
+              exactMatches[0] ??
+              untaggedVersionMatches[0];
 
             if (release) {
               const { data } = await github.rest.repos.updateRelease({
                 owner,
                 repo,
                 release_id: release.id,
+                tag_name: tagName,
+                target_commitish: targetCommitish,
                 name: releaseName,
                 body: releaseBody,
                 prerelease: false,
@@ -72,6 +84,7 @@ jobs:
                 owner,
                 repo,
                 tag_name: tagName,
+                target_commitish: targetCommitish,
                 name: releaseName,
                 body: releaseBody,
                 draft: true,
@@ -279,6 +292,7 @@ jobs:
         with:
           script: |
             const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
+            const tagName = '${{ needs.create-release.outputs.tag_name }}';
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
@@ -288,7 +302,7 @@ jobs:
               release_id: releaseId,
             });
 
-            if (!release.draft) {
+            if (!release.draft && release.tag_name === tagName) {
               core.info(`Release ${release.tag_name} is already published.`);
               return;
             }
@@ -297,8 +311,10 @@ jobs:
               owner,
               repo,
               release_id: releaseId,
+              tag_name: tagName,
+              target_commitish: context.sha,
               draft: false,
               prerelease: false,
             });
 
-            core.info(`Published release ${release.tag_name}.`);
+            core.info(`Published release ${tagName}.`);
