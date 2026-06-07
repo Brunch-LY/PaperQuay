@@ -5,6 +5,7 @@ import {
   FolderOpen,
   Languages,
   Library,
+  RefreshCw,
   Settings2,
   Sparkles,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ import {
 } from './readerPreferencesPrimitives';
 import { ReaderPreferencesBackupSection } from './readerPreferencesBackupSection';
 import { ReaderPreferencesModelsSection } from './readerPreferencesModelsSection';
+import { ReaderPreferencesUpdateSection } from './readerPreferencesUpdateSection';
 import type {
   ReaderPreferencesLocalizer,
   ReaderPreferencesSectionDescriptor,
@@ -186,6 +188,15 @@ export function buildReaderPreferencesSections(
         'Overview input, batch overview, and QA context',
       ),
       icon: <Database className="h-4 w-4" strokeWidth={1.8} />,
+    },
+    {
+      key: 'updates',
+      title: l('软件更新', 'Software Updates'),
+      description: l(
+        '检查 GitHub 发布版本并安装更新',
+        'Check GitHub releases and install updates',
+      ),
+      icon: <RefreshCw className="h-4 w-4" strokeWidth={1.8} />,
     },
   ];
 }
@@ -774,6 +785,11 @@ export function ReaderPreferencesContent({
 
       <ReaderPreferencesBackupSection
         active={activeSection === 'backup'}
+        l={l}
+      />
+
+      <ReaderPreferencesUpdateSection
+        active={activeSection === 'updates'}
         l={l}
       />
 

@@ -39,6 +39,7 @@
     "@tiptap/starter-kit": "^3.23.6",
     "@tiptap/suggestion": "^3.23.6",
     "adm-zip": "^0.5.16",
+    "electron-updater": "^6.8.9",
     "eventsource-parser": "^3.1.0",
     "lowlight": "^3.3.0",
     "sql.js": "^1.13.0",
@@ -75,6 +76,14 @@
     "appId": "dev.paperquay.app",
     "productName": "PaperQuay",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "WangQrkkk",
+        "repo": "PaperQuay",
+        "releaseType": "release"
+      }
+    ],
     "npmRebuild": false,
     "asar": true,
     "asarUnpack": [
@@ -97,6 +106,20 @@
       "electron/**/*",
       "package.json",
       "node_modules/adm-zip/**/*",
+      "node_modules/electron-updater/**/*",
+      "node_modules/fs-extra/**/*",
+      "node_modules/graceful-fs/**/*",
+      "node_modules/jsonfile/**/*",
+      "node_modules/universalify/**/*",
+      "node_modules/js-yaml/**/*",
+      "node_modules/argparse/**/*",
+      "node_modules/lazy-val/**/*",
+      "node_modules/lodash.escaperegexp/**/*",
+      "node_modules/lodash.isequal/**/*",
+      "node_modules/tiny-typed-emitter/**/*",
+      "node_modules/debug/**/*",
+      "node_modules/ms/**/*",
+      "node_modules/sax/**/*",
       "node_modules/sql.js/**/*",
       "node_modules/sqlite-vec/**/*",
       "node_modules/sqlite-vec-*/*",
@@ -110,7 +133,10 @@
       "gatekeeperAssess": false
     },
     "win": {
-      "target": "nsis",
+      "target": [
+        "nsis",
+        "msi"
+      ],
       "icon": "icon.ico",
       "signAndEditExecutable": false
     },

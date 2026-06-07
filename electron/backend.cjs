@@ -6,6 +6,7 @@ const { createLibraryCommands } = require('./backend/libraryCommands.cjs');
 const { createNoteCommands } = require('./backend/noteCommands.cjs');
 const { createNoteStore } = require('./backend/noteStore.cjs');
 const { createRagStore } = require('./backend/ragStore.cjs');
+const { createUpdateCommands } = require('./backend/updateCommands.cjs');
 
 function createBackend({ app }) {
   const appPaths = createAppPaths(app);
@@ -41,6 +42,7 @@ function createBackend({ app }) {
     ...createNoteCommands(context),
     ...createAiCommands(context),
     ...createIntegrationCommands(context),
+    ...createUpdateCommands(context),
   };
 
   return {

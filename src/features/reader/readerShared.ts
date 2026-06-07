@@ -78,7 +78,8 @@ export type PreferencesSectionKey =
   | 'translation'
   | 'models'
   | 'embedding'
-  | 'summaryQa';
+  | 'summaryQa'
+  | 'updates';
 
 export const DEFAULT_QA_PRESET_ID = 'default';
 export const READER_CONFIG_VERSION = 1;
