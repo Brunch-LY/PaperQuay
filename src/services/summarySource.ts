@@ -8,23 +8,14 @@ import {
   buildRenderableBlocks,
   extractTextFromMineruBlock,
 } from './mineru';
+export { resolveSummaryOutputLanguage } from './summaryLanguage';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString();
 
-export const SUMMARY_PROMPT_VERSION = 'summary-prompt-v3';
-
-export function resolveSummaryOutputLanguage(settings: ReaderSettings): string {
-  const configured = settings.summaryOutputLanguage.trim();
-
-  if (!configured || configured === 'follow-ui') {
-    return settings.uiLanguage === 'en-US' ? 'English' : 'Chinese';
-  }
-
-  return configured;
-}
+export const SUMMARY_PROMPT_VERSION = 'summary-prompt-v4';
 
 function normalizePdfPageText(text: string): string {
   return text.replace(/\s+/g, ' ').trim();

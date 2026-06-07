@@ -520,6 +520,21 @@ function buildAcademicTranslationPrompt(options) {
   ].join(' ');
 }
 
+function buildPaperSummaryPrompt(options) {
+  const outputLanguage = typeof options.outputLanguage === 'string' && options.outputLanguage.trim()
+    ? options.outputLanguage.trim()
+    : 'the same language as the PaperQuay UI';
+
+  return [
+    'You are PaperQuay\'s academic paper overview generator.',
+    `Return compact JSON only. Write every user-visible string value in ${outputLanguage}.`,
+    'This language rule applies to title, abstract, overview, background, researchProblem, approach, experimentSetup, conclusions, limitations, and every item in keyFindings, takeaways, and keywords.',
+    'Translate or paraphrase source text into the requested output language when the paper context uses another language.',
+    'Keep JSON object keys exactly as: title, abstract, overview, background, researchProblem, approach, experimentSetup, keyFindings, conclusions, limitations, takeaways, keywords.',
+    'Use arrays of strings for keyFindings, takeaways, and keywords. Do not include Markdown fences, comments, role labels, or hidden reasoning.',
+  ].join(' ');
+}
+
 function buildHtmlVisualQaPrompt(options) {
   const responseLanguage = options.responseLanguage || 'English';
 
@@ -645,8 +660,8 @@ function createAiCommands(context) {
 
     async summarize_document_openai_compatible({ options }) {
       const data = await openAiChat(options, [
-        { role: 'system', content: 'Return compact JSON with keys: title, abstract, overview, background, researchProblem, approach, experimentSetup, keyFindings, conclusions, limitations, takeaways, keywords.' },
-        { role: 'user', content: JSON.stringify({ title: options.title, authors: options.authors, year: options.year, text: documentContext(options) }) },
+        { role: 'system', content: buildPaperSummaryPrompt(options) },
+        { role: 'user', content: JSON.stringify({ title: options.title, authors: options.authors, year: options.year, outputLanguage: options.outputLanguage, text: documentContext(options) }) },
       ], { responseFormat: { type: 'json_object' } });
       const parsed = parseJsonObject(pickChatText(data));
 
@@ -772,4 +787,4 @@ function createAiCommands(context) {
   return commands;
 }
 
-module.exports = { createAiCommands };
+module.exports = { createAiCommands, buildPaperSummaryPrompt };

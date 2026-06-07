@@ -10,6 +10,7 @@ import {
   extractPdfTextByPdfJs,
   SUMMARY_PROMPT_VERSION,
 } from '../../services/summarySource';
+import { resolveSummaryOutputLanguage } from '../../services/summaryLanguage';
 import {
   flattenMineruPages,
   parseMineruPages,
@@ -52,16 +53,6 @@ type PreviewSummaryRequest = {
   documentText: string;
   errorMessage: string;
 };
-
-function resolvePreviewSummaryLanguage(
-  settings: Pick<ReaderSettings, 'summaryOutputLanguage' | 'uiLanguage'>,
-) {
-  return settings.summaryOutputLanguage === 'follow-ui'
-    ? settings.uiLanguage === 'en-US'
-      ? 'English'
-      : 'Chinese'
-    : settings.summaryOutputLanguage.trim() || (settings.uiLanguage === 'en-US' ? 'English' : 'Chinese');
-}
 
 export function resolvePreviewJsonCandidatePaths(
   item: WorkspaceItem,
@@ -300,7 +291,7 @@ export async function buildLibraryPreviewSummaryRequest({
   l: LocaleTextFn;
 }): Promise<PreviewSummaryRequest> {
   const summaryInputs = buildSummaryBlockInputs(blocks);
-  const summaryLanguage = resolvePreviewSummaryLanguage(settings);
+  const summaryLanguage = resolveSummaryOutputLanguage(settings);
 
   if (isOnboardingWelcomeItem(item)) {
     try {
