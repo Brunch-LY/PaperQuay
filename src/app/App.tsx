@@ -23,6 +23,7 @@ import {
   emitOpenStandalonePdf,
   UI_LANGUAGE_CHANGED_EVENT,
 } from './appEvents';
+import { PAPERQUAY_ICON_URL } from './appIcon';
 import { AppLocaleProvider } from '../i18n/uiLanguage';
 import { getCurrentWindow } from '../platform/electron/window';
 import { useThemeStore } from '../stores/useThemeStore';
@@ -238,7 +239,7 @@ function App() {
           >
             <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--pq-surface-1)] shadow-[var(--pq-shadow-soft)] ring-1 ring-[var(--pq-border)]">
               <img
-                src="/icon.png"
+                src={PAPERQUAY_ICON_URL}
                 alt="PaperQuay"
                 className="h-full w-full object-cover"
                 draggable={false}

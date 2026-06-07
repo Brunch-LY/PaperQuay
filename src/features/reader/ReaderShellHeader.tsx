@@ -8,6 +8,7 @@ import {
   Sun,
   X,
 } from 'lucide-react';
+import { PAPERQUAY_ICON_URL } from '../../app/appIcon';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -50,7 +51,7 @@ export default function ReaderShellHeader({
       >
         <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-[var(--pq-radius-sm)] border border-[var(--pq-border)] bg-[var(--pq-surface-1)]">
           <img
-            src="/icon.png"
+            src={PAPERQUAY_ICON_URL}
             alt="PaperQuay"
             className="h-full w-full object-cover"
             draggable={false}

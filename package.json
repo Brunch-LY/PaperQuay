@@ -1,7 +1,7 @@
 {
   "name": "paperquay",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.18",
   "description": "AI-assisted desktop literature reader and library manager.",
   "author": {
     "name": "PaperQuay Developers",
@@ -87,6 +87,7 @@
     "electronFuses": {
       "enableEmbeddedAsarIntegrityValidation": true
     },
+    "afterPack": "electron/afterPack.cjs",
     "directories": {
       "output": "release",
       "buildResources": "public"
@@ -103,14 +104,14 @@
     ],
     "mac": {
       "target": "dmg",
-      "icon": "public/icon.png",
+      "icon": "icon.png",
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
     "win": {
       "target": "nsis",
-      "icon": "public/icon.ico",
+      "icon": "icon.ico",
       "signAndEditExecutable": false
     },
     "nsis": {
@@ -129,7 +130,7 @@
       ],
       "maintainer": "PaperQuay Developers <WangQrkkk@users.noreply.github.com>",
       "category": "Office",
-      "icon": "public/icon.png"
+      "icon": "icon.png"
     }
   }
 }

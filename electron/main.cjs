@@ -11,6 +11,13 @@ const backend = createBackend({ app });
 
 registerLocalPdfProtocolScheme();
 
+function getAppIconPath() {
+  const iconFileName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  const iconRoot = app.isPackaged ? 'dist' : 'public';
+
+  return path.join(__dirname, '..', iconRoot, iconFileName);
+}
+
 function shouldIgnoreRendererConsoleMessage(level, message) {
   return (
     level === 'info' &&
@@ -27,6 +34,7 @@ function createWindow() {
     title: 'PaperQuay',
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    icon: getAppIconPath(),
     backgroundColor: '#eef2f8',
     show: false,
     webPreferences: {
@@ -124,6 +132,10 @@ ipcMain.handle('paperquay:window-control', (event, action) => {
 });
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('dev.paperquay.app');
+  }
+
   registerLocalPdfProtocol();
   createWindow();
 
