@@ -1,5 +1,3 @@
-const { shell } = require('electron');
-
 const UPDATE_REPOSITORY = {
   owner: 'WangQrkkk',
   repo: 'PaperQuay',
@@ -151,6 +149,7 @@ async function fetchLatestRelease() {
 
 function createUpdateCommands(context) {
   const { app } = context;
+  const { shell } = require('electron');
   const { autoUpdater } = require('electron-updater');
   const state = {
     checking: false,
