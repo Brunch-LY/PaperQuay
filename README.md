@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <strong>A desktop-first literature manager for PDF reading, translation, paper overviews, rich notes, and AI agent workflows.</strong>
+  <strong>An open-source AI paper workspace for PDF reading, translation, structured overviews, inline notes, Zotero import, Agent workflows, and local RAG.</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.20-2563eb?style=flat-square" alt="Version v0.1.20">
+  <img src="https://img.shields.io/badge/version-v0.1.21-2563eb?style=flat-square" alt="Version v0.1.21">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
   <img src="https://img.shields.io/badge/built%20with-Electron-47848f?style=flat-square" alt="Electron">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="#quick-navigation">Quick Navigation</a> |
-  <a href="#paperquay---ai-assisted-literature-management-that-keeps-reading-flow-intact">Why PaperQuay</a> |
+  <a href="#paperquay---open-ai-paper-workspace-that-keeps-reading-flow-intact">Why PaperQuay</a> |
   <a href="#completed-features">Features</a> |
   <a href="#first-run-workflow">Quick Start</a> |
   <a href="#development">Development</a>
@@ -35,7 +35,7 @@
 ## Quick Navigation
 
 <p>
-  <a href="#paperquay---ai-assisted-literature-management-that-keeps-reading-flow-intact">Problem & Positioning</a> |
+  <a href="#paperquay---open-ai-paper-workspace-that-keeps-reading-flow-intact">Problem & Positioning</a> |
   <a href="#what-makes-paperquay-different">What Makes It Different</a> |
   <a href="#core-workflow">Core Workflow</a> |
   <a href="#completed-features">Completed Features</a> |
@@ -46,11 +46,13 @@
 
 ---
 
-## PaperQuay - AI-Assisted Literature Management That Keeps Reading Flow Intact
+## PaperQuay - Open AI Paper Workspace That Keeps Reading Flow Intact
 
-**PaperQuay is more than a PDF reader or a Zotero add-on.** It is a local-first desktop literature manager designed for students, researchers, and paper writers who want to manage papers, read PDFs, annotate, translate, take notes, screen papers quickly, and use AI agents without leaving the same workspace.
+**PaperQuay is more than a PDF reader, AI summary tool, or Zotero add-on.** It is a local-first, open-source AI paper workspace designed for graduate students, researchers, and heavy paper-reading users who want to import papers, read PDFs, translate, generate paper overviews, write inline research notes, organize tags, import Zotero libraries, use Agent-assisted literature management, and build a local RAG knowledge base without leaving the same desktop app.
 
-Many paper tools force the user to choose between fragmented workflows: one app for PDF reading, another tool for translation, another chat window for paper summaries, another note app, and another library manager for metadata. PaperQuay combines these into a single desktop workflow while keeping Zotero compatibility optional rather than mandatory.
+Traditional paper reading often means switching between Zotero, a PDF reader, translation tools, ChatGPT, and a separate note app. PaperQuay brings those steps into one continuous desktop workflow so importing, reading, understanding, translating, annotating, note-taking, organizing, and knowledge-base building can happen in the same place while keeping Zotero compatibility optional rather than mandatory.
+
+Technically, PaperQuay is built as an Electron + React + TypeScript/Vite desktop application. The React renderer implements the literature library, PDF reader, rich notes, Agent workspace, and settings UI; the Electron main process and local Node.js backend handle filesystem access, IPC, Zotero import, SQLite persistence, app updates, and cross-platform packaging. PDF rendering uses PDF.js, rich notes use Tiptap/ProseMirror, local data uses SQLite/sql.js and sqlite-vec, and AI features connect through OpenAI-compatible APIs for translation, paper overviews, Agent tool use, and RAG retrieval.
 
 | Research workflow problem                 | Traditional tools                                                  | PaperQuay                                                                                  |
 | ----------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |

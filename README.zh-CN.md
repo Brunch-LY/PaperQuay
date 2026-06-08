@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <strong>面向桌面端的 AI 辅助文献管理工具，覆盖 PDF 阅读、全文翻译、论文概览、富文本笔记和 Agent 工作流。</strong>
+  <strong>开源 AI 论文工作台，覆盖 PDF 阅读、全文翻译、结构化概览、内联笔记、Zotero 导入、Agent 工作流和本地 RAG。</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.20-2563eb?style=flat-square" alt="Version v0.1.20">
+  <img src="https://img.shields.io/badge/version-v0.1.21-2563eb?style=flat-square" alt="Version v0.1.21">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
   <img src="https://img.shields.io/badge/built%20with-Electron-47848f?style=flat-square" alt="Electron">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="#快速导航">快速导航</a> |
-  <a href="#paperquay---保持阅读心流的-ai-文献管理工具">为什么选择 PaperQuay</a> |
+  <a href="#paperquay---保持阅读心流的开源-ai-论文工作台">为什么选择 PaperQuay</a> |
   <a href="#已完成功能">当前功能</a> |
   <a href="#第一次使用流程">快速开始</a> |
   <a href="#本地开发">本地开发</a>
@@ -35,7 +35,7 @@
 ## 快速导航
 
 <p>
-  <a href="#paperquay---保持阅读心流的-ai-文献管理工具">问题与定位</a> |
+  <a href="#paperquay---保持阅读心流的开源-ai-论文工作台">问题与定位</a> |
   <a href="#paperquay-有什么不同">差异点</a> |
   <a href="#核心工作流">核心工作流</a> |
   <a href="#已完成功能">已完成功能</a> |
@@ -46,11 +46,13 @@
 
 ---
 
-## PaperQuay - 保持阅读心流的 AI 文献管理工具
+## PaperQuay - 保持阅读心流的开源 AI 论文工作台
 
-**PaperQuay 不只是 PDF 阅读器，也不是 Zotero 的附属工具。** 它是一款本地优先的桌面端文献管理软件，面向学生、研究人员和论文写作者，目标是在同一个工作区完成文献管理、PDF 阅读、批注、笔记、全文翻译、论文速读和 Agent 辅助管理。
+**PaperQuay 不只是 PDF 阅读器、AI 总结工具，也不是 Zotero 的附属工具。** 它是一款本地优先、开源免费的桌面端 AI 论文工作台，面向研究生、科研工作者和论文阅读重度用户，目标是在同一个应用中完成论文导入、PDF 阅读、AI 翻译、论文概览、内联阅读笔记、标签管理、Zotero 文献库导入、Agent 文献整理和本地 RAG 知识库构建。
 
-很多论文工具会把工作流拆得很碎：一个软件读 PDF，一个工具做翻译，一个聊天窗口生成论文概览，一个笔记应用记录想法，再用另一个文献管理器维护元数据。PaperQuay 希望把这些操作合并到一个桌面端流程中，同时保留 Zotero 兼容能力，但不把 Zotero 作为必要依赖。
+传统论文阅读往往需要在 Zotero、PDF 阅读器、翻译工具、ChatGPT 和笔记软件之间频繁切换。PaperQuay 希望把导入、阅读、理解、翻译、批注、笔记、整理和知识库构建合并到一个连续的桌面端流程中，同时保留 Zotero 兼容能力，但不把 Zotero 作为必要依赖。
+
+技术上，PaperQuay 主要基于 Electron + React + TypeScript/Vite 构建跨平台桌面端应用。React 渲染层负责文献库、PDF 阅读器、富文本笔记、Agent 工作区和设置界面；Electron 主进程与本地 Node.js 后端模块负责文件系统访问、IPC 通信、Zotero 导入、SQLite 持久化、应用更新和跨平台打包。PDF 阅读与渲染主要基于 PDF.js，富文本笔记基于 Tiptap/ProseMirror，本地数据使用 SQLite/sql.js 及 sqlite-vec 存储文献、笔记、阅读记录和 RAG 索引；AI 能力通过 OpenAI-compatible API 接入，用于论文概览、全文/划词翻译、Agent 工具调用和 RAG 检索增强问答。
 
 | 科研工作流痛点 | 传统工具 | PaperQuay |
 | -------------- | -------- | --------- |
