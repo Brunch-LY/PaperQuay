@@ -106,11 +106,21 @@ function getScopedSelectionPayload(container: HTMLElement | null): TextSelection
   const rect = range.getBoundingClientRect();
   const anchorClientX = rect.width > 0 ? rect.left + rect.width / 2 : rect.left;
   const anchorClientY = rect.bottom;
+  const anchorClientRect =
+    rect.width > 0 && rect.height > 0
+      ? {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        }
+      : undefined;
 
   return {
     text,
     anchorClientX,
     anchorClientY,
+    anchorClientRect,
     placement: 'bottom',
   };
 }

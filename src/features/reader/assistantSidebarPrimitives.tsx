@@ -398,13 +398,18 @@ function SelectionPanel({
   onCollapse?: () => void;
 }) {
   const l = useLocaleText();
+  const isPdfBlockExcerpt = selectedExcerpt?.origin === 'pdf-block';
 
   return (
     <SectionCard
-      title={l('划词翻译', 'Selection Translation')}
+      title={isPdfBlockExcerpt ? l('段落译文', 'Paragraph Translation') : l('划词翻译', 'Selection Translation')}
       description={l(
-        '选中文本后可快速翻译，并加入问答上下文。',
-        'Translate selected text quickly and append it to the QA context.',
+        isPdfBlockExcerpt
+          ? '点击 PDF 段落后可查看缓存译文，并加入问答上下文。'
+          : '选中文本后可快速翻译，并加入问答上下文。',
+        isPdfBlockExcerpt
+          ? 'Click a PDF paragraph to view its cached translation and append it to the QA context.'
+          : 'Translate selected text quickly and append it to the QA context.',
       )}
       icon={<Languages className="h-4 w-4" strokeWidth={1.8} />}
       contentClassName="space-y-4"
@@ -443,7 +448,9 @@ function SelectionPanel({
 
           {selectedExcerptTranslating ? (
             <div className="rounded-[22px] border border-indigo-100 bg-indigo-50/70 px-4 py-4 text-sm text-indigo-600">
-              {l('正在翻译选中文本...', 'Translating the selected text...')}
+              {isPdfBlockExcerpt
+                ? l('正在翻译当前段落...', 'Translating this paragraph...')
+                : l('正在翻译选中文本...', 'Translating the selected text...')}
             </div>
           ) : selectedExcerptTranslation ? (
             <div className="rounded-[22px] border border-indigo-100 bg-indigo-50/70 px-4 py-4">
@@ -451,10 +458,15 @@ function SelectionPanel({
             </div>
           ) : aiConfigured ? (
             <HintPanel icon={<Languages className="h-4 w-4" strokeWidth={1.8} />}>
-              {l(
-                '当前还没有翻译结果，可以点击“立即翻译”。',
-                'There is no translation yet. Click "Translate Now" to generate one.',
-              )}
+              {isPdfBlockExcerpt
+                ? l(
+                    '当前段落还没有缓存译文。可以先运行全文翻译，或点击“立即翻译”单独翻译这段。',
+                    'This paragraph has no cached translation yet. Run full translation first, or click "Translate Now" for this paragraph.',
+                  )
+                : l(
+                    '当前还没有翻译结果，可以点击“立即翻译”。',
+                    'There is no translation yet. Click "Translate Now" to generate one.',
+                  )}
             </HintPanel>
           ) : (
             <HintPanel icon={<Bot className="h-4 w-4" strokeWidth={1.8} />}>

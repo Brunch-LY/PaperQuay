@@ -1,4 +1,4 @@
-import type { TextSelectionPayload, PositionedMineruBlock } from '../../types/reader';
+import type { ClientAnchorRect, TextSelectionPayload, PositionedMineruBlock } from '../../types/reader';
 import { bboxToRect, type PageSize } from '../../utils/bbox.ts';
 import { normalizeSelectionText } from '../../utils/text.ts';
 import { resolveBBoxBaseSize } from './pdfViewerUtils.ts';
@@ -93,6 +93,15 @@ export function getScopedSelectionPayload(container: HTMLElement | null): TextSe
   const rect = range.getBoundingClientRect();
   const anchorClientX = rect.width > 0 ? rect.left + rect.width / 2 : rect.left;
   const anchorClientY = rect.bottom;
+  const anchorClientRect =
+    rect.width > 0 && rect.height > 0
+      ? {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        }
+      : undefined;
   const targetElement = targetNode instanceof Element ? targetNode : null;
   const pageElement = targetElement?.closest('.page');
   const pageTarget = pageElement instanceof HTMLDivElement ? getPageTargetFromElement(pageElement) : null;
@@ -127,6 +136,7 @@ export function getScopedSelectionPayload(container: HTMLElement | null): TextSe
     text,
     anchorClientX,
     anchorClientY,
+    anchorClientRect,
     placement: 'bottom',
     pdfLocation,
   };
@@ -264,6 +274,85 @@ export function resolveHitBlockByPoint(
   }
 
   return bestBlock;
+}
+
+export function resolveNearestBlockByPoint(
+  clientX: number,
+  clientY: number,
+  pageElement: HTMLDivElement,
+  pageBlocks: PositionedMineruBlock[],
+  originalPage: PageSize,
+  renderedPage: PageSize,
+): PositionedMineruBlock | null {
+  const pageRect = pageElement.getBoundingClientRect();
+  const offsetX = clientX - pageRect.left;
+  const offsetY = clientY - pageRect.top;
+  const horizontalTolerance = 48;
+  const verticalTolerance = 18;
+  let bestBlock: PositionedMineruBlock | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const block of pageBlocks) {
+    const rect = bboxToRect(
+      block.bbox!,
+      resolveBBoxBaseSize(block, originalPage),
+      renderedPage,
+    );
+    const left = rect.left - horizontalTolerance;
+    const right = rect.left + rect.width + horizontalTolerance;
+    const top = rect.top - verticalTolerance;
+    const bottom = rect.top + rect.height + verticalTolerance;
+
+    if (offsetX < left || offsetX > right || offsetY < top || offsetY > bottom) {
+      continue;
+    }
+
+    const dx =
+      offsetX < rect.left
+        ? rect.left - offsetX
+        : offsetX > rect.left + rect.width
+          ? offsetX - (rect.left + rect.width)
+          : 0;
+    const dy =
+      offsetY < rect.top
+        ? rect.top - offsetY
+        : offsetY > rect.top + rect.height
+          ? offsetY - (rect.top + rect.height)
+          : 0;
+    const score = dx * dx + dy * dy + rect.width * rect.height * 0.000001;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestBlock = block;
+    }
+  }
+
+  return bestBlock;
+}
+
+export function resolveBlockClientRect(
+  pageElement: HTMLDivElement,
+  block: PositionedMineruBlock,
+  originalPage: PageSize,
+  renderedPage: PageSize,
+): ClientAnchorRect | undefined {
+  if (!block.bbox) {
+    return undefined;
+  }
+
+  const pageRect = pageElement.getBoundingClientRect();
+  const blockRect = bboxToRect(
+    block.bbox,
+    resolveBBoxBaseSize(block, originalPage),
+    renderedPage,
+  );
+
+  return {
+    left: pageRect.left + blockRect.left,
+    top: pageRect.top + blockRect.top,
+    width: blockRect.width,
+    height: blockRect.height,
+  };
 }
 
 export function getPageElementFromTargetOrPoint(

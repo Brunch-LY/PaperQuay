@@ -20,6 +20,7 @@ import { approveWritePath, selectSavePdfPath, writeLocalBinaryFile } from '../..
 import type {
   PaperAnnotation,
   PdfHighlightTarget,
+  PdfBlockSelectContext,
   PdfReadingHeatmap,
   PdfScrollPosition,
   PdfSource,
@@ -63,7 +64,9 @@ import {
   hasActiveTextSelection,
   isAnnotationUiTarget,
   isEditableTarget,
+  resolveBlockClientRect,
   resolveHitBlockByPoint,
+  resolveNearestBlockByPoint,
   resolveScrollAnchorPage,
   selectionBelongsToContainer,
   type PageHostState,
@@ -90,7 +93,7 @@ GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-const PDF_THUMBNAILS_COLLAPSED_STORAGE_KEY = 'paperquay-pdf-thumbnails-collapsed-v1';
+const PDF_THUMBNAILS_COLLAPSED_STORAGE_KEY = 'paperquay-pdf-thumbnails-collapsed-v2';
 const PDF_READING_HEATMAP_BAR_VISIBLE_STORAGE_KEY =
   'paperquay-pdf-reading-heatmap-bar-visible-v1';
 const USER_SCROLL_RESTORE_GUARD_MS = 700;
@@ -121,7 +124,8 @@ interface PdfViewerProps {
   enableReadingHeatmap?: boolean;
   softPageShadow: boolean;
   onBlockHover: (block: PositionedMineruBlock | null) => void;
-  onBlockSelect: (block: PositionedMineruBlock) => void;
+  onBlockSelect: (block: PositionedMineruBlock, context?: PdfBlockSelectContext) => void;
+  blockClickOpensQuickActions?: boolean;
   onAnnotationSelect?: (annotationId: string) => void;
   onAnnotationCreate?: (note: string) => void;
   onTextSelect?: (selection: TextSelectionPayload) => void;
@@ -166,6 +170,7 @@ function PdfViewer({
   softPageShadow,
   onBlockHover,
   onBlockSelect,
+  blockClickOpensQuickActions = false,
   onAnnotationSelect,
   onAnnotationCreate,
   onTextSelect,
@@ -223,7 +228,7 @@ function PdfViewer({
   const [annotationColors, setAnnotationColors] = useState(() => loadPdfAnnotationToolColors());
   const [activeColorTool, setActiveColorTool] = useState<PdfAnnotationColorTool>('highlight');
   const [thumbnailsCollapsed, setThumbnailsCollapsed] = useState(() =>
-    loadStoredBoolean(PDF_THUMBNAILS_COLLAPSED_STORAGE_KEY, false),
+    loadStoredBoolean(PDF_THUMBNAILS_COLLAPSED_STORAGE_KEY, true),
   );
   const [readingHeatmapBarVisible, setReadingHeatmapBarVisible] = useState(() =>
     loadStoredBoolean(PDF_READING_HEATMAP_BAR_VISIBLE_STORAGE_KEY, true),
@@ -1857,14 +1862,23 @@ function PdfViewer({
         return;
       }
 
-      const hitBlock = resolveHitBlockByPoint(
-        event.clientX,
-        event.clientY,
-        pageTarget.pageElement,
-        pageBlocks,
-        originalPage,
-        renderedPage,
-      );
+      const hitBlock =
+        resolveHitBlockByPoint(
+          event.clientX,
+          event.clientY,
+          pageTarget.pageElement,
+          pageBlocks,
+          originalPage,
+          renderedPage,
+        ) ??
+        resolveNearestBlockByPoint(
+          event.clientX,
+          event.clientY,
+          pageTarget.pageElement,
+          pageBlocks,
+          originalPage,
+          renderedPage,
+        );
 
       emitBlockHover(hitBlock);
     };
@@ -1911,16 +1925,32 @@ function PdfViewer({
       }
 
       const pageBlocks = blocksByPage.get(pageTarget.pageIndex) ?? [];
-      const hitBlock = resolveHitBlockByPoint(
-        event.clientX,
-        event.clientY,
-        pageTarget.pageElement,
-        pageBlocks,
-        originalPage,
-        renderedPage,
-      );
+      const hitBlock =
+        resolveHitBlockByPoint(
+          event.clientX,
+          event.clientY,
+          pageTarget.pageElement,
+          pageBlocks,
+          originalPage,
+          renderedPage,
+        ) ??
+        resolveNearestBlockByPoint(
+          event.clientX,
+          event.clientY,
+          pageTarget.pageElement,
+          pageBlocks,
+          originalPage,
+          renderedPage,
+        );
 
       if (hitBlock) {
+        const anchorClientRect = resolveBlockClientRect(
+          pageTarget.pageElement,
+          hitBlock,
+          originalPage,
+          renderedPage,
+        );
+
         clearPendingBlockSelect();
         pendingBlockSelectTimerRef.current = window.setTimeout(() => {
           pendingBlockSelectTimerRef.current = null;
@@ -1929,7 +1959,12 @@ function PdfViewer({
             return;
           }
 
-          onBlockSelect(hitBlock);
+          onBlockSelect(hitBlock, {
+            anchorClientX: event.clientX,
+            anchorClientY: event.clientY,
+            anchorClientRect,
+            placement: 'bottom',
+          });
         }, 48);
       }
     };
@@ -1957,21 +1992,43 @@ function PdfViewer({
       }
 
       const pageBlocks = blocksByPage.get(pageTarget.pageIndex) ?? [];
-      const hitBlock = resolveHitBlockByPoint(
-        event.clientX,
-        event.clientY,
-        pageTarget.pageElement,
-        pageBlocks,
-        originalPage,
-        renderedPage,
-      );
+      const hitBlock =
+        resolveHitBlockByPoint(
+          event.clientX,
+          event.clientY,
+          pageTarget.pageElement,
+          pageBlocks,
+          originalPage,
+          renderedPage,
+        ) ??
+        resolveNearestBlockByPoint(
+          event.clientX,
+          event.clientY,
+          pageTarget.pageElement,
+          pageBlocks,
+          originalPage,
+          renderedPage,
+        );
 
       if (!hitBlock) {
         return;
       }
 
       clearPendingBlockSelect();
-      onBlockSelect(hitBlock);
+      if (blockClickOpensQuickActions) {
+        (event as MouseEvent & { paperQuayPdfBlockSelectClick?: boolean }).paperQuayPdfBlockSelectClick = true;
+      }
+      onBlockSelect(hitBlock, {
+        anchorClientX: event.clientX,
+        anchorClientY: event.clientY,
+        anchorClientRect: resolveBlockClientRect(
+          pageTarget.pageElement,
+          hitBlock,
+          originalPage,
+          renderedPage,
+        ),
+        placement: 'bottom',
+      });
     };
 
     const handlePointerLeave = (event: PointerEvent) => {
@@ -2001,7 +2058,7 @@ function PdfViewer({
       viewer.removeEventListener('pointerleave', handlePointerLeave);
       viewer.removeEventListener('click', handleClick, true);
     };
-  }, [blocksByPage, clearPendingBlockSelect, onBlockHover, onBlockSelect, pageHosts, pageSizes]);
+  }, [blockClickOpensQuickActions, blocksByPage, clearPendingBlockSelect, onBlockHover, onBlockSelect, pageHosts, pageSizes]);
 
   useEffect(() => {
     const container = containerRef.current;

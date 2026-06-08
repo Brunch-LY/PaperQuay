@@ -88,41 +88,80 @@ export function PdfPageOverlay({
         />
       ))}
 
-      {pageAnnotations.map((annotation, index) => (
-        <button
-          key={annotation.id}
-          type="button"
-          data-annotation-ui="true"
-          onPointerDown={(event) => {
-            event.stopPropagation();
-          }}
-          onClick={(event) => {
-            event.stopPropagation();
-            onAnnotationSelect?.(annotation.id);
-          }}
-          className={cn(
-            'absolute rounded-lg border-2 transition-all duration-150',
-            allowLinkedInteractions ? 'pointer-events-auto' : 'pointer-events-none',
-            selectedAnnotationId === annotation.id
-              ? 'border-amber-500 bg-amber-200/18 shadow-[0_0_0_1px_rgba(245,158,11,0.20)]'
-              : 'border-amber-300/90 bg-amber-200/10 hover:bg-amber-200/16',
-          )}
-          style={bboxToCssStyle(
-            annotation.bbox,
-            resolveBBoxBaseSize(annotation, originalPage),
-            renderedPage,
-          )}
-          title={
-            annotation.note ||
-            annotation.quote ||
-            l(`批注 ${index + 1}`, `Annotation ${index + 1}`)
-          }
-        >
-          <span className="absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white shadow-sm">
-            {index + 1}
-          </span>
-        </button>
-      ))}
+      {pageAnnotations.map((annotation, index) => {
+        const isNoteAnchor = annotation.id.startsWith('note-anchor:');
+        const annotationStyle = bboxToCssStyle(
+          annotation.bbox,
+          resolveBBoxBaseSize(annotation, originalPage),
+          renderedPage,
+        );
+        const annotationTitle =
+          annotation.note ||
+          annotation.quote ||
+          l(`批注 ${index + 1}`, `Annotation ${index + 1}`);
+
+        if (isNoteAnchor) {
+          return (
+            <div
+              key={annotation.id}
+              className={cn(
+                'pointer-events-none absolute rounded-lg border-2 transition-all duration-150',
+                selectedAnnotationId === annotation.id
+                  ? 'border-amber-500 bg-amber-200/18 shadow-[0_0_0_1px_rgba(245,158,11,0.20)]'
+                  : 'border-amber-300/80 bg-amber-200/10',
+              )}
+              style={annotationStyle}
+              title={annotationTitle}
+            >
+              {allowLinkedInteractions ? (
+                <button
+                  type="button"
+                  data-annotation-ui="true"
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAnnotationSelect?.(annotation.id);
+                  }}
+                  className="pointer-events-auto absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white shadow-sm transition hover:bg-amber-600"
+                  title={annotationTitle}
+                >
+                  {index + 1}
+                </button>
+              ) : null}
+            </div>
+          );
+        }
+
+        return (
+          <button
+            key={annotation.id}
+            type="button"
+            data-annotation-ui="true"
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAnnotationSelect?.(annotation.id);
+            }}
+            className={cn(
+              'absolute rounded-lg border-2 transition-all duration-150',
+              allowLinkedInteractions ? 'pointer-events-auto' : 'pointer-events-none',
+              selectedAnnotationId === annotation.id
+                ? 'border-amber-500 bg-amber-200/18 shadow-[0_0_0_1px_rgba(245,158,11,0.20)]'
+                : 'border-amber-300/90 bg-amber-200/10 hover:bg-amber-200/16',
+            )}
+            style={annotationStyle}
+            title={annotationTitle}
+          >
+            <span className="absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white shadow-sm">
+              {index + 1}
+            </span>
+          </button>
+        );
+      })}
 
       {activeHighlight && activeHighlight.pageIndex === pageIndex && activeHighlightSource ? (
         <div

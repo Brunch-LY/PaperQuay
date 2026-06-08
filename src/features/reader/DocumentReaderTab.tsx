@@ -70,6 +70,7 @@ import type {
   ModelReasoningEffort,
   PaperAnnotation,
   PaperSummary,
+  PdfBlockSelectContext,
   PdfHighlightTarget,
   PdfReadingHeatmap,
   PdfScrollPosition,
@@ -453,6 +454,7 @@ function DocumentReaderTab({
   const aiConfigured = translationConfigured || summaryConfigured || qaConfigured;
   const screenshotBusy = capturingScreenshot;
   const {
+    applySelectedExcerptTranslation,
     blockTranslations,
     handleClearTranslations,
     handleTranslateDocument,
@@ -1332,15 +1334,59 @@ function DocumentReaderTab({
   }, [applyMineruPages, currentDocument, pdfPath, pdfSource, saveMineruParseCache]);
 
   const handlePdfBlockSelect = useCallback(
-    (block: PositionedMineruBlock) => {
+    (block: PositionedMineruBlock, context?: PdfBlockSelectContext) => {
       activateBlock(block, lRef.current(
         `已从 PDF 选中结构块 ${block.blockId}`,
         `Selected block ${block.blockId} from the PDF`,
       ), {
         syncPdfHighlight: false,
       });
+
+      if (readingViewMode !== 'pdf-only' || !context) {
+        return;
+      }
+
+      const blockText = normalizeSelectedText(extractTextFromMineruBlock(block));
+
+      if (!blockText) {
+        return;
+      }
+
+      const translatedText = blockTranslations[block.blockId]?.trim() ?? '';
+
+      lastCapturedSelectionRef.current = null;
+      autoTranslatedSelectionKeyRef.current = '';
+
+      setSelectedExcerpt({
+        text: blockText,
+        source: 'pdf',
+        origin: 'pdf-block',
+        blockId: block.blockId,
+        createdAt: Date.now(),
+        anchorClientX: context.anchorClientX,
+        anchorClientY: context.anchorClientY,
+        anchorClientRect: context.anchorClientRect,
+        placement: context.placement ?? 'bottom',
+        pdfLocation: block.bbox
+          ? {
+              pageNumber: block.pageIndex + 1,
+              bbox: block.bbox,
+              bboxCoordinateSystem: block.bboxCoordinateSystem,
+              bboxPageSize: block.bboxPageSize,
+            }
+          : undefined,
+      });
+      applySelectedExcerptTranslation(translatedText);
+      setStatusMessage(
+        translatedText
+          ? lRef.current('已显示当前段落的缓存译文', 'Showing the cached translation for this paragraph')
+          : lRef.current(
+              '当前段落还没有缓存译文，可先运行全文翻译或点击立即翻译',
+              'This paragraph has no cached translation yet. Run full translation first or click Translate Now.',
+            ),
+      );
     },
-    [activateBlock],
+    [activateBlock, applySelectedExcerptTranslation, blockTranslations, readingViewMode],
   );
 
   const handlePdfBlockHover = useCallback((block: PositionedMineruBlock | null) => {
@@ -1985,6 +2031,7 @@ function DocumentReaderTab({
       createdAt: Date.now(),
       anchorClientX: selection.anchorClientX,
       anchorClientY: selection.anchorClientY,
+      anchorClientRect: selection.anchorClientRect,
       placement: selection.placement,
       pdfLocation: selection.pdfLocation,
     });
@@ -3133,7 +3180,12 @@ function DocumentReaderTab({
   ]);
 
   useEffect(() => {
-    if (!selectedExcerpt || !translationConfigured || !settings.autoTranslateSelection) {
+    if (
+      !selectedExcerpt ||
+      selectedExcerpt.origin === 'pdf-block' ||
+      !translationConfigured ||
+      !settings.autoTranslateSelection
+    ) {
       return;
     }
 

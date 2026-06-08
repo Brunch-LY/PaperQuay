@@ -70,6 +70,20 @@ export interface PdfHighlightTarget {
   bboxPageSize?: BBoxPageSize;
 }
 
+export interface ClientAnchorRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface PdfBlockSelectContext {
+  anchorClientX: number;
+  anchorClientY: number;
+  anchorClientRect?: ClientAnchorRect;
+  placement?: TextSelectionPlacement;
+}
+
 export interface RenderableMineruBlock {
   block: PositionedMineruBlock;
   plainText: string;
@@ -393,10 +407,13 @@ export type TextSelectionSource = "pdf" | "blocks";
 
 export type TextSelectionPlacement = "top" | "bottom";
 
+export type SelectedExcerptOrigin = "text-selection" | "pdf-block";
+
 export interface TextSelectionPayload {
   text: string;
   anchorClientX: number;
   anchorClientY: number;
+  anchorClientRect?: ClientAnchorRect;
   placement: TextSelectionPlacement;
   pdfLocation?: {
     pageNumber: number;
@@ -411,9 +428,12 @@ export interface TextSelectionPayload {
 export interface SelectedExcerpt {
   text: string;
   source: TextSelectionSource;
+  origin?: SelectedExcerptOrigin;
+  blockId?: string;
   createdAt: number;
   anchorClientX?: number;
   anchorClientY?: number;
+  anchorClientRect?: ClientAnchorRect;
   placement?: TextSelectionPlacement;
   pdfLocation?: TextSelectionPayload["pdfLocation"];
 }

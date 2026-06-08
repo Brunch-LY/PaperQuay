@@ -34,6 +34,7 @@ import type {
   PaperAnnotation,
   PaperSummary,
   PdfHighlightTarget,
+  PdfBlockSelectContext,
   PdfReadingHeatmap,
   PdfScrollPosition,
   PdfSource,
@@ -104,7 +105,7 @@ interface ReaderWorkspaceProps {
   onStartResize: () => void;
   onResetLayout: () => void;
   onPdfBlockHover: (block: PositionedMineruBlock | null) => void;
-  onPdfBlockSelect: (block: PositionedMineruBlock) => void;
+  onPdfBlockSelect: (block: PositionedMineruBlock, context?: PdfBlockSelectContext) => void;
   onBlockClick: (block: PositionedMineruBlock) => void;
   onTranslationDisplayModeChange: (mode: TranslationDisplayMode) => void;
   onTextSelect: (selection: TextSelectionPayload, source: TextSelectionSource) => void;
@@ -549,6 +550,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
               selectedAnnotationId={activeNoteAnnotationId ?? selectedAnnotationId}
               onBlockHover={onPdfBlockHover}
               onBlockSelect={onPdfBlockSelect}
+              blockClickOpensQuickActions={readingViewMode === 'pdf-only'}
               onAnnotationSelect={onSelectAnnotation}
               onAnnotationCreate={onCreateAnnotation}
               onTextSelect={handlePdfTextSelect}

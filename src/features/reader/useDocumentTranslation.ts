@@ -68,6 +68,7 @@ interface UseDocumentTranslationOptions {
 }
 
 interface UseDocumentTranslationResult {
+  applySelectedExcerptTranslation: (translation: string) => void;
   blockTranslations: TranslationMap;
   handleClearTranslations: () => void;
   handleTranslateDocument: () => Promise<void>;
@@ -567,6 +568,16 @@ export function useDocumentTranslation({
     );
   }, [setStatusMessage, lRef]);
 
+  const applySelectedExcerptTranslation = useCallback(
+    (translation: string) => {
+      selectionRequestKeyRef.current = "";
+      setSelectedExcerptTranslation(translation);
+      setSelectedExcerptTranslating(false);
+      setSelectedExcerptError("");
+    },
+    [],
+  );
+
   const handleTranslateSelectedExcerpt = useCallback(
     async (openPreferencesOnMissingKey = true) => {
       if (!selectedExcerpt) {
@@ -762,6 +773,7 @@ export function useDocumentTranslation({
   }, []);
 
   return {
+    applySelectedExcerptTranslation,
     blockTranslations,
     handleClearTranslations,
     handleTranslateDocument,
