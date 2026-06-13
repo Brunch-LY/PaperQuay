@@ -1,9 +1,11 @@
 import { Component, type ReactNode, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
+import type { LibraryAgentRagCitation } from '../../services/libraryAgent';
 import { normalizeMarkdownMath } from '../../utils/markdown';
 
 class AgentMarkdownBoundary extends Component<
@@ -65,14 +67,106 @@ function protectBarePaperIds(content: string): string {
     .join('');
 }
 
-export default function AgentMarkdown({ content }: { content: string }) {
+function buildAgentCitationHref(label: string): string {
+  return `#agent-cite-${encodeURIComponent(label)}`;
+}
+
+function normalizeAgentCitationHref(href: string): string {
+  const trimmed = href.trim();
+
+  if (trimmed.startsWith('#agent-cite-')) {
+    return decodeURIComponent(trimmed.slice('#agent-cite-'.length));
+  }
+
+  if (trimmed.startsWith('%23agent-cite-')) {
+    return decodeURIComponent(trimmed.slice('%23agent-cite-'.length));
+  }
+
+  return '';
+}
+
+function findCitationByHref(
+  href: string | undefined,
+  citations: LibraryAgentRagCitation[] | undefined,
+): LibraryAgentRagCitation | null {
+  if (!href || !citations?.length) {
+    return null;
+  }
+
+  const label = normalizeAgentCitationHref(href);
+  return citations.find((citation) => citation.label === label) ?? null;
+}
+
+function injectAgentCitationLinks(
+  content: string,
+  citations: LibraryAgentRagCitation[] | undefined,
+): string {
+  if (!citations?.length) {
+    return content;
+  }
+
+  const labels = new Set(citations.map((citation) => citation.label));
+  const normalizedContent = content
+    .replace(/\[(\d+(?:\s*[,，、]\s*\d+)+)\]/g, (_match, group: string) =>
+      group
+        .split(/\s*[,，、]\s*/)
+        .map((label) => `[${label}]`)
+        .join(' '),
+    )
+    .replace(/\](?=\[\d+\])/g, '] ');
+
+  return normalizedContent.replace(/\[(\d+)\](?!\()/g, (match, label: string) => {
+    if (!labels.has(label)) {
+      return match;
+    }
+
+    return `[${label}](${buildAgentCitationHref(label)})`;
+  });
+}
+
+export default function AgentMarkdown({
+  content,
+  citations,
+  onCitationClick,
+}: {
+  content: string;
+  citations?: LibraryAgentRagCitation[];
+  onCitationClick?: (citation: LibraryAgentRagCitation) => void;
+}) {
   const normalizedContent = useMemo(() => {
     try {
-      return protectBarePaperIds(normalizeMarkdownMath(content));
+      return protectBarePaperIds(normalizeMarkdownMath(injectAgentCitationLinks(content, citations)));
     } catch {
-      return protectBarePaperIds(content);
+      return protectBarePaperIds(injectAgentCitationLinks(content, citations));
     }
-  }, [content]);
+  }, [citations, content]);
+  const components = useMemo<Components>(
+    () => ({
+      a: ({ href, children, ...props }) => {
+        const citation = findCitationByHref(href, citations);
+
+        if (citation && onCitationClick) {
+          return (
+            <button
+              type="button"
+              onClick={() => onCitationClick(citation)}
+              className="inline-flex items-center rounded-full border border-[var(--pq-accent-border)] bg-[var(--pq-accent-soft)] px-1.5 py-0.5 text-xs font-semibold text-[var(--pq-accent)] transition hover:border-[var(--pq-accent)] hover:bg-[var(--pq-surface)]"
+              title={`${citation.paperTitle}${citation.pageIndex !== null && citation.pageIndex !== undefined ? ` · Page ${citation.pageIndex + 1}` : ''}`}
+            >
+              [{children}]
+            </button>
+          );
+        }
+
+        return (
+          <a href={href} target="_blank" rel="noreferrer" {...props}>
+            {children}
+          </a>
+        );
+      },
+    }),
+    [citations, onCitationClick],
+  );
   const fallback = <AgentMarkdownFallback content={content} />;
 
   return (
@@ -96,6 +190,7 @@ export default function AgentMarkdown({ content }: { content: string }) {
         ].join(' ')}
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: true }]]}
+        components={components}
       >
         {normalizedContent}
       </ReactMarkdown>

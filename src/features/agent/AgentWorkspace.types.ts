@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import type {
   LibraryAgentPaperSelectionRequest,
   LibraryAgentPlan,
+  LibraryAgentRagCitation,
   LibraryAgentTool,
   LibraryAgentUserChoice,
 } from '../../services/libraryAgent';
@@ -58,6 +59,7 @@ export interface AgentChatMessage {
   paperScopeIds?: string[];
   thinking?: string | null;
   trace?: AgentTraceStep[];
+  ragCitations?: LibraryAgentRagCitation[];
   toolCall?: AgentToolCallView;
   plan?: LibraryAgentPlan;
   choices?: LibraryAgentUserChoice[];

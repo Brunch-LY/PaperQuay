@@ -124,8 +124,9 @@ interface ReaderWorkspaceProps {
   qaAnswerRenderMode: DocumentChatRenderMode;
   qaReasoningEffort: ModelReasoningEffort;
   screenshotLoading: boolean;
+  qaRunningSessionIds?: string[];
   onQaInputChange: (value: string) => void;
-  onQaSubmit: () => void;
+  onQaSubmit: (inputOverride?: string) => void;
   onQaPresetChange: (presetId: string) => void;
   onQaRagEnabledChange: (value: boolean) => void;
   onQaAnswerRenderModeChange: (mode: DocumentChatRenderMode) => void;
@@ -216,6 +217,7 @@ function ReadingStage(props: ReaderWorkspaceProps & { immersiveReading: boolean 
     qaAnswerRenderMode,
     qaReasoningEffort,
     qaLoading,
+    qaRunningSessionIds,
     qaError,
     screenshotLoading,
     selectedExcerpt,
@@ -464,6 +466,7 @@ function ReaderWorkspace(props: ReaderWorkspaceProps) {
     qaAnswerRenderMode: props.qaAnswerRenderMode,
     qaReasoningEffort: props.qaReasoningEffort,
     screenshotLoading: props.screenshotLoading,
+    runningSessionIds: props.qaRunningSessionIds ?? [],
     onInputChange: props.onQaInputChange,
     onSubmit: props.onQaSubmit,
     onQaPresetChange: props.onQaPresetChange,

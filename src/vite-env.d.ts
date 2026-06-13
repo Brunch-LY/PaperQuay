@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface PaperQuayBridge {
+  platform?: NodeJS.Platform;
   invoke<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T>;
   listen<T>(
     eventName: string,

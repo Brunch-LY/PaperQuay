@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.22-2563eb?style=flat-square" alt="Version v0.1.22">
+  <img src="https://img.shields.io/badge/version-v0.1.23-2563eb?style=flat-square" alt="Version v0.1.23">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
   <img src="https://img.shields.io/badge/built%20with-Electron-47848f?style=flat-square" alt="Electron">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
@@ -36,6 +36,7 @@
 
 <p>
   <a href="#paperquay---open-ai-paper-workspace-that-keeps-reading-flow-intact">Problem & Positioning</a> |
+  <a href="#latest-update">Latest Update</a> |
   <a href="#what-makes-paperquay-different">What Makes It Different</a> |
   <a href="#core-workflow">Core Workflow</a> |
   <a href="#completed-features">Completed Features</a> |
@@ -43,6 +44,18 @@
   <a href="#zotero-compatibility">Zotero Compatibility</a> |
   <a href="#todo-roadmap">Todo</a>
 </p>
+
+---
+
+## Latest Update
+
+The v0.1.23 release focuses on reader stability and daily workflow polish:
+
+- macOS now uses the native traffic-light window controls and hides duplicate custom window buttons.
+- PDF.js document cleanup is safer when opening, switching, and closing papers, reducing stale worker and render-task errors.
+- Agent RAG answers can show clickable citation tags that jump back to the referenced paper block or page.
+- RAG Top-K settings are clearer, and translation popovers now have independent Settings switches.
+- Side-panel chat input, multi-session QA, and Agent interaction details have been refined.
 
 ---
 

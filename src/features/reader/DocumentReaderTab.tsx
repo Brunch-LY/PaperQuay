@@ -245,8 +245,8 @@ interface DocumentReaderTabProps {
   setQaAnswerRenderMode: StateSetter<DocumentChatRenderMode>;
   qaReasoningEffort: ModelReasoningEffort;
   setQaReasoningEffort: StateSetter<ModelReasoningEffort>;
-  qaLoading: boolean;
-  setQaLoading: StateSetter<boolean>;
+  qaRunningSessionIds: string[];
+  setQaRunningSessionIds: StateSetter<string[]>;
   qaError: string;
   setQaError: StateSetter<string>;
   notes: Note[];
@@ -307,8 +307,8 @@ function DocumentReaderTab({
   setQaAnswerRenderMode,
   qaReasoningEffort,
   setQaReasoningEffort,
-  qaLoading,
-  setQaLoading,
+  qaRunningSessionIds,
+  setQaRunningSessionIds,
   qaError,
   setQaError,
   notes,
@@ -442,6 +442,9 @@ function DocumentReaderTab({
     [qaSessions, selectedQaSessionId],
   );
   const qaMessages = activeQaSession?.messages ?? [];
+  const selectedQaSessionLoading = Boolean(
+    activeQaSession && qaRunningSessionIds.includes(activeQaSession.id),
+  );
   const translationConfigured = Boolean(
     translationModelPreset &&
       translationModelPreset.apiKey.trim() &&
@@ -1945,13 +1948,36 @@ function DocumentReaderTab({
       capturedAt: now,
     };
 
+    const anchorClientRect =
+      selection.anchorClientRect &&
+      Number.isFinite(selection.anchorClientRect.left) &&
+      Number.isFinite(selection.anchorClientRect.top) &&
+      Number.isFinite(selection.anchorClientRect.width) &&
+      Number.isFinite(selection.anchorClientRect.height)
+        ? selection.anchorClientRect
+        : undefined;
+    const fallbackAnchorClientX =
+      anchorClientRect
+        ? anchorClientRect.left + anchorClientRect.width / 2
+        : window.innerWidth / 2;
+    const fallbackAnchorClientY =
+      anchorClientRect
+        ? selection.placement === 'top'
+          ? anchorClientRect.top
+          : anchorClientRect.top + anchorClientRect.height
+        : window.innerHeight / 2;
+
     setSelectedExcerpt({
       text: normalizedText,
       source,
       createdAt: Date.now(),
-      anchorClientX: selection.anchorClientX,
-      anchorClientY: selection.anchorClientY,
-      anchorClientRect: selection.anchorClientRect,
+      anchorClientX: Number.isFinite(selection.anchorClientX)
+        ? selection.anchorClientX
+        : fallbackAnchorClientX,
+      anchorClientY: Number.isFinite(selection.anchorClientY)
+        ? selection.anchorClientY
+        : fallbackAnchorClientY,
+      anchorClientRect,
       placement: selection.placement,
       pdfLocation: selection.pdfLocation,
     });
@@ -2116,7 +2142,6 @@ function DocumentReaderTab({
     setSelectedQaSessionId(nextSession.id);
     setQaInput('');
     setQaAttachments([]);
-    setQaLoading(false);
     setQaError('');
     setStatusMessage(lRef.current('已创建新会话', 'Created a new chat session'));
   }, []);
@@ -2146,6 +2171,11 @@ function DocumentReaderTab({
 
   const handleDeleteQaSession = useCallback(
     (sessionId: string) => {
+      if (qaRunningSessionIds.includes(sessionId)) {
+        setStatusMessage(lRef.current('当前会话正在回复，完成后再删除。', 'This chat is replying. Delete it after the reply finishes.'));
+        return;
+      }
+
       const nextSelection = removeQaSession(
         qaSessions,
         sessionId,
@@ -2163,11 +2193,10 @@ function DocumentReaderTab({
 
       setQaInput('');
       setQaAttachments([]);
-      setQaLoading(false);
       setQaError('');
       setStatusMessage(lRef.current('已删除会话', 'Deleted the chat session'));
     },
-    [qaSessions],
+    [qaRunningSessionIds, qaSessions],
   );
 
   const handleQaPresetChange = useCallback(
@@ -2254,27 +2283,71 @@ function DocumentReaderTab({
   }, [currentDocument.workspaceId, setActiveNoteId, setAssistantActivePanel]);
 
   const applyNoteAnchorJump = useCallback((detail: JumpToNoteAnchorEventDetail) => {
-    const highlightTarget = buildNoteAnchorPdfHighlightTarget(detail);
+    const agentRagJump = detail.jumpSource === 'agent-rag';
+    const label = detail.anchorLabel || detail.noteTitle || lRef.current('未命名引用', 'Untitled reference');
+    const targetBlock = detail.blockId
+      ? flatBlocks.find((block) => block.blockId === detail.blockId)
+      : null;
+
+    if (targetBlock) {
+      setSelectedAnnotationId(null);
+      setWorkspaceStage('reading');
+
+      if (!agentRagJump) {
+        setActiveNoteId(detail.noteId);
+        setAssistantActivePanel('notes');
+      }
+
+      activateBlock(
+        targetBlock,
+        lRef.current(`已定位到引用：${label}`, `Located reference: ${label}`),
+      );
+      return true;
+    }
+
+    if (agentRagJump && detail.blockId && flatBlocks.length === 0) {
+      return false;
+    }
+
+    const pageIndex =
+      typeof detail.pageIndex === 'number' && Number.isFinite(detail.pageIndex)
+        ? Math.max(0, Math.trunc(detail.pageIndex))
+        : null;
+    const pageHighlightTarget: PdfHighlightTarget | null =
+      pageIndex !== null
+        ? {
+            blockId: `agent-rag:${detail.anchorId || pageIndex}`,
+            pageIndex,
+            bbox: [0, 0, 1000, 1000] as [number, number, number, number],
+            bboxCoordinateSystem: 'normalized-1000',
+            bboxPageSize: [1000, 1000],
+          }
+        : null;
+    const highlightTarget = buildNoteAnchorPdfHighlightTarget(detail) ?? pageHighlightTarget;
 
     if (!highlightTarget) {
       setStatusMessage(lRef.current('该引用没有绑定 PDF 位置', 'This reference is not linked to a PDF location'));
       return false;
     }
 
-    setActiveNoteId(detail.noteId);
     setSelectedAnnotationId(null);
     setWorkspaceStage('reading');
-    setAssistantActivePanel('notes');
+
+    if (!agentRagJump) {
+      setActiveNoteId(detail.noteId);
+      setAssistantActivePanel('notes');
+    }
+
     setActivePdfHighlight(highlightTarget);
     setPdfHighlightSignal((current) => current + 1);
     setStatusMessage(
       lRef.current(
-        `已定位到引用：${detail.anchorLabel || detail.noteTitle || '未命名引用'}`,
-        `Located reference: ${detail.anchorLabel || detail.noteTitle || 'Untitled reference'}`,
+        `已定位到引用：${label}`,
+        `Located reference: ${label}`,
       ),
     );
     return true;
-  }, [setActiveNoteId, setAssistantActivePanel]);
+  }, [activateBlock, flatBlocks, setActiveNoteId, setAssistantActivePanel]);
 
   const handleJumpToNoteAnchor = useCallback((note: Note, anchor: NoteAnchor) => {
     const targetWorkspaceId = resolveNoteAnchorWorkspaceId(note, anchor);
@@ -2712,8 +2785,8 @@ function DocumentReaderTab({
     }
   }, [capturingScreenshot]);
 
-  const handleSubmitQa = useCallback(async () => {
-    const question = qaInput.trim();
+  const handleSubmitQa = useCallback(async (inputOverride?: string) => {
+    const question = (inputOverride ?? qaInput).trim();
 
     if (!currentDocument || !question) {
       return;
@@ -2732,7 +2805,13 @@ function DocumentReaderTab({
     }
 
     const currentSession = activeQaSession ?? createQaSession(localeRef.current);
-    const previousSessions = qaSessions;
+    if (qaRunningSessionIds.includes(currentSession.id)) {
+      setQaError(lRef.current('当前会话正在回复，请等待完成后再发送。', 'This chat is already replying. Wait for it to finish before sending again.'));
+      return;
+    }
+
+    const hadCurrentSession = qaSessions.some((session) => session.id === currentSession.id);
+    const previousSession = currentSession;
     const previousSelectedSessionId = selectedQaSessionId;
     const previousAttachments = qaAttachments;
     const nextUserMessage = createChatMessage('user', question, {
@@ -2765,7 +2844,9 @@ function DocumentReaderTab({
     setSelectedQaSessionId(currentSession.id);
     setQaInput('');
     setQaAttachments([]);
-    setQaLoading(true);
+    setQaRunningSessionIds((current) =>
+      current.includes(currentSession.id) ? current : [...current, currentSession.id],
+    );
     setQaError('');
 
     let streamedAnswer = '';
@@ -2834,14 +2915,20 @@ function DocumentReaderTab({
       setStatusMessage(formatQaContextStatus(qaRequest.qaContext, lRef.current));
     } catch (nextError) {
       if (!streamedAnswer.trim()) {
-        setQaSessions(previousSessions);
-        setSelectedQaSessionId(previousSelectedSessionId);
+        setQaSessions((current) =>
+          hadCurrentSession
+            ? updateQaSession(current, previousSession)
+            : current.filter((session) => session.id !== currentSession.id),
+        );
+        setSelectedQaSessionId((current) =>
+          current === currentSession.id ? previousSelectedSessionId : current,
+        );
         setQaAttachments(previousAttachments);
       }
 
       setQaError(nextError instanceof Error ? nextError.message : lRef.current('文档问答失败', 'Document QA failed'));
     } finally {
-      setQaLoading(false);
+      setQaRunningSessionIds((current) => current.filter((sessionId) => sessionId !== currentSession.id));
     }
   }, [
     activeQaPreset,
@@ -2853,6 +2940,7 @@ function DocumentReaderTab({
     qaAnswerRenderMode,
     qaReasoningEffort,
     qaInput,
+    qaRunningSessionIds,
     qaSessions,
     resolveQaRequest,
     selectedQaSessionId,
@@ -3093,12 +3181,13 @@ function DocumentReaderTab({
         qaRagEnabled,
         qaAnswerRenderMode,
         qaReasoningEffort,
-        qaLoading,
+        qaLoading: selectedQaSessionLoading,
+        qaRunningSessionIds,
         qaError,
         screenshotLoading: screenshotBusy,
         onQaInputChange: setQaInput,
-        onQaSubmit: () => {
-          void handleSubmitQa();
+        onQaSubmit: (inputOverride?: string) => {
+          void handleSubmitQa(inputOverride);
         },
         onQaPresetChange: handleQaPresetChange,
         onQaRagEnabledChange: setQaRagEnabled,
@@ -3181,7 +3270,8 @@ function DocumentReaderTab({
       qaAnswerRenderMode,
       qaAttachments,
       qaError,
-      qaLoading,
+      qaRunningSessionIds,
+      selectedQaSessionLoading,
       qaMessages,
       qaModelPresets,
       qaRagEnabled,
@@ -3480,7 +3570,7 @@ function DocumentReaderTab({
         qaReasoningEffort={qaReasoningEffort}
         screenshotLoading={screenshotBusy}
         onQaInputChange={setQaInput}
-        onQaSubmit={() => void handleSubmitQa()}
+        onQaSubmit={(inputOverride?: string) => void handleSubmitQa(inputOverride)}
         onQaPresetChange={handleQaPresetChange}
         onQaRagEnabledChange={setQaRagEnabled}
         onQaAnswerRenderModeChange={setQaAnswerRenderMode}
@@ -3494,7 +3584,8 @@ function DocumentReaderTab({
         onRemoveAttachment={handleRemoveAttachment}
         onCitationClick={handleSelectQaCitation}
         onSaveAssistantMessageAsNote={handleSaveAssistantMessageAsNote}
-        qaLoading={qaLoading}
+        qaLoading={selectedQaSessionLoading}
+        qaRunningSessionIds={qaRunningSessionIds}
         qaError={qaError}
         selectedExcerpt={selectedExcerpt}
         selectedExcerptTranslation={selectedExcerptTranslation}

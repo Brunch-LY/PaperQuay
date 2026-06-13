@@ -68,11 +68,12 @@ export interface AssistantSidebarCoreProps {
   qaAnswerRenderMode: DocumentChatRenderMode;
   qaReasoningEffort: ModelReasoningEffort;
   qaLoading: boolean;
+  qaRunningSessionIds?: string[];
   qaError: string;
   screenshotLoading?: boolean;
   chatLayoutMode?: 'compact' | 'workspace';
   onQaInputChange: (value: string) => void;
-  onQaSubmit: () => void;
+  onQaSubmit: (inputOverride?: string) => void;
   onQaPresetChange: (presetId: string) => void;
   onQaRagEnabledChange: (value: boolean) => void;
   onQaAnswerRenderModeChange: (mode: DocumentChatRenderMode) => void;
@@ -146,6 +147,7 @@ function AssistantSidebar({
   qaAnswerRenderMode,
   qaReasoningEffort,
   qaLoading,
+  qaRunningSessionIds = [],
   qaError,
   screenshotLoading = false,
   chatLayoutMode = 'compact',
@@ -242,6 +244,7 @@ function AssistantSidebar({
                 qaAnswerRenderMode={qaAnswerRenderMode}
                 qaReasoningEffort={qaReasoningEffort}
                 screenshotLoading={screenshotLoading}
+                runningSessionIds={qaRunningSessionIds}
                 layoutMode={chatLayoutMode}
                 onInputChange={onQaInputChange}
                 onSubmit={onQaSubmit}

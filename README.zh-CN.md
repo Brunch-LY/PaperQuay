@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v0.1.22-2563eb?style=flat-square" alt="Version v0.1.22">
+  <img src="https://img.shields.io/badge/version-v0.1.23-2563eb?style=flat-square" alt="Version v0.1.23">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4b5563?style=flat-square" alt="Windows macOS Linux">
   <img src="https://img.shields.io/badge/built%20with-Electron-47848f?style=flat-square" alt="Electron">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-0f766e?style=flat-square" alt="React TypeScript">
@@ -36,6 +36,7 @@
 
 <p>
   <a href="#paperquay---保持阅读心流的开源-ai-论文工作台">问题与定位</a> |
+  <a href="#近期更新">近期更新</a> |
   <a href="#paperquay-有什么不同">差异点</a> |
   <a href="#核心工作流">核心工作流</a> |
   <a href="#已完成功能">已完成功能</a> |
@@ -43,6 +44,18 @@
   <a href="#zotero-兼容">Zotero 兼容</a> |
   <a href="#待做计划">待做计划</a>
 </p>
+
+---
+
+## 近期更新
+
+v0.1.23 主要优化阅读器稳定性和日常使用体验：
+
+- macOS 下改用系统左上角三色窗口按钮，并隐藏重复的自定义窗口控制按钮。
+- 优化 PDF.js 文档清理流程，减少打开、切换和关闭论文时的旧 worker / 渲染任务报错。
+- Agent RAG 回答支持可点击引用标签，可跳转到对应论文结构块或页面。
+- 明确 RAG Top-K 设置含义，并为划词翻译和 PDF 段落翻译浮层提供独立开关。
+- 优化侧边栏问答输入、多会话问答和 Agent 交互细节。
 
 ---
 

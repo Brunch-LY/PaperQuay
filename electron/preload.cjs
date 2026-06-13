@@ -84,6 +84,7 @@ function createDropSubscription(callback) {
 }
 
 contextBridge.exposeInMainWorld('paperquay', {
+  platform: process.platform,
   invoke(command, args) {
     return ipcRenderer.invoke('paperquay:invoke', command, args ?? {});
   },

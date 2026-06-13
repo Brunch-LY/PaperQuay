@@ -116,30 +116,102 @@ export function releaseCanvas(canvas: HTMLCanvasElement): void {
   canvas.height = 0;
 }
 
-export function releasePdfDocument(pdfDocument: unknown): void {
+export function isPdfDocumentUsable(pdfDocument: unknown): boolean {
   const maybeDocument = pdfDocument as {
+    _transport?: {
+      destroyed?: boolean;
+      messageHandler?: unknown;
+    };
+  } | null | undefined;
+  const transport = maybeDocument?._transport;
+
+  return Boolean(transport && !transport.destroyed && transport.messageHandler);
+}
+
+export function detachPdfViewerDocument(pdfViewer: unknown, linkService?: unknown): void {
+  const maybeViewer = pdfViewer as {
+    setDocument?: (document: null) => unknown;
     cleanup?: () => unknown;
-    destroy?: () => { catch?: (onRejected: () => undefined) => unknown } | unknown;
+  } | null | undefined;
+  const maybeLinkService = linkService as {
+    setDocument?: (document: null, baseUrl?: null) => unknown;
   } | null | undefined;
 
   try {
-    maybeDocument?.cleanup?.();
+    maybeViewer?.setDocument?.(null);
+  } catch {
+    // Best-effort PDF.js viewer detachment before document teardown.
+  }
+
+  try {
+    maybeLinkService?.setDocument?.(null, null);
+  } catch {
+    // Best-effort PDF.js link service detachment.
+  }
+
+  try {
+    maybeViewer?.cleanup?.();
+  } catch {
+    // Best-effort PDF.js viewer cleanup.
+  }
+}
+
+type CatchableLifecycleResult = {
+  catch?: (onRejected: () => undefined) => unknown;
+};
+
+function suppressLifecyclePromise(result: unknown): void {
+  if (
+    result &&
+    typeof result === 'object' &&
+    'catch' in result &&
+    typeof (result as CatchableLifecycleResult).catch === 'function'
+  ) {
+    void (result as CatchableLifecycleResult).catch?.(() => undefined);
+  }
+}
+
+export function releasePdfDocument(pdfDocument: unknown): void {
+  const maybeDocument = pdfDocument as {
+    cleanup?: () => unknown;
+    destroy?: () => unknown;
+  } | null | undefined;
+
+  try {
+    suppressLifecyclePromise(maybeDocument?.cleanup?.());
   } catch {
     // Best-effort PDF.js memory release.
   }
 
   try {
-    const destroyResult = maybeDocument?.destroy?.();
-    if (
-      destroyResult &&
-      typeof destroyResult === 'object' &&
-      'catch' in destroyResult &&
-      typeof destroyResult.catch === 'function'
-    ) {
-      void destroyResult.catch(() => undefined);
-    }
+    suppressLifecyclePromise(maybeDocument?.destroy?.());
   } catch {
     // Best-effort PDF.js memory release.
+  }
+}
+
+export function releasePdfDocumentSoon(pdfDocument: unknown): void {
+  if (!pdfDocument) {
+    return;
+  }
+
+  if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+    window.setTimeout(() => releasePdfDocument(pdfDocument), 0);
+    return;
+  }
+
+  releasePdfDocument(pdfDocument);
+}
+
+export function releasePdfLoadingTask(loadingTask: unknown): void {
+  const maybeLoadingTask = loadingTask as {
+    destroy?: () => unknown;
+  } | null | undefined;
+
+  try {
+    suppressLifecyclePromise(maybeLoadingTask?.destroy?.());
+  } catch {
+    // Best-effort PDF.js loading task release.
   }
 }
 
@@ -151,6 +223,12 @@ export function isPdfLifecycleCancellation(error: unknown): boolean {
     name === 'RenderingCancelledException' ||
     /cancel|destroy|transport|sendWithPromise/i.test(message)
   );
+}
+
+export function suppressPdfLifecycleRejection(event: PromiseRejectionEvent): void {
+  if (isPdfLifecycleCancellation(event.reason)) {
+    event.preventDefault();
+  }
 }
 
 export function buildScrollRestoreKey(position: PdfScrollPosition): string {

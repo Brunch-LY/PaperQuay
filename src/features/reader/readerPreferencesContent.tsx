@@ -1254,8 +1254,8 @@ export function ReaderPreferencesContent({
               />
               <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs leading-5 text-slate-500">
                 {l(
-                  'Embedding 模型请在单独的 “Embedding” 分区配置；这里仅控制检索策略和 Top-K。',
-                  'Configure the embedding model in the dedicated Embedding section. This panel controls only retrieval strategy and Top-K.',
+                  'Embedding 模型请在单独的 “Embedding” 分区配置；这里仅控制检索策略和 Top-K 检索块数。',
+                  'Configure the embedding model in the dedicated Embedding section. This panel controls only retrieval strategy and Top-K retrieved blocks.',
                 )}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
@@ -1283,7 +1283,7 @@ export function ReaderPreferencesContent({
                 </div>
                 <div className="space-y-2">
                   <div className="text-xs font-medium text-slate-500">
-                    {l('Top-K 片段数', 'Top-K Chunks')}
+                    {l('Top-K 检索块数', 'Top-K Retrieved Blocks')}
                   </div>
                   <SettingsInput
                     type="number"
@@ -1299,8 +1299,8 @@ export function ReaderPreferencesContent({
                   />
                   <div className="text-[11px] leading-5 text-slate-400">
                     {l(
-                      '建议范围 4-8。值越大，发送给模型的片段越多，也更容易撑大上下文。',
-                      'Recommended range: 4-8. Higher values send more chunks to the model and expand context faster.',
+                      '控制每次 RAG 选取几个最相近的上下文块。建议范围 4-8；值越大，发送给模型的内容越多，也更容易撑大上下文。',
+                      'Controls how many closest context blocks RAG sends to the model. Recommended range: 4-8; higher values add more context and grow the prompt faster.',
                     )}
                   </div>
                 </div>

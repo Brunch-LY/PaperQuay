@@ -37,8 +37,12 @@ import { buildPdfJsDocumentInit } from './pdfDocumentSource';
 import {
   buildAnnotatedFileName,
   buildAnnotatedSiblingPath,
+  detachPdfViewerDocument,
   isPdfLifecycleCancellation,
   releasePdfDocument,
+  releasePdfDocumentSoon,
+  releasePdfLoadingTask,
+  suppressPdfLifecycleRejection,
 } from './pdfViewerUtils';
 
 GlobalWorkerOptions.workerSrc = new URL(
@@ -163,6 +167,13 @@ function PdfAnnotationWorkspace({
   useEffect(() => {
     lRef.current = l;
   }, [l]);
+
+  useEffect(() => {
+    window.addEventListener('unhandledrejection', suppressPdfLifecycleRejection);
+    return () => {
+      window.removeEventListener('unhandledrejection', suppressPdfLifecycleRejection);
+    };
+  }, []);
 
   useEffect(() => {
     setZoomLabel((current) =>
@@ -298,6 +309,7 @@ function PdfAnnotationWorkspace({
     setSaveMessage('');
 
     let eventBus: any = null;
+    let linkService: any = null;
     let handlePagesInit: (() => void) | null = null;
     let handlePageChanging: ((event: { pageNumber?: number }) => void) | null = null;
     let handleScaleChanging: ((event: { scale?: number; presetValue?: string }) => void) | null =
@@ -315,7 +327,7 @@ function PdfAnnotationWorkspace({
 
         eventBus = new EventBus();
         eventBusRef.current = eventBus;
-        const linkService = new PDFLinkService({ eventBus });
+        linkService = new PDFLinkService({ eventBus });
         viewer.textContent = '';
         const pdfViewer = new PdfJsViewer({
           container,
@@ -456,6 +468,8 @@ function PdfAnnotationWorkspace({
       }
 
       const pdfDocumentToDestroy = pdfDocumentRef.current;
+      const pdfViewerToDetach = pdfViewerRef.current;
+      detachPdfViewerDocument(pdfViewerToDetach, linkService);
       pdfDocumentRef.current = null;
       pdfViewerRef.current = null;
       viewer.textContent = '';
@@ -463,10 +477,10 @@ function PdfAnnotationWorkspace({
       const loadingTaskToDestroy = loadingTaskRef.current;
       loadingTaskRef.current = null;
 
-      releasePdfDocument(pdfDocumentToDestroy);
-
-      if (loadingTaskToDestroy?.destroy) {
-        void loadingTaskToDestroy.destroy();
+      if (pdfDocumentToDestroy) {
+        releasePdfDocumentSoon(pdfDocumentToDestroy);
+      } else {
+        releasePdfLoadingTask(loadingTaskToDestroy);
       }
     };
   }, [documentInit]);

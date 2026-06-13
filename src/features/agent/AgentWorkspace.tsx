@@ -1,4 +1,3 @@
-import type { FormEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
 import {
@@ -8,6 +7,7 @@ import {
   runConversationalLibraryAgent,
   type LibraryAgentConversationMessage,
   type LibraryAgentPlan,
+  type LibraryAgentRagCitation,
   type LibraryAgentStreamHandlers,
 } from '../../services/libraryAgent';
 import { listLibraryCategories, listLibraryPapers } from '../../services/library';
@@ -42,6 +42,7 @@ import {
 } from './AgentWorkspace.model';
 import type { AgentChatMessage, AgentHistorySession, AgentToolCallView } from './AgentWorkspace.types';
 import { useAppLocale, useLocaleText } from '../../i18n/uiLanguage';
+import { emitJumpToNoteAnchor } from '../../app/appEvents';
 import AgentWorkspaceView from './AgentWorkspaceView';
 import { buildAttachmentFromPath, buildScreenshotAttachmentFromPath } from '../reader/documentReaderShared';
 import { captureSystemScreenshot, selectChatAttachmentPaths } from '../../services/desktop';
@@ -63,6 +64,10 @@ const AGENT_CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD = 96;
 
 function isNearScrollBottom(element: HTMLElement, threshold = AGENT_CHAT_AUTO_SCROLL_BOTTOM_THRESHOLD) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
+function createAgentRagCitationJumpRequestId(): string {
+  return `agent-rag-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
 const agentWelcomeText = {
@@ -583,6 +588,40 @@ function AgentWorkspace() {
     }
   };
 
+  const handleOpenRagCitation = (citation: LibraryAgentRagCitation) => {
+    const targetPaperId = `native-library:${citation.paperId}`;
+    emitJumpToNoteAnchor({
+      requestId: createAgentRagCitationJumpRequestId(),
+      jumpSource: 'agent-rag',
+      targetPaperId,
+      noteId: `agent-rag:${citation.paperId}`,
+      noteTitle: citation.paperTitle,
+      notePaperId: targetPaperId,
+      anchorId: citation.id,
+      anchorPaperId: targetPaperId,
+      anchorLabel: `[${citation.label}] ${citation.paperTitle}`,
+      blockId: citation.blockId ?? null,
+      pageIndex: citation.pageIndex,
+      previewText: citation.previewText ?? null,
+      sourceType: citation.sourceType,
+      pdfLocation:
+        citation.pageIndex !== null && citation.pageIndex !== undefined
+          ? {
+              pageNumber: citation.pageIndex + 1,
+              bbox: [0, 0, 1000, 1000],
+              bboxCoordinateSystem: 'normalized-1000',
+              bboxPageSize: [1000, 1000],
+            }
+          : null,
+    });
+    setStatusMessage(
+      l(
+        `正在打开引用来源：${citation.paperTitle}`,
+        `Opening citation source: ${citation.paperTitle}`,
+      ),
+    );
+  };
+
   const buildConversationHistory = (): LibraryAgentConversationMessage[] =>
     messages
       .filter((message) => message.role === 'user' || (message.role === 'assistant' && !message.plan))
@@ -809,6 +848,7 @@ function AgentWorkspace() {
           content: result.answer,
           meta: `${result.contextLabel} · ${durationLabel(durationMs, locale)}`,
           thinking: result.thinking,
+          ragCitations: result.citations,
           trace: undefined,
           toolCall: undefined,
           plan: undefined,
@@ -833,6 +873,7 @@ function AgentWorkspace() {
           content: result.answer,
           meta: `waiting for choice · ${durationLabel(durationMs, locale)}`,
           thinking: result.thinking,
+          ragCitations: result.citations,
           trace: undefined,
           toolCall: undefined,
           plan: undefined,
@@ -857,6 +898,7 @@ function AgentWorkspace() {
           content: result.answer,
           meta: `paper selection · ${durationLabel(durationMs, locale)}`,
           thinking: result.thinking,
+          ragCitations: undefined,
           trace: undefined,
           toolCall: undefined,
           plan: undefined,
@@ -892,6 +934,7 @@ function AgentWorkspace() {
             ),
         meta: `${toolFunctionName(nextPlan.tool)} · ${durationLabel(durationMs, locale)}`,
         thinking: result.thinking,
+        ragCitations: result.citations,
         trace: buildSuccessTrace(instruction, paperCount, nextPlan, durationMs, locale),
         toolCall: nextToolCall,
         plan: nextPlan,
@@ -923,6 +966,7 @@ function AgentWorkspace() {
           : l(`生成计划失败：${message}`, `Plan generation failed: ${message}`),
         meta: `error · ${durationLabel(durationMs, locale)}`,
         trace: buildErrorTrace(instruction, paperCount, message, durationMs, locale),
+        ragCitations: undefined,
         toolCall: undefined,
         plan: undefined,
         choices: undefined,
@@ -943,9 +987,8 @@ function AgentWorkspace() {
     }
   };
 
-  const submitPrompt = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void runAgent(composerValue);
+  const submitPrompt = (value: string) => {
+    void runAgent(value);
   };
 
   const applyPlan = async () => {
@@ -1347,6 +1390,7 @@ function AgentWorkspace() {
       onCopyToolParameters={(toolCall) => {
         void copyToolParameters(toolCall);
       }}
+      onOpenRagCitation={handleOpenRagCitation}
       onAgentPresetChange={handleAgentPresetChange}
       onAgentReasoningEffortChange={setSelectedAgentReasoningEffort}
       onCaptureScreenshot={() => {
@@ -1390,9 +1434,6 @@ function AgentWorkspace() {
       screenshotLoading={capturingScreenshot}
       setStatusMessage={setStatusMessage}
       sortedHistorySessions={sortedHistorySessions}
-      submitPromptFromEnter={() => {
-        void runAgent(composerValue);
-      }}
     />
   );
 }

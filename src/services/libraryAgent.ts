@@ -4,7 +4,7 @@ import {
   readLocalBinaryFile,
   readLocalTextFileIfExists,
 } from './desktop';
-import { resolveLocalRagContext } from './localRag';
+import { resolveLocalRag } from './localRag';
 import {
   paperAuthors,
   paperPdfPath,
@@ -29,6 +29,7 @@ import {
 import type { LiteratureCategory, LiteraturePaper, UpdatePaperRequest } from '../types/library';
 import type {
   DocumentChatAttachment,
+  DocumentChatCitation,
   ModelRuntimeConfig,
   ModelReasoningEffort,
   OpenAICompatibleApiMode,
@@ -205,16 +206,38 @@ interface LibraryAgentPaperContextDecision {
   thinking?: string | null;
 }
 
+export interface LibraryAgentRagCitation extends DocumentChatCitation {
+  paperId: string;
+  paperTitle: string;
+}
+
 export type LibraryAgentRunResult =
-  | { kind: 'answer'; answer: string; contextLabel: string; thinking?: string | null }
-  | { kind: 'choice'; answer: string; choices: LibraryAgentUserChoice[]; thinking?: string | null }
+  | {
+    kind: 'answer';
+    answer: string;
+    contextLabel: string;
+    thinking?: string | null;
+    citations?: LibraryAgentRagCitation[];
+  }
+  | {
+    kind: 'choice';
+    answer: string;
+    choices: LibraryAgentUserChoice[];
+    thinking?: string | null;
+    citations?: LibraryAgentRagCitation[];
+  }
   | {
     kind: 'paper-selection';
     answer: string;
     request: LibraryAgentPaperSelectionRequest;
     thinking?: string | null;
   }
-  | { kind: 'plan'; plan: LibraryAgentPlan; thinking?: string | null };
+  | {
+    kind: 'plan';
+    plan: LibraryAgentPlan;
+    thinking?: string | null;
+    citations?: LibraryAgentRagCitation[];
+  };
 
 interface LibraryAgentContextRequest {
   summary: string;
@@ -233,6 +256,53 @@ export interface LibraryAgentPaperSelectionRequest {
 interface PaperContextPayload {
   source: string;
   text: string;
+  citations?: LibraryAgentRagCitation[];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildAgentRagCitations(
+  paper: LiteraturePaper,
+  citations: DocumentChatCitation[] = [],
+): LibraryAgentRagCitation[] {
+  return citations.map((citation) => ({
+    ...citation,
+    id: `agent-rag:${paper.id}:${citation.id}`,
+    paperId: paper.id,
+    paperTitle: paper.title,
+  }));
+}
+
+function renumberPaperContextCitations(
+  context: PaperContextPayload,
+  startIndex: number,
+): PaperContextPayload {
+  if (!context.citations?.length) {
+    return context;
+  }
+
+  let nextText = context.text;
+  const nextCitations = context.citations.map((citation, index) => {
+    const nextLabel = String(startIndex + index + 1);
+    nextText = nextText.replace(
+      new RegExp(`# Source \\[${escapeRegExp(citation.label)}\\]`, 'g'),
+      `# Source [${nextLabel}]`,
+    );
+
+    return {
+      ...citation,
+      id: `agent-rag:${citation.paperId}:${nextLabel}`,
+      label: nextLabel,
+    };
+  });
+
+  return {
+    ...context,
+    text: nextText,
+    citations: nextCitations,
+  };
 }
 
 export interface LibraryAgentUserChoice {
@@ -710,7 +780,7 @@ async function loadPaperContext(
       ragSettings.embeddingModel.trim()
     ) {
       try {
-        const ragText = await resolveLocalRagContext({
+        const ragResolution = await resolveLocalRag({
           item: workspaceItem,
           settings: ragSettings,
           embedding: {
@@ -726,10 +796,11 @@ async function loadPaperContext(
           pdfDocumentText: normalizedPdfText,
         });
 
-        if (ragText.trim()) {
+        if (ragResolution.kind === 'retrieved' && ragResolution.documentText.trim()) {
           return {
             source: `${mineruContext?.source ?? 'pdf-text'}-rag`,
-            text: normalizeAgentContext(ragText),
+            text: normalizeAgentContext(ragResolution.documentText),
+            citations: buildAgentRagCitations(paper, ragResolution.citations),
           };
         }
       } catch (error) {
@@ -770,7 +841,7 @@ async function buildPapersWithRequestedContext(
     ragEnabled?: boolean;
     categoryPathById?: Map<string, string>;
   },
-): Promise<{ inputs: LibraryAgentPaperInput[]; label: string }> {
+): Promise<{ inputs: LibraryAgentPaperInput[]; label: string; citations: LibraryAgentRagCitation[] }> {
   const requestedIds = new Set((Array.isArray(request.paperIds) ? request.paperIds : []).filter(Boolean));
   const requestedPapers = requestedIds.size > 0
     ? papers.filter((paper) => requestedIds.has(paper.id))
@@ -790,9 +861,26 @@ async function buildPapersWithRequestedContext(
     );
   }
 
+  const normalizedContextByPaperId = new Map<string, PaperContextPayload>();
+  const citations: LibraryAgentRagCitation[] = [];
+  let citationOffset = 0;
+
+  for (const paper of targetPapers) {
+    const context = contextByPaperId.get(paper.id);
+
+    if (!context) {
+      continue;
+    }
+
+    const normalizedContext = renumberPaperContextCitations(context, citationOffset);
+    citationOffset += normalizedContext.citations?.length ?? 0;
+    normalizedContextByPaperId.set(paper.id, normalizedContext);
+    citations.push(...(normalizedContext.citations ?? []));
+  }
+
   const sourceCounts = new Map<string, number>();
 
-  for (const context of contextByPaperId.values()) {
+  for (const context of normalizedContextByPaperId.values()) {
     sourceCounts.set(context.source, (sourceCounts.get(context.source) ?? 0) + 1);
   }
 
@@ -803,10 +891,11 @@ async function buildPapersWithRequestedContext(
   return {
     inputs: papers.map((paper) => paperToAgentInput(
       paper,
-      targetIds.has(paper.id) ? contextByPaperId.get(paper.id) : undefined,
+      targetIds.has(paper.id) ? normalizedContextByPaperId.get(paper.id) : undefined,
       options?.categoryPathById,
     )),
     label,
+    citations,
   };
 }
 
@@ -1010,7 +1099,10 @@ function isLikelyContextSizeError(error: unknown): boolean {
   ].some((signal) => normalized.includes(signal));
 }
 
-function choiceResultFromRequest(request: LibraryAgentUserChoiceRequest): LibraryAgentRunResult {
+function choiceResultFromRequest(
+  request: LibraryAgentUserChoiceRequest,
+  citations?: LibraryAgentRagCitation[],
+): LibraryAgentRunResult {
   const choices = (Array.isArray(request.options) ? request.options : [])
     .map((option, index) => ({
       id: option.id?.trim() || `option-${index + 1}`,
@@ -1027,6 +1119,7 @@ function choiceResultFromRequest(request: LibraryAgentUserChoiceRequest): Librar
       request.reason?.trim() ? `\n${request.reason.trim()}` : '',
     ].filter(Boolean).join('\n'),
     choices,
+    citations,
   };
 }
 
@@ -1072,6 +1165,7 @@ function resultFromGeneratedResponse({
   fallbackTool = 'classify',
   responseLanguage,
   currentPaperScopeIds = [],
+  citations,
 }: {
   response: LibraryAgentGeneratedResponse;
   papers: LiteraturePaper[];
@@ -1079,6 +1173,7 @@ function resultFromGeneratedResponse({
   fallbackTool?: LibraryAgentTool;
   responseLanguage?: string;
   currentPaperScopeIds?: string[];
+  citations?: LibraryAgentRagCitation[];
 }): LibraryAgentRunResult | null {
   if (response.kind === 'answer') {
     return {
@@ -1089,6 +1184,7 @@ function resultFromGeneratedResponse({
       ),
       contextLabel,
       thinking: normalizeModelThinking(response.thinking),
+      citations,
     };
   }
 
@@ -1097,12 +1193,13 @@ function resultFromGeneratedResponse({
       kind: 'plan',
       plan: convertGeneratedAgentPlan(response.plan.tool ?? fallbackTool, papers, response.plan),
       thinking: normalizeModelThinking(response.thinking),
+      citations,
     };
   }
 
   if (response.kind === 'choice-request' && hasValidUserChoices(response.userChoices)) {
     return {
-      ...choiceResultFromRequest(response.userChoices),
+      ...choiceResultFromRequest(response.userChoices, citations),
       thinking: normalizeModelThinking(response.thinking),
     };
   }
@@ -1685,6 +1782,7 @@ async function retryWithoutUserChoice({
   paperScopes = [],
   contextLabel,
   paperInputs,
+  citations,
   reason,
 }: {
   papers: LiteraturePaper[];
@@ -1698,6 +1796,7 @@ async function retryWithoutUserChoice({
   paperScopes?: LibraryAgentPaperScopeInput[];
   contextLabel: string;
   paperInputs?: LibraryAgentPaperInput[];
+  citations?: LibraryAgentRagCitation[];
   reason?: string;
 }): Promise<LibraryAgentRunResult> {
   const categoryPayload = buildAgentCategoryPayload(categories);
@@ -1740,6 +1839,7 @@ async function retryWithoutUserChoice({
     contextLabel,
     responseLanguage,
     currentPaperScopeIds,
+    citations,
   });
 
   if (parsed) {
@@ -1754,6 +1854,7 @@ async function retryWithoutUserChoice({
       '请补充标题修改规则或目标标题，例如“把标题改成 DOI 查询到的正式标题”或“给标题前加上已读”。',
     ].join('\n'),
     thinking: normalizeModelThinking(retryResponse.thinking),
+    citations,
   };
 }
 
@@ -2146,6 +2247,7 @@ export async function runConversationalLibraryAgent({
         ),
         contextLabel: enrichedContext.label,
         thinking: normalizeModelThinking(enrichedResponse.thinking),
+        citations: enrichedContext.citations,
       };
     }
 
@@ -2168,6 +2270,7 @@ export async function runConversationalLibraryAgent({
           paperScopes,
           contextLabel: enrichedContext.label,
           paperInputs: enrichedContext.inputs,
+          citations: enrichedContext.citations,
           reason: 'Model returned choice-request without valid options after paper context was loaded.',
         });
       }
@@ -2177,7 +2280,7 @@ export async function runConversationalLibraryAgent({
       }
 
       return {
-        ...choiceResultFromRequest(enrichedResponse.userChoices),
+        ...choiceResultFromRequest(enrichedResponse.userChoices, enrichedContext.citations),
         thinking: normalizeModelThinking(enrichedResponse.thinking),
       };
     }
@@ -2194,6 +2297,7 @@ export async function runConversationalLibraryAgent({
         kind: 'plan',
         plan: convertGeneratedAgentPlan(enrichedResponse.plan.tool ?? 'classify', contextPapers, enrichedResponse.plan),
         thinking: normalizeModelThinking(enrichedResponse.thinking),
+        citations: enrichedContext.citations,
       };
   }
 

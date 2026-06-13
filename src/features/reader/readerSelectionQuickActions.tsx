@@ -13,6 +13,24 @@ function clampSelectionPopoverPosition(value: number, min: number, max: number) 
   return Math.min(max, Math.max(min, value));
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function normalizeAnchorRect(rect: ClientAnchorRect | undefined): ClientAnchorRect | undefined {
+  if (
+    !rect ||
+    !isFiniteNumber(rect.left) ||
+    !isFiniteNumber(rect.top) ||
+    !isFiniteNumber(rect.width) ||
+    !isFiniteNumber(rect.height)
+  ) {
+    return undefined;
+  }
+
+  return rect;
+}
+
 const POPOVER_VIEWPORT_MARGIN = 16;
 const POPOVER_ANCHOR_GAP = 12;
 const FALLBACK_POPOVER_WIDTH = 360;
@@ -146,6 +164,10 @@ export function SelectionQuickActions({
     }
 
     const handleDocumentClick = (event: MouseEvent) => {
+      if (Date.now() - selectedExcerpt.createdAt < 500) {
+        return;
+      }
+
       if ((event as MouseEvent & { paperQuayPdfBlockSelectClick?: boolean }).paperQuayPdfBlockSelectClick) {
         return;
       }
@@ -232,11 +254,7 @@ export function SelectionQuickActions({
     selectedExcerptTranslating,
   ]);
 
-  if (
-    !selectedExcerpt ||
-    selectedExcerpt.anchorClientX === undefined ||
-    selectedExcerpt.anchorClientY === undefined
-  ) {
+  if (!selectedExcerpt) {
     return null;
   }
 
@@ -245,30 +263,45 @@ export function SelectionQuickActions({
   const panelWidth = Math.min(popoverSize.width, viewportWidth - POPOVER_VIEWPORT_MARGIN * 2);
   const panelHeight = Math.min(popoverSize.height, viewportHeight - POPOVER_VIEWPORT_MARGIN * 2);
   const isPdfBlockExcerpt = selectedExcerpt.origin === 'pdf-block';
+  const anchorClientRect = normalizeAnchorRect(selectedExcerpt.anchorClientRect);
+  const fallbackAnchorClientX =
+    anchorClientRect ? anchorClientRect.left + anchorClientRect.width / 2 : viewportWidth / 2;
+  const fallbackAnchorClientY =
+    anchorClientRect
+      ? selectedExcerpt.placement === 'top'
+        ? anchorClientRect.top
+        : anchorClientRect.top + anchorClientRect.height
+      : viewportHeight / 2;
+  const anchorClientX = isFiniteNumber(selectedExcerpt.anchorClientX)
+    ? selectedExcerpt.anchorClientX
+    : fallbackAnchorClientX;
+  const anchorClientY = isFiniteNumber(selectedExcerpt.anchorClientY)
+    ? selectedExcerpt.anchorClientY
+    : fallbackAnchorClientY;
   const anchorRectPosition =
-    selectedExcerpt.anchorClientRect
+    anchorClientRect
       ? resolveAnchorRectPopoverPosition({
-          anchorRect: selectedExcerpt.anchorClientRect,
+          anchorRect: anchorClientRect,
           panelWidth,
           panelHeight,
           viewportWidth,
           viewportHeight,
         })
       : null;
-  const availableBelow = viewportHeight - selectedExcerpt.anchorClientY - POPOVER_VIEWPORT_MARGIN;
-  const availableAbove = selectedExcerpt.anchorClientY - POPOVER_VIEWPORT_MARGIN;
+  const availableBelow = viewportHeight - anchorClientY - POPOVER_VIEWPORT_MARGIN;
+  const availableAbove = anchorClientY - POPOVER_VIEWPORT_MARGIN;
   const placeAbove =
     availableBelow < panelHeight + POPOVER_ANCHOR_GAP &&
     availableAbove > availableBelow;
   const fallbackLeft = clampSelectionPopoverPosition(
-    selectedExcerpt.anchorClientX - panelWidth / 2,
+    anchorClientX - panelWidth / 2,
     POPOVER_VIEWPORT_MARGIN,
     viewportWidth - POPOVER_VIEWPORT_MARGIN - panelWidth,
   );
   const fallbackTop = clampSelectionPopoverPosition(
     placeAbove
-      ? selectedExcerpt.anchorClientY - panelHeight - POPOVER_ANCHOR_GAP
-      : selectedExcerpt.anchorClientY + POPOVER_ANCHOR_GAP,
+      ? anchorClientY - panelHeight - POPOVER_ANCHOR_GAP
+      : anchorClientY + POPOVER_ANCHOR_GAP,
     POPOVER_VIEWPORT_MARGIN,
     viewportHeight - POPOVER_VIEWPORT_MARGIN - panelHeight,
   );

@@ -12,16 +12,17 @@ import {
   Loader2,
   MessageSquare,
   MessageSquareText,
-  MoreHorizontal,
   Paperclip,
   PanelRightClose,
   PanelRightOpen,
   Pin,
   Plus,
   Quote,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useWheelScrollDelegate } from '../../hooks/useWheelScrollDelegate';
+import { isImeComposing, useImeSafeTextareaValue } from '../../hooks/useImeSafeTextareaValue';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { ModelPresetPicker } from '../../components/ModelPresetPicker';
 import { ReasoningEffortPicker } from '../../components/ReasoningEffortPicker';
@@ -376,6 +377,91 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debouncedValue;
 }
 
+const READER_CHAT_ZH_COPY: Record<string, string> = {
+  Recent: '最近',
+  'Collapse history': '收起历史记录',
+  'Untitled Chat': '未命名对话',
+  'Delete chat': '删除对话',
+  'No chat history yet. Create a new chat to get started.': '还没有问答历史。创建新对话后即可开始。',
+  'Resize history sidebar': '调整历史侧栏宽度',
+  'New Chat': '新对话',
+  'Choose QA model': '选择问答模型',
+  'Dock back to sidebar': '停靠回侧边栏',
+  'Open as floating window': '弹出为浮动窗口',
+  History: '历史记录',
+  'Collapse sidebar': '收起侧边栏',
+  'Start document chat': '开始文档问答',
+  'Ask directly, or attach selected text, images, files, or screenshots first.':
+    '可以直接提问，也可以先附加选中文本、图片、文件或截图。',
+  Assistant: '助手',
+  You: '你',
+  'Save as note': '保存为笔记',
+  Save: '保存',
+  'Generating visual preview...': '正在生成可视化预览...',
+  'Thinking...': '正在思考...',
+  'Model is replying...': '模型回复中...',
+  'Add images': '添加图片',
+  'Add files': '添加文件',
+  'Capturing...': '截图中...',
+  Screenshot: '截图',
+  'Quote selection': '引用选中内容',
+  'Turn off RAG for this chat': '关闭本次问答 RAG',
+  'Turn on RAG for this chat': '开启本次问答 RAG',
+  'Turn off HTML preview replies': '关闭 HTML 预览回答',
+  'Turn on HTML preview replies': '开启 HTML 预览回答',
+  'Reasoning effort': '思考强度',
+  'QA reasoning effort': '问答思考强度',
+  'More actions': '更多操作',
+  'Remove attachment': '移除附件',
+  'Ask a question. Press Enter to send and Shift+Enter for a new line.':
+    '输入问题。按 Enter 发送，Shift+Enter 换行。',
+  'Load document blocks before asking questions for more accurate answers.':
+    '先加载文档结构块，可获得更准确的回答。',
+  Replying: '回复中',
+  Send: '发送',
+  'Responses try local RAG first, then fall back to document content.':
+    '回答会优先尝试本地 RAG，然后回退到文档内容。',
+  'Responses use the document content directly.': '回答会直接使用文档内容。',
+  'Load structured blocks first for better answers.': '先加载结构化内容，可获得更好的回答。',
+  'Enter to send 路 Shift+Enter for a new line': 'Enter 发送 · Shift+Enter 换行',
+};
+
+function translateReaderChatEnglish(english: string): string | null {
+  const mapped = READER_CHAT_ZH_COPY[english];
+
+  if (mapped) {
+    return mapped;
+  }
+
+  const currentModelPrefix = 'Current model: ';
+  if (english.startsWith(currentModelPrefix)) {
+    return `当前模型：${english.slice(currentModelPrefix.length)}`;
+  }
+
+  const pageMatch = english.match(/^Page (\d+)$/);
+  if (pageMatch) {
+    return `第 ${pageMatch[1]} 页`;
+  }
+
+  return null;
+}
+
+function useReaderChatLocaleText() {
+  const rawLocaleText = useLocaleText();
+  const locale = rawLocaleText('zh-CN', 'en-US');
+
+  return useCallback(
+    (zh: string, en: string) => {
+      if (locale === 'en-US') {
+        return en;
+      }
+
+      return translateReaderChatEnglish(en) ?? zh;
+    },
+    [locale],
+  );
+}
+
 function buildSandboxHtml(fragment: string): string {
   const html = normalizeHtmlFragment(fragment);
 
@@ -532,7 +618,7 @@ function HtmlAnswerFrame({ content }: { content: string }) {
 }
 
 function HtmlAnswerPreview({ content }: { content: string }) {
-  const l = useLocaleText();
+  const l = useReaderChatLocaleText();
   const segments = useMemo(() => parseHtmlAnswerSegments(content), [content]);
 
   if (segments.length === 0) {
@@ -600,10 +686,11 @@ export interface ChatWorkspacePanelProps {
   qaAnswerRenderMode: DocumentChatRenderMode;
   qaReasoningEffort: ModelReasoningEffort;
   screenshotLoading: boolean;
+  runningSessionIds?: string[];
   assistantDetached?: boolean;
   layoutMode?: 'compact' | 'workspace';
   onInputChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (inputOverride?: string) => void;
   onQaPresetChange: (presetId: string) => void;
   onQaRagEnabledChange: (value: boolean) => void;
   onQaAnswerRenderModeChange: (mode: DocumentChatRenderMode) => void;
@@ -639,6 +726,7 @@ export function ChatWorkspacePanel({
   qaAnswerRenderMode,
   qaReasoningEffort,
   screenshotLoading,
+  runningSessionIds = [],
   assistantDetached = false,
   layoutMode = 'compact',
   onInputChange,
@@ -661,7 +749,7 @@ export function ChatWorkspacePanel({
   onCitationClick,
   onSaveAssistantMessageAsNote,
 }: ChatWorkspacePanelProps) {
-  const l = useLocaleText();
+  const l = useReaderChatLocaleText();
   const locale = l('zh-CN', 'en-US') as 'zh-CN' | 'en-US';
   const panelRef = useRef<HTMLDivElement | null>(null);
   const historyRootRef = useRef<HTMLElement | null>(null);
@@ -673,6 +761,7 @@ export function ChatWorkspacePanel({
   const compactActionsMenuRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousLastMessageIdRef = useRef<string | null>(null);
+  const composerInput = useImeSafeTextareaValue(input, onInputChange);
   const handleHistoryWheelCapture = useWheelScrollDelegate({ rootRef: historyRootRef });
   const handleChatWheelCapture = useWheelScrollDelegate({ rootRef: chatRootRef });
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
@@ -684,7 +773,7 @@ export function ChatWorkspacePanel({
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const activePreset =
     qaModelPresets.find((preset) => preset.id === selectedQaPresetId) ?? qaModelPresets[0] ?? null;
-  const streamingAssistantMessage = loading && messages[messages.length - 1]?.role === 'assistant';
+  const runningSessionIdSet = useMemo(() => new Set(runningSessionIds), [runningSessionIds]);
   const workspaceMode = layoutMode === 'workspace';
   const orderedSessions = useMemo(
     () => [...sessions].sort((left, right) => right.updatedAt - left.updatedAt),
@@ -692,17 +781,22 @@ export function ChatWorkspacePanel({
   );
   const activeSession =
     orderedSessions.find((session) => session.id === selectedSessionId) ?? orderedSessions[0] ?? null;
+  const selectedSessionRunning = Boolean(
+    activeSession && runningSessionIdSet.has(activeSession.id),
+  );
+  const streamingAssistantMessage =
+    selectedSessionRunning && messages[messages.length - 1]?.role === 'assistant';
   const handleCreateSessionClick = useCallback(() => {
     onSessionCreate();
     setHistoryCollapsed(false);
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }, [onSessionCreate]);
   const suggestionPrompts = [
-    l('Summarize the core contributions of this paper in three points.', 'Summarize the core contributions of this paper in three points.'),
-    l('What advantages does this method have over the baseline models?', 'What advantages does this method have over the baseline models?'),
-    l('Explain the experimental setup and the most important results.', 'Explain the experimental setup and the most important results.'),
+    l('用三点总结这篇论文的核心贡献。', 'Summarize the core contributions of this paper in three points.'),
+    l('这个方法相比基线模型有哪些优势？', 'What advantages does this method have over the baseline models?'),
+    l('解释实验设置和最重要的结果。', 'Explain the experimental setup and the most important results.'),
   ];
-  const canSubmit = input.trim().length > 0 && !loading;
+  const canSubmit = composerInput.value.trim().length > 0 && !selectedSessionRunning;
   const composerActions = [
     {
       key: 'image',
@@ -875,7 +969,7 @@ export function ChatWorkspacePanel({
       textareaElement.scrollHeight,
       CHAT_COMPOSER_MAX_TEXTAREA_HEIGHT,
     )}px`;
-  }, [composerWidth, input]);
+  }, [composerWidth, composerInput.value]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -975,6 +1069,7 @@ export function ChatWorkspacePanel({
               <div className="space-y-0.5">
                 {orderedSessions.map((session) => {
                   const active = session.id === selectedSessionId;
+                  const running = runningSessionIdSet.has(session.id);
 
                   return (
                     <div
@@ -992,20 +1087,27 @@ export function ChatWorkspacePanel({
                         className="min-w-0 flex-1 rounded-lg px-1 py-1 text-left"
                       >
                         <div className="truncate text-sm font-medium text-[var(--pq-text)]">
-                          {session.title || l('Untitled Chat', 'Untitled Chat')}
+                          {session.title || l('未命名对话', 'Untitled Chat')}
                         </div>
                       </button>
                       {active ? (
                         <Pin className="h-3.5 w-3.5 shrink-0 text-[var(--pq-text-faint)]" strokeWidth={1.8} />
                       ) : null}
+                      {running ? (
+                        <Loader2
+                          className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--pq-accent)]"
+                          strokeWidth={1.8}
+                        />
+                      ) : null}
                       <button
                         type="button"
+                        disabled={running}
                         onClick={() => onSessionDelete(session.id)}
-                        className="pq-icon-button h-7 w-7 shrink-0 rounded-lg border border-transparent bg-transparent text-[var(--pq-text-faint)] opacity-0 transition group-hover:opacity-100 focus:opacity-100"
+                        className="pq-icon-button h-7 w-7 shrink-0 rounded-lg border border-transparent bg-transparent text-rose-500 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 focus:opacity-100 disabled:cursor-not-allowed disabled:text-[var(--pq-text-faint)] disabled:opacity-40 group-hover:opacity-100"
                         aria-label={l('删除会话', 'Delete chat')}
                         title={l('删除会话', 'Delete chat')}
                       >
-                        <MoreHorizontal className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
                       </button>
                     </div>
                   );
@@ -1013,7 +1115,7 @@ export function ChatWorkspacePanel({
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-[var(--pq-border)] bg-white/58 px-4 py-5 text-sm leading-6 text-[var(--pq-text-muted)]">
-                {l('No chat history yet. Create a new chat to get started.', 'No chat history yet. Create a new chat to get started.',
+                {l('还没有问答历史。创建新对话后即可开始。', 'No chat history yet. Create a new chat to get started.',
                 )}
               </div>
             )}
@@ -1054,7 +1156,7 @@ export function ChatWorkspacePanel({
           >
             <div className={cn('min-w-0 pr-1', !workspaceMode && 'hidden')}>
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                SESSION
+                {l('会话', 'SESSION')}
               </div>
               <div className="mt-1 truncate text-sm font-semibold text-slate-900">
                 {activeSession?.title || l('新会话', 'New Chat')}
@@ -1087,8 +1189,8 @@ export function ChatWorkspacePanel({
                 <button
                   type="button"
                   onClick={onDetachAssistant}
-                  title={l('Open as floating window', 'Open as floating window')}
-                  aria-label={l('Open as floating window', 'Open as floating window')}
+                  title={l('弹出为浮动窗口', 'Open as floating window')}
+                  aria-label={l('弹出为浮动窗口', 'Open as floating window')}
                   className="pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/60"
                 >
                   <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.9} />
@@ -1151,10 +1253,10 @@ export function ChatWorkspacePanel({
                   </span>
                   <div className="space-y-1.5">
                     <div className="text-base font-semibold text-slate-900">
-                      {l('Start document chat', 'Start document chat')}
+                      {l('开始文档问答', 'Start document chat')}
                     </div>
                     <div className="text-sm leading-6 text-slate-500">
-                      {l('Ask directly, or attach selected text, images, files, or screenshots first.', 'Ask directly, or attach selected text, images, files, or screenshots first.',
+                      {l('可以直接提问，也可以先附加选中文本、图片、文件或截图。', 'Ask directly, or attach selected text, images, files, or screenshots first.',
                       )}
                     </div>
                   </div>
@@ -1223,7 +1325,7 @@ export function ChatWorkspacePanel({
                         )}
                       >
                         <span className="font-semibold">
-                          {assistantMessage ? l('助手', 'Assistant') : l('You', 'You')}
+                          {assistantMessage ? l('助手', 'Assistant') : l('你', 'You')}
                         </span>
                         {assistantMessage && message.modelLabel ? (
                           <span className="pq-chip px-2 py-0.5 text-[10px]">
@@ -1405,7 +1507,7 @@ export function ChatWorkspacePanel({
                     <div className="mt-2 text-xs text-slate-400">
                       {activePreset
                         ? l(`当前模型：${activePreset.label}`, `Current model: ${activePreset.label}`)
-                        : l('Generating a response grounded in the current document.', 'Generating a response grounded in the current document.',
+                        : l('正在基于当前文档生成回答。', 'Generating a response grounded in the current document.',
                           )}
                     </div>
                   </div>
@@ -1479,21 +1581,27 @@ export function ChatWorkspacePanel({
           >
             <textarea
               ref={textareaRef}
-              value={input}
-              onChange={(event) => onInputChange(event.target.value)}
+              value={composerInput.value}
+              onChange={composerInput.onChange}
+              onCompositionStart={composerInput.onCompositionStart}
+              onCompositionEnd={composerInput.onCompositionEnd}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
+                  if (isImeComposing(event) || composerInput.isComposingRef.current) {
+                    return;
+                  }
+
                   event.preventDefault();
                   if (canSubmit) {
-                    onSubmit();
+                    onSubmit(event.currentTarget.value);
                   }
                 }
               }}
               placeholder={
                 hasBlocks
-                  ? l('Ask a question. Press Enter to send and Shift+Enter for a new line.', 'Ask a question. Press Enter to send and Shift+Enter for a new line.',
+                  ? l('输入问题。按 Enter 发送，Shift+Enter 换行。', 'Ask a question. Press Enter to send and Shift+Enter for a new line.',
                     )
-                  : l('Load document blocks before asking questions for more accurate answers.', 'Load document blocks before asking questions for more accurate answers.',
+                  : l('先加载文档结构块，可以获得更准确的回答。', 'Load document blocks before asking questions for more accurate answers.',
                     )
               }
               className="min-h-[80px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-transparent px-1 py-1 text-sm leading-7 text-[var(--pq-text)] outline-none placeholder:text-[var(--pq-text-faint)]"
@@ -1617,22 +1725,22 @@ export function ChatWorkspacePanel({
 
               <button
                 type="button"
-                onClick={onSubmit}
+                onClick={() => onSubmit(composerInput.value)}
                 disabled={!canSubmit}
-                title={loading ? l('回复中', 'Replying') : l('发送', 'Send')}
-                aria-label={loading ? l('回复中', 'Replying') : l('发送', 'Send')}
+                title={selectedSessionRunning ? l('回复中', 'Replying') : l('发送', 'Send')}
+                aria-label={selectedSessionRunning ? l('回复中', 'Replying') : l('发送', 'Send')}
                 className={cn(
                   'pq-button-primary shrink-0 text-sm disabled:cursor-not-allowed',
                   compactComposer ? 'h-10 w-10 rounded-full px-0' : 'h-11 px-4',
                 )}
               >
-                {loading ? (
+                {selectedSessionRunning ? (
                   <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.9} />
                 ) : (
                   <ArrowUp className="h-4 w-4" strokeWidth={1.9} />
                 )}
                 <span className={cn(compactComposer ? 'hidden' : 'hidden sm:inline')}>
-                  {loading ? l('Replying', 'Replying') : l('Send', 'Send')}
+                  {selectedSessionRunning ? l('回复中', 'Replying') : l('发送', 'Send')}
                 </span>
               </button>
             </div>
@@ -1643,16 +1751,16 @@ export function ChatWorkspacePanel({
               {hasBlocks
                 ? l(
                     qaRagEnabled
-                      ? 'Responses try local RAG first, then fall back to document content.'
-                      : 'Responses use the document content directly.',
+                      ? '回答会优先尝试本地 RAG，然后回退到文档内容。'
+                      : '回答会直接使用文档内容。',
                     qaRagEnabled
                       ? 'Responses try local RAG first, then fall back to document content.'
                       : 'Responses use the document content directly.',
                   )
-                : l('Load structured blocks first for better answers.', 'Load structured blocks first for better answers.')}
+                : l('先加载结构化内容，可以获得更好的回答。', 'Load structured blocks first for better answers.')}
             </span>
             <span>
-              {loading
+              {selectedSessionRunning
                 ? l('模型回复中...', 'Model is replying...')
                 : l('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line')}
             </span>
@@ -1664,12 +1772,12 @@ export function ChatWorkspacePanel({
 }
 
 export function ChatPanel(props: ChatWorkspacePanelProps) {
-  const l = useLocaleText();
+  const l = useReaderChatLocaleText();
 
   return (
     <SectionCard
       title={l('文档问答', 'Document Chat')}
-      description={l('Run multi-turn QA grounded in the current paper.', 'Run multi-turn QA grounded in the current paper.',
+      description={l('围绕当前论文进行多轮问答。', 'Run multi-turn QA grounded in the current paper.',
       )}
       icon={<MessageSquare className="h-4 w-4" strokeWidth={1.8} />}
       contentClassName="p-0"

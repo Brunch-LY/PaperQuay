@@ -76,11 +76,16 @@ import {
   buildScrollRestoreKey,
   buildThumbnailPageIndexes,
   clampScrollRatio,
+  detachPdfViewerDocument,
+  isPdfDocumentUsable,
   isPdfLifecycleCancellation,
   loadStoredBoolean,
   releaseCanvas,
   releasePdfDocument,
+  releasePdfDocumentSoon,
+  releasePdfLoadingTask,
   resolveBBoxBaseSize,
+  suppressPdfLifecycleRejection,
 } from './pdfViewerUtils';
 import {
   PdfViewerToolbar,
@@ -100,6 +105,7 @@ const SCROLL_EMIT_TRAILING_MS = 360;
 const THUMBNAIL_RENDER_IDLE_MS = 420;
 const OVERLAY_PAGE_RADIUS = 1;
 const PDF_VIEWER_MAX_CANVAS_PIXELS = 5_242_880;
+const PDF_SELECTION_COMMIT_RETRY_DELAYS = [48, 120, 240, 420];
 
 type BBoxPageSizeSource = Pick<
   PositionedMineruBlock | PdfHighlightTarget | PaperAnnotation,
@@ -248,6 +254,7 @@ function PdfViewer({
   const pendingPageSizeRequestsRef = useRef<Set<number>>(new Set());
   const selectionStartedInsideRef = useRef(false);
   const selectionCommitTimerRef = useRef<number | null>(null);
+  const selectionCommitAttemptRef = useRef(0);
   const pendingBlockSelectTimerRef = useRef<number | null>(null);
   const lastHandledHighlightSignalRef = useRef(highlightScrollSignal);
   const hoveredBlockIdRef = useRef<string | null>(hoveredBlockId);
@@ -292,6 +299,13 @@ function PdfViewer({
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
+
+  useEffect(() => {
+    window.addEventListener('unhandledrejection', suppressPdfLifecycleRejection);
+    return () => {
+      window.removeEventListener('unhandledrejection', suppressPdfLifecycleRejection);
+    };
+  }, []);
 
   useEffect(() => {
     setZoomLabel((current) =>
@@ -445,6 +459,7 @@ function PdfViewer({
 
     if (
       !pdfDocument ||
+      !isPdfDocumentUsable(pdfDocument) ||
       pageIndex < 0 ||
       pageIndex >= pageCount ||
       pageSizesRef.current[pageIndex] ||
@@ -1093,6 +1108,8 @@ function PdfViewer({
       window.clearTimeout(selectionCommitTimerRef.current);
       selectionCommitTimerRef.current = null;
     }
+
+    selectionCommitAttemptRef.current = 0;
   }, []);
 
   const clearPendingBlockSelect = useCallback(() => {
@@ -1136,52 +1153,72 @@ function PdfViewer({
 
   const emitSelectedText = useCallback(() => {
     if (!activeRef.current || !onTextSelect || editorToolRef.current !== 'none') {
-      return;
+      return false;
     }
 
-    window.requestAnimationFrame(() => {
-      if (!activeRef.current) {
-        return;
-      }
+    const selection = getScopedSelectionPayload(containerRef.current);
 
-      const selection = getScopedSelectionPayload(containerRef.current);
+    if (!selection) {
+      lastSelectionRef.current = null;
+      return false;
+    }
 
-      if (!selection) {
-        lastSelectionRef.current = null;
-        return;
-      }
+    const now = Date.now();
 
-      const now = Date.now();
+    if (
+      lastSelectionRef.current &&
+      lastSelectionRef.current.text === selection.text &&
+      now - lastSelectionRef.current.emittedAt < 250
+    ) {
+      return true;
+    }
 
-      if (
-        lastSelectionRef.current &&
-        lastSelectionRef.current.text === selection.text &&
-        now - lastSelectionRef.current.emittedAt < 250
-      ) {
-        return;
-      }
-
-      lastSelectionRef.current = {
-        text: selection.text,
-        emittedAt: now,
-      };
-      onTextSelect(selection);
-    });
+    lastSelectionRef.current = {
+      text: selection.text,
+      emittedAt: now,
+    };
+    onTextSelect(selection);
+    return true;
   }, [onTextSelect]);
 
   const scheduleSelectionCommit = useCallback(
-    (delay = 48) => {
+    (delay = PDF_SELECTION_COMMIT_RETRY_DELAYS[0], attempt = 0) => {
       if (!active || !onTextSelect || editorToolRef.current !== 'none') {
         return;
       }
 
-      clearSelectionCommitTimer();
+      if (selectionCommitTimerRef.current !== null) {
+        window.clearTimeout(selectionCommitTimerRef.current);
+        selectionCommitTimerRef.current = null;
+      }
+
+      selectionCommitAttemptRef.current = attempt;
       selectionCommitTimerRef.current = window.setTimeout(() => {
         selectionCommitTimerRef.current = null;
-        emitSelectedText();
+        const committed = emitSelectedText();
+
+        if (committed) {
+          selectionCommitAttemptRef.current = 0;
+          return;
+        }
+
+        const nextAttempt = selectionCommitAttemptRef.current + 1;
+        const nextDelay = PDF_SELECTION_COMMIT_RETRY_DELAYS[nextAttempt];
+
+        if (
+          nextDelay !== undefined &&
+          hasActiveTextSelection() &&
+          editorToolRef.current === 'none' &&
+          activeRef.current
+        ) {
+          scheduleSelectionCommit(nextDelay, nextAttempt);
+          return;
+        }
+
+        selectionCommitAttemptRef.current = 0;
       }, delay);
     },
-    [active, clearSelectionCommitTimer, emitSelectedText, onTextSelect],
+    [active, emitSelectedText, onTextSelect],
   );
 
   const handleDeleteSelected = useCallback(() => {
@@ -1534,6 +1571,7 @@ function PdfViewer({
     setDocumentError('');
 
     let eventBus: any = null;
+    let linkService: any = null;
     let handlePagesInit: (() => void) | null = null;
     let handlePageChanging: ((event: { pageNumber?: number }) => void) | null = null;
     let handleScaleChanging: ((event: { scale?: number }) => void) | null = null;
@@ -1551,7 +1589,7 @@ function PdfViewer({
 
         eventBus = new EventBus();
         eventBusRef.current = eventBus;
-        const linkService = new PDFLinkService({ eventBus });
+        linkService = new PDFLinkService({ eventBus });
         viewer.textContent = '';
 
         const pdfViewer = new PdfJsViewer({
@@ -1693,6 +1731,8 @@ function PdfViewer({
       }
 
       const pdfDocumentToDestroy = pdfDocumentRef.current;
+      const pdfViewerToDetach = pdfViewerRef.current;
+      detachPdfViewerDocument(pdfViewerToDetach, linkService);
       pdfDocumentRef.current = null;
       pdfViewerRef.current = null;
       pageThumbnailsRef.current = {};
@@ -1702,10 +1742,10 @@ function PdfViewer({
       const loadingTaskToDestroy = loadingTaskRef.current;
       loadingTaskRef.current = null;
 
-      releasePdfDocument(pdfDocumentToDestroy);
-
-      if (loadingTaskToDestroy?.destroy) {
-        void loadingTaskToDestroy.destroy();
+      if (pdfDocumentToDestroy) {
+        releasePdfDocumentSoon(pdfDocumentToDestroy);
+      } else {
+        releasePdfLoadingTask(loadingTaskToDestroy);
       }
 
       setLoading(false);
@@ -1735,7 +1775,8 @@ function PdfViewer({
     let activeRenderTask: any = null;
     let activeCanvas: HTMLCanvasElement | null = null;
     let activePage: any = null;
-    const isCurrentDocument = () => !cancelled && pdfDocumentRef.current === pdfDocument;
+    const isCurrentDocument = () =>
+      !cancelled && pdfDocumentRef.current === pdfDocument && isPdfDocumentUsable(pdfDocument);
 
     const pageIndexes = buildThumbnailPageIndexes(pageCount, thumbnailFocusPage);
 
@@ -1960,12 +2001,19 @@ function PdfViewer({
 
     const handleSelectionChange = () => {
       const selectionInside = selectionBelongsToContainer(containerRef.current);
+      const activeSelectionInside = selectionInside && hasActiveTextSelection();
       setBooleanStateIfChanged(
         setHasLiveTextSelection,
-        selectionInside && hasActiveTextSelection(),
+        activeSelectionInside,
       );
 
       if (editorToolRef.current !== 'none') {
+        return;
+      }
+
+      if (activeSelectionInside) {
+        clearPendingBlockSelect();
+        scheduleSelectionCommit(180);
         return;
       }
 

@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type FormEvent,
   type Ref,
   type WheelEventHandler,
 } from 'react';
@@ -28,7 +27,8 @@ import {
   X,
 } from 'lucide-react';
 import { ModelPresetPicker } from '../../components/ModelPresetPicker';
-import type { LibraryAgentPlan } from '../../services/libraryAgent';
+import { isImeComposing, useImeSafeTextareaValue } from '../../hooks/useImeSafeTextareaValue';
+import type { LibraryAgentPlan, LibraryAgentRagCitation } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
 import type { DocumentChatAttachment, ModelReasoningEffort, QaModelPreset, UiLanguage } from '../../types/reader';
 import type {
@@ -84,6 +84,7 @@ interface AgentWorkspaceViewProps {
   onHistorySidebarCollapsedChange: (collapsed: boolean) => void;
   onInlinePaperSelectionContinue: (instruction: string, paperIds: string[]) => void;
   onInspectPlanItem: (itemId: string, paperTitle: string) => void;
+  onOpenRagCitation: (citation: LibraryAgentRagCitation) => void;
   onPaperSearchQueryChange: (value: string) => void;
   onRefreshPapers: () => void;
   onRemoveAttachment: (attachmentId: string) => void;
@@ -92,7 +93,7 @@ interface AgentWorkspaceViewProps {
   onSelectAllVisible: () => void;
   onSelectFileAttachments: () => void;
   onSelectImageAttachments: () => void;
-  onSubmitPrompt: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmitPrompt: (value: string) => void;
   onToggleAgentRag: () => void;
   onTogglePaper: (paperId: string) => void;
   onUseFullLibraryRag: () => void;
@@ -111,7 +112,6 @@ interface AgentWorkspaceViewProps {
   screenshotLoading: boolean;
   setStatusMessage: (message: string) => void;
   sortedHistorySessions: AgentHistorySession[];
-  submitPromptFromEnter: () => void;
 }
 
 const agentIconButtonClass =
@@ -296,6 +296,7 @@ export default function AgentWorkspaceView({
   onHistorySidebarCollapsedChange,
   onInlinePaperSelectionContinue,
   onInspectPlanItem,
+  onOpenRagCitation,
   onPaperSearchQueryChange,
   onRefreshPapers,
   onRemoveAttachment,
@@ -323,9 +324,17 @@ export default function AgentWorkspaceView({
   screenshotLoading,
   setStatusMessage,
   sortedHistorySessions,
-  submitPromptFromEnter,
 }: AgentWorkspaceViewProps) {
   const [paperToolOpen, setPaperToolOpen] = useState(false);
+  const composerInput = useImeSafeTextareaValue(composerValue, onComposerChange);
+  const canSubmitPrompt = !activeSessionRunning && composerInput.value.trim().length > 0;
+  const submitCurrentPrompt = useCallback(() => {
+    if (!canSubmitPrompt) {
+      return;
+    }
+
+    onSubmitPrompt(composerInput.value);
+  }, [canSubmitPrompt, composerInput.value, onSubmitPrompt]);
   const isFreshAgentSession =
     messages.length === 1 &&
     messages[0]?.role === 'assistant' &&
@@ -540,9 +549,10 @@ export default function AgentWorkspaceView({
                       message={message}
                       onApplyPlan={onApplyPlan}
                       onCancelPlan={onCancelPlan}
-                      onCopyToolParameters={onCopyToolParameters}
-                      onContinueWithSelectedPapers={onInlinePaperSelectionContinue}
-                      onInspectPlanItem={onInspectPlanItem}
+                  onCopyToolParameters={onCopyToolParameters}
+                  onContinueWithSelectedPapers={onInlinePaperSelectionContinue}
+                  onOpenRagCitation={onOpenRagCitation}
+                  onInspectPlanItem={onInspectPlanItem}
                       onTogglePlanItem={onTogglePlanItem}
                       onToggleStep={onToggleStep}
                       onToggleTool={onToggleTool}
@@ -802,7 +812,10 @@ export default function AgentWorkspaceView({
                 ) : null}
 
                 <form
-                  onSubmit={onSubmitPrompt}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    submitCurrentPrompt();
+                  }}
                   className={
                     isFreshAgentSession
                       ? 'pq-chat-composer p-3 shadow-[0_18px_48px_rgba(15,23,42,0.12)]'
@@ -810,12 +823,18 @@ export default function AgentWorkspaceView({
                   }
                 >
                   <textarea
-                    value={composerValue}
-                    onChange={(event) => onComposerChange(event.target.value)}
+                    value={composerInput.value}
+                    onChange={composerInput.onChange}
+                    onCompositionStart={composerInput.onCompositionStart}
+                    onCompositionEnd={composerInput.onCompositionEnd}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey) {
+                        if (isImeComposing(event) || composerInput.isComposingRef.current) {
+                          return;
+                        }
+
                         event.preventDefault();
-                        submitPromptFromEnter();
+                        submitCurrentPrompt();
                       }
                     }}
                     className={
@@ -906,7 +925,7 @@ export default function AgentWorkspaceView({
 
                     <button
                       type="submit"
-                      disabled={activeSessionRunning || !composerValue.trim()}
+                      disabled={!canSubmitPrompt}
                       className="pq-button-primary h-11 shrink-0 px-5 text-sm disabled:opacity-50"
                     >
                       {activeSessionRunning ? (

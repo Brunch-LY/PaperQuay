@@ -19,6 +19,7 @@ import TabBar from '../components/tabs/TabBar';
 import {
   emitOpenPreferences,
   emitOpenStandalonePdf,
+  JUMP_TO_NOTE_ANCHOR_EVENT,
   UI_LANGUAGE_CHANGED_EVENT,
 } from './appEvents';
 import { PAPERQUAY_ICON_URL } from './appIcon';
@@ -115,8 +116,19 @@ function loadInitialWorkspace(): AppWorkspaceKey {
   return stored === 'agent' || stored === 'notes' ? stored : 'library';
 }
 
+function isMacPlatform() {
+  const bridgePlatform = window.paperquay?.platform;
+
+  if (bridgePlatform) {
+    return bridgePlatform === 'darwin';
+  }
+
+  return /Mac|Macintosh/i.test(`${navigator.platform ?? ''} ${navigator.userAgent ?? ''}`);
+}
+
 function App() {
   const appWindow = getCurrentWindow();
+  const isMac = isMacPlatform();
   const tabs = useTabsStore((state) => state.tabs);
   const activeTabId = useTabsStore((state) => state.activeTabId);
   const closeTab = useTabsStore((state) => state.closeTab);
@@ -178,6 +190,24 @@ function App() {
     dispatchReaderAction(emitOpenStandalonePdf);
   };
 
+  useEffect(() => {
+    const handleJumpToReader = () => {
+      window.setTimeout(() => {
+        const { activeTabId: nextActiveTabId, tabs: nextTabs } = useTabsStore.getState();
+        const nextActiveTab = nextTabs.find((tab) => tab.id === nextActiveTabId);
+
+        if (!nextActiveTab || nextActiveTab.type === 'agent' || nextActiveTab.type === 'notes' || nextActiveTab.type === 'note') {
+          setActiveTab(HOME_TAB_ID);
+        }
+      }, 0);
+    };
+
+    window.addEventListener(JUMP_TO_NOTE_ANCHOR_EVENT, handleJumpToReader);
+    return () => {
+      window.removeEventListener(JUMP_TO_NOTE_ANCHOR_EVENT, handleJumpToReader);
+    };
+  }, [setActiveTab]);
+
   const handleOpenPreferences = () => {
     emitOpenPreferences();
   };
@@ -223,33 +253,35 @@ function App() {
   return (
     <AppLocaleProvider value={uiLanguage}>
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--pq-bg)] text-[var(--pq-text)] antialiased">
-        <header className="pq-titlebar flex h-10 shrink-0 items-center pl-3 pr-0">
-          <div
-            className="flex min-w-0 items-center gap-2"
-            data-window-drag-region
-            onDoubleClick={handleWindowToggleMaximize}
-          >
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--pq-surface-1)] shadow-[var(--pq-shadow-soft)] ring-1 ring-[var(--pq-border)]">
-              <img
-                src={PAPERQUAY_ICON_URL}
-                alt="PaperQuay"
-                className="h-full w-full object-cover"
-                draggable={false}
-              />
+        <header className={['pq-titlebar flex h-10 shrink-0 items-center pr-0', isMac ? 'pl-[82px]' : 'pl-3'].join(' ')}>
+          {!isMac ? (
+            <div
+              className="flex min-w-0 items-center gap-2"
+              data-window-drag-region
+              onDoubleClick={handleWindowToggleMaximize}
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--pq-surface-1)] shadow-[var(--pq-shadow-soft)] ring-1 ring-[var(--pq-border)]">
+                <img
+                  src={PAPERQUAY_ICON_URL}
+                  alt="PaperQuay"
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+              </div>
+              <div className="truncate text-[13px] font-semibold tracking-normal text-[var(--pq-text)]">
+                PaperQuay
+              </div>
+              <div className="hidden h-4 w-px bg-[var(--pq-border)] sm:block" />
+              <div className="pq-tab-surface hidden h-6 items-center px-2.5 text-xs font-medium text-[var(--pq-text-muted)] sm:flex">
+                {activeWorkspaceLabel}
+              </div>
             </div>
-            <div className="truncate text-[13px] font-semibold tracking-normal text-[var(--pq-text)]">
-              PaperQuay
-            </div>
-            <div className="hidden h-4 w-px bg-[var(--pq-border)] sm:block" />
-            <div className="pq-tab-surface hidden h-6 items-center px-2.5 text-xs font-medium text-[var(--pq-text-muted)] sm:flex">
-              {activeWorkspaceLabel}
-            </div>
-          </div>
+          ) : null}
 
           <div
             className="mx-3 min-w-8 flex-1 self-stretch"
             data-window-drag-region
-            onDoubleClick={handleWindowToggleMaximize}
+            onDoubleClick={isMac ? undefined : handleWindowToggleMaximize}
           />
 
           <div className="flex h-full items-center">
@@ -286,35 +318,37 @@ function App() {
                 <Sun className="h-4 w-4" strokeWidth={1.8} />
               )}
             </button>
-            <div className="ml-1 flex h-full items-center border-l border-[var(--pq-border)]">
-              <button
-                type="button"
-                onClick={handleWindowMinimize}
-                className="pq-icon-button h-full w-11 cursor-default rounded-none"
-                aria-label={minimizeWindowLabel}
-                title={minimizeLabel}
-              >
-                <Minus className="h-4 w-4" strokeWidth={1.9} />
-              </button>
-              <button
-                type="button"
-                onClick={handleWindowToggleMaximize}
-                className="pq-icon-button h-full w-11 cursor-default rounded-none"
-                aria-label={maximizeWindowLabel}
-                title={maximizeLabel}
-              >
-                <Square className="h-3.5 w-3.5" strokeWidth={1.9} />
-              </button>
-              <button
-                type="button"
-                onClick={handleWindowClose}
-                className="inline-flex h-full w-11 cursor-default items-center justify-center text-[var(--pq-text-muted)] transition hover:bg-[#e81123] hover:text-white"
-                aria-label={closeWindowLabel}
-                title={closeLabel}
-              >
-                <X className="h-4 w-4" strokeWidth={1.9} />
-              </button>
-            </div>
+            {!isMac ? (
+              <div className="ml-1 flex h-full items-center border-l border-[var(--pq-border)]">
+                <button
+                  type="button"
+                  onClick={handleWindowMinimize}
+                  className="pq-icon-button h-full w-11 cursor-default rounded-none"
+                  aria-label={minimizeWindowLabel}
+                  title={minimizeLabel}
+                >
+                  <Minus className="h-4 w-4" strokeWidth={1.9} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWindowToggleMaximize}
+                  className="pq-icon-button h-full w-11 cursor-default rounded-none"
+                  aria-label={maximizeWindowLabel}
+                  title={maximizeLabel}
+                >
+                  <Square className="h-3.5 w-3.5" strokeWidth={1.9} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWindowClose}
+                  className="inline-flex h-full w-11 cursor-default items-center justify-center text-[var(--pq-text-muted)] transition hover:bg-[#e81123] hover:text-white"
+                  aria-label={closeWindowLabel}
+                  title={closeLabel}
+                >
+                  <X className="h-4 w-4" strokeWidth={1.9} />
+                </button>
+              </div>
+            ) : null}
           </div>
         </header>
 

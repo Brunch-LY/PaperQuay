@@ -15,6 +15,42 @@ export interface PdfPageTarget {
   pageIndex: number;
 }
 
+function nodeToElement(node: Node | null): Element | null {
+  if (!node) {
+    return null;
+  }
+
+  return node instanceof Element ? node : node.parentElement;
+}
+
+function getSelectionRangeRect(range: Range): DOMRect {
+  const rect = range.getBoundingClientRect();
+
+  if (rect.width > 0 && rect.height > 0) {
+    return rect;
+  }
+
+  const clientRects = Array.from(range.getClientRects()).filter(
+    (item) => item.width > 0 && item.height > 0,
+  );
+
+  if (clientRects.length === 0) {
+    return rect;
+  }
+
+  const left = Math.min(...clientRects.map((item) => item.left));
+  const top = Math.min(...clientRects.map((item) => item.top));
+  const right = Math.max(...clientRects.map((item) => item.right));
+  const bottom = Math.max(...clientRects.map((item) => item.bottom));
+
+  return DOMRect.fromRect({
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  });
+}
+
 export function hasActiveTextSelection(): boolean {
   const selection = window.getSelection();
 
@@ -83,14 +119,19 @@ export function getScopedSelectionPayload(container: HTMLElement | null): TextSe
 
   const range = selection.getRangeAt(0);
   const commonAncestor = range.commonAncestorContainer;
-  const targetNode =
-    commonAncestor.nodeType === Node.TEXT_NODE ? commonAncestor.parentElement : commonAncestor;
+  const commonAncestorElement = nodeToElement(commonAncestor);
+  const anchorElement = nodeToElement(selection.anchorNode);
+  const focusElement = nodeToElement(selection.focusNode);
+  const targetElement =
+    (commonAncestorElement && container.contains(commonAncestorElement) ? commonAncestorElement : null) ??
+    (focusElement && container.contains(focusElement) ? focusElement : null) ??
+    (anchorElement && container.contains(anchorElement) ? anchorElement : null);
 
-  if (!targetNode || !container.contains(targetNode)) {
+  if (!targetElement) {
     return null;
   }
 
-  const rect = range.getBoundingClientRect();
+  const rect = getSelectionRangeRect(range);
   const anchorClientX = rect.width > 0 ? rect.left + rect.width / 2 : rect.left;
   const anchorClientY = rect.bottom;
   const anchorClientRect =
@@ -102,7 +143,6 @@ export function getScopedSelectionPayload(container: HTMLElement | null): TextSe
           height: rect.height,
         }
       : undefined;
-  const targetElement = targetNode instanceof Element ? targetNode : null;
   const pageElement = targetElement?.closest('.page');
   const pageTarget = pageElement instanceof HTMLDivElement ? getPageTargetFromElement(pageElement) : null;
   const renderedPage = pageElement instanceof HTMLDivElement ? getRenderedPageSize(pageElement) : null;

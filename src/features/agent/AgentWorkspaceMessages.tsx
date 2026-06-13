@@ -15,7 +15,7 @@ import {
   User,
   X,
 } from 'lucide-react';
-import type { LibraryAgentPlan } from '../../services/libraryAgent';
+import type { LibraryAgentPlan, LibraryAgentRagCitation } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
 import type { UiLanguage } from '../../types/reader';
 import type { AgentChatMessage, AgentToolCallView } from './AgentWorkspace.types';
@@ -247,6 +247,46 @@ function AssistantThinkingBlock({
   );
 }
 
+function AgentRagCitationChips({
+  citations,
+  l,
+  onOpenCitation,
+}: {
+  citations?: LibraryAgentRagCitation[];
+  l: (zh: string, en: string) => string;
+  onOpenCitation?: (citation: LibraryAgentRagCitation) => void;
+}) {
+  if (!citations?.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {citations.map((citation) => {
+        const pageLabel =
+          citation.pageIndex !== null && citation.pageIndex !== undefined
+            ? l(`第 ${citation.pageIndex + 1} 页`, `Page ${citation.pageIndex + 1}`)
+            : citation.sourceType;
+
+        return (
+          <button
+            key={`${citation.paperId}:${citation.id}`}
+            type="button"
+            onClick={() => onOpenCitation?.(citation)}
+            disabled={!onOpenCitation}
+            className="inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--pq-accent-border)] bg-[var(--pq-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--pq-accent)] transition hover:border-[var(--pq-accent)] hover:bg-[var(--pq-surface)] disabled:cursor-not-allowed disabled:opacity-60"
+            title={citation.previewText || citation.paperTitle}
+          >
+            <span>[{citation.label}]</span>
+            <span className="max-w-[220px] truncate">{citation.paperTitle}</span>
+            <span className="text-[var(--pq-text-faint)]">{pageLabel}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function UserMessageCard({ message }: { message: AgentChatMessage }) {
   return (
     <article className="flex items-start justify-end gap-3">
@@ -308,6 +348,7 @@ export function AssistantMessageCard({
   onCancelPlan,
   onCopyToolParameters,
   onContinueWithSelectedPapers,
+  onOpenRagCitation,
   onInspectPlanItem,
   onTogglePlanItem,
   onToggleStep,
@@ -336,6 +377,7 @@ export function AssistantMessageCard({
   onCancelPlan: () => void;
   onCopyToolParameters: (toolCall: AgentToolCallView) => void;
   onContinueWithSelectedPapers: (instruction: string, paperIds: string[]) => void;
+  onOpenRagCitation?: (citation: LibraryAgentRagCitation) => void;
   onInspectPlanItem: (itemId: string, paperTitle: string) => void;
   onTogglePlanItem: (itemId: string) => void;
   onToggleStep: (stepKey: string) => void;
@@ -368,8 +410,17 @@ export function AssistantMessageCard({
               <AssistantThinkingBlock l={l} thinking={message.thinking} />
             ) : null}
             <div className="mt-3">
-              <AgentMarkdown content={message.content} />
+              <AgentMarkdown
+                content={message.content}
+                citations={message.ragCitations}
+                onCitationClick={onOpenRagCitation}
+              />
             </div>
+            <AgentRagCitationChips
+              citations={message.ragCitations}
+              l={l}
+              onOpenCitation={onOpenRagCitation}
+            />
             {message.choices && message.choices.length > 0 ? (
               <div className="mt-4 grid gap-2">
                 {message.choices.map((choice) => (

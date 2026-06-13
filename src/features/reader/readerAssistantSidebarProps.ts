@@ -37,6 +37,7 @@ export interface BuildReaderAssistantSidebarInput {
   qaAnswerRenderMode: AssistantSidebarCoreProps['qaAnswerRenderMode'];
   qaReasoningEffort: AssistantSidebarCoreProps['qaReasoningEffort'];
   qaLoading: AssistantSidebarCoreProps['qaLoading'];
+  qaRunningSessionIds: AssistantSidebarCoreProps['qaRunningSessionIds'];
   qaError: AssistantSidebarCoreProps['qaError'];
   screenshotLoading: NonNullable<AssistantSidebarCoreProps['screenshotLoading']>;
   onQaInputChange: AssistantSidebarCoreProps['onQaInputChange'];
@@ -107,6 +108,7 @@ export function buildReaderAssistantSidebarProps(
     qaAnswerRenderMode: input.qaAnswerRenderMode,
     qaReasoningEffort: input.qaReasoningEffort,
     qaLoading: input.qaLoading,
+    qaRunningSessionIds: input.qaRunningSessionIds,
     qaError: input.qaError,
     screenshotLoading: input.screenshotLoading,
     onQaInputChange: input.onQaInputChange,

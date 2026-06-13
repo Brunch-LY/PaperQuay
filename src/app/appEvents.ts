@@ -29,6 +29,7 @@ export function emitOpenPreferences(section?: OpenPreferencesEventDetail['sectio
 
 export interface JumpToNoteAnchorEventDetail {
   requestId?: string;
+  jumpSource?: 'note-anchor' | 'agent-rag';
   targetPaperId?: string;
   noteId: string;
   noteTitle?: string;
@@ -36,6 +37,10 @@ export interface JumpToNoteAnchorEventDetail {
   anchorId: string;
   anchorPaperId?: string;
   anchorLabel?: string;
+  blockId?: string | null;
+  pageIndex?: number | null;
+  previewText?: string | null;
+  sourceType?: string | null;
   pdfLocation?: NotePdfLocation | null;
 }
 
