@@ -174,5 +174,12 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 
+# Dev data isolation
+.dev-data/
+
+# Dev output logs
+dev-output.txt
+dev-error.txt
+
 # Local AI assistant instructions
 AGENTS.md
