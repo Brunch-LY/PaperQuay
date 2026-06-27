@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "settings": {
+    "uiLanguage": "zh-CN",
+    "autoLoadSiblingJson": false,
+    "autoMineruParse": false,
+    "autoGenerateSummary": false,
+    "localRagEnabled": true,
+    "localRagTopK": 6,
+    "ragSourceMode": "hybrid",
+    "libraryBatchConcurrency": 1,
+    "showLibraryReadingHeatmap": true,
+    "enablePdfReadingHeatmap": true,
+    "enableSelectionTranslation": true,
+    "enablePdfParagraphTranslationPopover": true,
+    "autoTranslateSelection": false,
+    "smoothScroll": true,
+    "compactReading": false,
+    "showBlockMeta": true,
+    "hidePageDecorationsInBlockView": false,
+    "softPageShadow": true,
+    "mineruCacheDir": ".dev-data\\PaperQuay\\.mineru-cache",
+    "remotePdfDownloadDir": ".dev-data\\PaperQuay\\.downloads\\pdfs",
+    "translationBatchSize": 10,
+    "translationConcurrency": 1,
+    "translationRequestsPerMinute": 0,
+    "translationBaseUrl": "https://api.openai.com",
+    "translationModel": "gpt-4o-mini",
+    "summaryBaseUrl": "https://api.openai.com",
+    "summaryModel": "gpt-4o-mini",
+    "translationModelPresetId": "default",
+    "selectionTranslationModelPresetId": "default",
+    "summaryModelPresetId": "default",
+    "agentModelPresetId": "default",
+    "embeddingBaseUrl": "https://api.openai.com",
+    "embeddingModel": "text-embedding-3-small",
+    "embeddingDimensions": null,
+    "embeddingRequestTimeoutSeconds": 180,
+    "embeddingBatchSize": 24,
+    "ragEmbeddingModelPresetId": "default",
+    "modelRuntimeConfigs": {
+      "translation": {
+        "reasoningEffort": "auto"
+      },
+      "selectionTranslation": {
+        "reasoningEffort": "auto"
+      },
+      "summary": {
+        "reasoningEffort": "auto"
+      },
+      "agent": {
+        "reasoningEffort": "auto"
+      },
+      "qa": {
+        "reasoningEffort": "auto"
+      }
+    },
+    "summarySourceMode": "mineru-markdown",
+    "summaryOutputLanguage": "follow-ui",
+    "qaSourceMode": "mineru-markdown",
+    "translationSourceLanguage": "English",
+    "translationTargetLanguage": "Chinese",
+    "translationDisplayMode": "translated",
+    "qaActivePresetId": "default"
+  },
+  "secrets": {
+    "mineruApiToken": "",
+    "translationApiKey": "",
+    "summaryApiKey": "",
+    "embeddingApiKey": "",
+    "zoteroApiKey": "",
+    "zoteroUserId": "",
+    "qaModelPresets": [
+      {
+        "id": "default",
+        "label": "gpt-4o-mini",
+        "baseUrl": "https://api.openai.com",
+        "apiKey": "",
+        "model": "gpt-4o-mini",
+        "apiMode": "chat_completions",
+        "labelCustomized": false
+      }
+    ]
+  },
+  "zoteroLocalDataDir": "E:\\PKM\\Zotero",
+  "leftSidebarCollapsed": false
+}

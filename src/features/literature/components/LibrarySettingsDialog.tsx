@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Database, FolderOpen, RefreshCw, X } from 'lucide-react';
+import { Database, FolderOpen, Languages, RefreshCw, X } from 'lucide-react';
 
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
 import { useLocaleText } from '../../../i18n/uiLanguage';
@@ -293,6 +293,100 @@ export default function LibrarySettingsDialog({
               onChange={(event) => patch({ fileNamingRule: event.target.value })}
               className="pq-input mt-3 h-11 w-full px-3 font-mono text-sm"
             />
+          </section>
+
+          <section className="pq-card space-y-4 p-4">
+            <div className="flex items-center gap-3">
+              <Languages className="h-5 w-5 text-[var(--pq-text-faint)]" strokeWidth={1.9} />
+              <span className="text-sm font-semibold text-[var(--pq-text)]">
+                {l('标题翻译', 'Title Translation')}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <SettingLabel
+                title={l('翻译服务', 'Translation Provider')}
+                description={l('选择翻译标题时使用的服务。', 'Choose the service for title translation.')}
+              />
+              <select
+                value={settings.translationProvider}
+                onChange={(event) => patch({ translationProvider: event.target.value as 'ai' | 'google' | 'deepl' })}
+                className="pq-input h-10 w-40 px-3 text-sm"
+              >
+                <option value="ai">{l('AI 翻译 (OpenAI 兼容)', 'AI (OpenAI Compatible)')}</option>
+                <option value="google">{l('Google 翻译', 'Google Translate')}</option>
+                <option value="deepl">{l('DeepL 翻译', 'DeepL Translate')}</option>
+              </select>
+            </div>
+
+            {settings.translationProvider === 'ai' && (
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-[var(--pq-text-muted)]">
+                    {l('API 地址', 'API Base URL')}
+                  </span>
+                  <input
+                    value={settings.translationBaseUrl}
+                    onChange={(event) => patch({ translationBaseUrl: event.target.value })}
+                    placeholder="https://api.openai.com/v1"
+                    className="pq-input mt-1.5 h-10 w-full px-3 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-[var(--pq-text-muted)]">
+                    {l('API Key', 'API Key')}
+                  </span>
+                  <input
+                    type="password"
+                    value={settings.translationApiKey}
+                    onChange={(event) => patch({ translationApiKey: event.target.value })}
+                    placeholder="sk-..."
+                    className="pq-input mt-1.5 h-10 w-full px-3 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-[var(--pq-text-muted)]">
+                    {l('模型', 'Model')}
+                  </span>
+                  <input
+                    value={settings.translationModel}
+                    onChange={(event) => patch({ translationModel: event.target.value })}
+                    placeholder="gpt-4o-mini"
+                    className="pq-input mt-1.5 h-10 w-full px-3 text-sm"
+                  />
+                </label>
+              </div>
+            )}
+
+            {settings.translationProvider === 'google' && (
+              <label className="block">
+                <span className="text-xs font-medium text-[var(--pq-text-muted)]">
+                  {l('Google 翻译 API Key', 'Google Translate API Key')}
+                </span>
+                <input
+                  type="password"
+                  value={settings.translationApiKey}
+                  onChange={(event) => patch({ translationApiKey: event.target.value })}
+                  placeholder={l('Google Cloud API Key', 'Google Cloud API Key')}
+                  className="pq-input mt-1.5 h-10 w-full px-3 text-sm"
+                />
+              </label>
+            )}
+
+            {settings.translationProvider === 'deepl' && (
+              <label className="block">
+                <span className="text-xs font-medium text-[var(--pq-text-muted)]">
+                  {l('DeepL API Key', 'DeepL API Key')}
+                </span>
+                <input
+                  type="password"
+                  value={settings.translationApiKey}
+                  onChange={(event) => patch({ translationApiKey: event.target.value })}
+                  placeholder={l('DeepL API Key', 'DeepL API Key')}
+                  className="pq-input mt-1.5 h-10 w-full px-3 text-sm"
+                />
+              </label>
+            )}
           </section>
 
           <section className="pq-card space-y-4 p-4">

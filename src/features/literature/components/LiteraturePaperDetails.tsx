@@ -23,7 +23,7 @@ import type {
   UpdatePaperRequest,
 } from '../../../types/library';
 import type { PdfReadingHeatmap } from '../../../types/reader';
-import { getPaperTranslation, savePaperTranslation } from '../../../services/library';
+import { getLibrarySettings, getPaperTranslation, savePaperTranslation } from '../../../services/library';
 import {
   loadPaperHistory,
   PAPER_READING_HEATMAP_UPDATED_EVENT,
@@ -628,11 +628,13 @@ export default function LiteraturePaperDetails({
                           if (!selectedPaper?.id || translatingTitle) return;
                           setTranslatingTitle(true);
                           try {
+                            const settings = await getLibrarySettings();
                             const { translateTextOpenAICompatible } = await import('../../../services/translation');
+                            const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
                             const result = await translateTextOpenAICompatible({
-                              baseUrl: 'https://api.openai.com/v1',
-                              apiKey: '',
-                              model: 'gpt-4o-mini',
+                              baseUrl,
+                              apiKey: settings.translationApiKey,
+                              model: settings.translationModel || 'gpt-4o-mini',
                               sourceLanguage: 'English',
                               targetLanguage: 'Chinese',
                               text: selectedPaper.title,
