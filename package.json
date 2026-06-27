@@ -1,0 +1,163 @@
+{
+  "name": "paperquay",
+  "private": true,
+  "version": "0.1.23",
+  "description": "AI-assisted desktop literature reader and library manager.",
+  "author": {
+    "name": "PaperQuay Developers",
+    "email": "WangQrkkk@users.noreply.github.com"
+  },
+  "license": "AGPL-3.0-only",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "web:dev": "vite --host 127.0.0.1 --port 1420",
+    "dev": "node electron/dev.cjs",
+    "electron:dev": "node electron/dev.cjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "electron:build": "npm run build && node electron/build.cjs"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.23.6",
+    "@tiptap/extension-character-count": "^3.23.6",
+    "@tiptap/extension-code-block-lowlight": "^3.23.6",
+    "@tiptap/extension-drag-handle-react": "^3.23.6",
+    "@tiptap/extension-highlight": "^3.23.6",
+    "@tiptap/extension-image": "^3.23.6",
+    "@tiptap/extension-link": "^3.23.6",
+    "@tiptap/extension-mathematics": "^3.23.6",
+    "@tiptap/extension-placeholder": "^3.23.6",
+    "@tiptap/extension-table": "^3.23.6",
+    "@tiptap/extension-table-cell": "^3.23.6",
+    "@tiptap/extension-table-header": "^3.23.6",
+    "@tiptap/extension-table-row": "^3.23.6",
+    "@tiptap/extension-task-item": "^3.23.6",
+    "@tiptap/extension-task-list": "^3.23.6",
+    "@tiptap/pm": "^3.23.6",
+    "@tiptap/react": "^3.23.6",
+    "@tiptap/starter-kit": "^3.23.6",
+    "@tiptap/suggestion": "^3.23.6",
+    "adm-zip": "^0.5.16",
+    "electron-updater": "^6.8.9",
+    "eventsource-parser": "^3.1.0",
+    "lowlight": "^3.3.0",
+    "sql.js": "^1.13.0",
+    "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "autoprefixer": "^10.4.20",
+    "clsx": "^2.1.1",
+    "electron": "^42.2.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.27.0",
+    "katex": "^0.16.11",
+    "lucide-react": "^1.8.0",
+    "pdfjs-dist": "4.8.69",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-pdf": "9.2.1",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^8.0.14",
+    "zustand": "^5.0.12"
+  },
+  "build": {
+    "appId": "dev.paperquay.app",
+    "productName": "PaperQuay",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "WangQrkkk",
+        "repo": "PaperQuay",
+        "releaseType": "release",
+        "channel": "stable"
+      }
+    ],
+    "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/sql.js/dist/sql-wasm.wasm",
+      "node_modules/sqlite-vec-*/**/*"
+    ],
+    "toolsets": {
+      "winCodeSign": null
+    },
+    "electronFuses": {
+      "enableEmbeddedAsarIntegrityValidation": false
+    },
+    "afterPack": "electron/afterPack.cjs",
+    "directories": {
+      "output": "release",
+      "buildResources": "public"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "node_modules/adm-zip/**/*",
+      "node_modules/electron-updater/**/*",
+      "node_modules/fs-extra/**/*",
+      "node_modules/graceful-fs/**/*",
+      "node_modules/jsonfile/**/*",
+      "node_modules/universalify/**/*",
+      "node_modules/js-yaml/**/*",
+      "node_modules/argparse/**/*",
+      "node_modules/lazy-val/**/*",
+      "node_modules/lodash.escaperegexp/**/*",
+      "node_modules/lodash.isequal/**/*",
+      "node_modules/tiny-typed-emitter/**/*",
+      "node_modules/debug/**/*",
+      "node_modules/ms/**/*",
+      "node_modules/sax/**/*",
+      "node_modules/sql.js/**/*",
+      "node_modules/sqlite-vec/**/*",
+      "node_modules/sqlite-vec-*/*",
+      "!node_modules/canvas/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "icon": "icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "msi"
+      ],
+      "icon": "icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PaperQuay"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "maintainer": "PaperQuay Developers <WangQrkkk@users.noreply.github.com>",
+      "category": "Office",
+      "icon": "icon.png"
+    }
+  }
+}

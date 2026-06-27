@@ -1,0 +1,45 @@
+pkgname=paperquay
+pkgver=0.1.6
+pkgrel=1
+pkgdesc="Desktop-first AI literature manager for PDF reading, translation, overview generation, and agent workflows"
+arch=('x86_64')
+url="https://github.com/WangQrkkk/PaperQuay"
+license=('AGPL-3.0-only')
+depends=(
+  'desktop-file-utils'
+  'electron'
+  'hicolor-icon-theme'
+)
+makedepends=(
+  'git'
+  'nodejs'
+  'npm'
+)
+options=('!lto')
+source=(
+  "PaperQuay-${pkgver}.tar.gz"
+  'paperquay.desktop'
+  'paperquay.sh'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+build() {
+  cd "${srcdir}/PaperQuay-${pkgver}"
+
+  npm ci
+  npm run build
+  npm prune --omit=dev
+}
+
+package() {
+  cd "${srcdir}/PaperQuay-${pkgver}"
+
+  install -dm755 "${pkgdir}/usr/lib/paperquay"
+  cp -a dist electron package.json "${pkgdir}/usr/lib/paperquay/"
+  install -dm755 "${pkgdir}/usr/lib/paperquay/node_modules"
+  cp -a node_modules/adm-zip node_modules/sql.js "${pkgdir}/usr/lib/paperquay/node_modules/"
+
+  install -Dm755 "${srcdir}/paperquay.sh" "${pkgdir}/usr/bin/paperquay"
+  install -Dm644 "${srcdir}/paperquay.desktop" "${pkgdir}/usr/share/applications/paperquay.desktop"
+  install -Dm644 "public/icon.png" "${pkgdir}/usr/share/icons/hicolor/512x512/apps/paperquay.png"
+}
