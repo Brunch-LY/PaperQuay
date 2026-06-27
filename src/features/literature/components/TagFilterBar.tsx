@@ -50,16 +50,18 @@ export default function TagFilterBar({
         </button>
       ))}
 
-      {(tags.length > 8 || tags.length === 0) && (
-        <button
-          type="button"
-          onClick={onOpenManager}
-          className="pq-icon-button h-7 w-7"
-          title={l('管理标签', 'Manage Tags')}
-        >
-          <Settings2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-        </button>
+      {tags.length > 8 && (
+        <span className="text-xs text-[var(--pq-text-faint)]">+{tags.length - 8}</span>
       )}
+
+      <button
+        type="button"
+        onClick={onOpenManager}
+        className="pq-icon-button h-7 w-7"
+        title={l('管理标签', 'Manage Tags')}
+      >
+        <Settings2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+      </button>
     </div>
   );
 }
