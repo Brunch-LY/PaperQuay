@@ -13,10 +13,12 @@ export interface LibrarySettings {
   openAlexEnabled: boolean;
   openAlexApiKey: string;
   openAlexMailto: string;
-  translationProvider: 'ai' | 'google' | 'deepl';
+  translationProvider: 'ai' | 'google' | 'deepl' | 'baidu' | 'aliyun' | 'tencent' | 'volc';
   translationApiKey: string;
   translationBaseUrl: string;
   translationModel: string;
+  translationAppId: string;
+  translationSecretKey: string;
 }
 
 export interface LiteratureAuthor {

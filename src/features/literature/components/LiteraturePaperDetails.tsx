@@ -23,7 +23,7 @@ import type {
   UpdatePaperRequest,
 } from '../../../types/library';
 import type { PdfReadingHeatmap } from '../../../types/reader';
-import { getLibrarySettings, getPaperTranslation, savePaperTranslation } from '../../../services/library';
+import { getLibrarySettings, getPaperTranslation, savePaperTranslation, translateTextViaProvider } from '../../../services/library';
 import {
   loadPaperHistory,
   PAPER_READING_HEATMAP_UPDATED_EVENT,
@@ -629,16 +629,28 @@ export default function LiteraturePaperDetails({
                           setTranslatingTitle(true);
                           try {
                             const settings = await getLibrarySettings();
-                            const { translateTextOpenAICompatible } = await import('../../../services/translation');
-                            const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
-                            const result = await translateTextOpenAICompatible({
-                              baseUrl,
-                              apiKey: settings.translationApiKey,
-                              model: settings.translationModel || 'gpt-4o-mini',
-                              sourceLanguage: 'English',
-                              targetLanguage: 'Chinese',
-                              text: selectedPaper.title,
-                            });
+                            let result: string;
+
+                            if (settings.translationProvider === 'ai') {
+                              const { translateTextOpenAICompatible } = await import('../../../services/translation');
+                              const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
+                              result = await translateTextOpenAICompatible({
+                                baseUrl,
+                                apiKey: settings.translationApiKey,
+                                model: settings.translationModel || 'gpt-4o-mini',
+                                sourceLanguage: 'English',
+                                targetLanguage: 'Chinese',
+                                text: selectedPaper.title,
+                              });
+                            } else {
+                              result = await translateTextViaProvider({
+                                provider: settings.translationProvider,
+                                text: selectedPaper.title,
+                                sourceLang: 'en',
+                                targetLang: 'zh',
+                              });
+                            }
+
                             setTranslatedTitle(result);
                             await savePaperTranslation({
                               paperId: selectedPaper.id,

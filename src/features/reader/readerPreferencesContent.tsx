@@ -111,6 +111,8 @@ const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   translationApiKey: '',
   translationBaseUrl: '',
   translationModel: 'gpt-4o-mini',
+  translationAppId: '',
+  translationSecretKey: '',
 };
 
 export function buildReaderPreferencesSections(
@@ -386,10 +388,14 @@ export function ReaderPreferencesContent({
             <SettingsSelect
               value={activeLibrarySettings.translationProvider}
               onChange={(event) =>
-                updateLibrarySetting('translationProvider', event.target.value as 'ai' | 'google' | 'deepl')
+                updateLibrarySetting('translationProvider', event.target.value as any)
               }
             >
               <option value="ai">{l('AI 翻译 (OpenAI 兼容)', 'AI (OpenAI Compatible)')}</option>
+              <option value="baidu">{l('百度翻译', 'Baidu Translate')}</option>
+              <option value="aliyun">{l('阿里云翻译', 'Alibaba Cloud Translate')}</option>
+              <option value="tencent">{l('腾讯云翻译', 'Tencent Cloud Translate')}</option>
+              <option value="volc">{l('火山引擎翻译', 'Volcano Engine Translate')}</option>
               <option value="google">{l('Google 翻译', 'Google Translate')}</option>
               <option value="deepl">{l('DeepL 翻译', 'DeepL Translate')}</option>
             </SettingsSelect>
@@ -470,12 +476,69 @@ export function ReaderPreferencesContent({
             )}
 
             {(activeLibrarySettings.translationProvider === 'google' || activeLibrarySettings.translationProvider === 'deepl') && (
-              <SettingsInput
-                type="password"
-                value={activeLibrarySettings.translationApiKey}
-                onChange={(event) => updateLibrarySetting('translationApiKey', event.target.value)}
-                placeholder={l('API Key', 'API Key')}
-              />
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                  {l('API Key', 'API Key')}
+                </div>
+                <SettingsInput
+                  type="password"
+                  value={activeLibrarySettings.translationApiKey}
+                  onChange={(event) => updateLibrarySetting('translationApiKey', event.target.value)}
+                  placeholder={l('API Key', 'API Key')}
+                />
+              </div>
+            )}
+
+            {activeLibrarySettings.translationProvider === 'baidu' && (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                    APP ID
+                  </div>
+                  <SettingsInput
+                    value={activeLibrarySettings.translationAppId}
+                    onChange={(event) => updateLibrarySetting('translationAppId', event.target.value)}
+                    placeholder={l('APP ID', 'APP ID')}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                    {l('密钥', 'Secret Key')}
+                  </div>
+                  <SettingsInput
+                    type="password"
+                    value={activeLibrarySettings.translationSecretKey}
+                    onChange={(event) => updateLibrarySetting('translationSecretKey', event.target.value)}
+                    placeholder={l('密钥', 'Secret Key')}
+                  />
+                </div>
+              </div>
+            )}
+
+            {(activeLibrarySettings.translationProvider === 'aliyun' || activeLibrarySettings.translationProvider === 'tencent' || activeLibrarySettings.translationProvider === 'volc') && (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                    {l('Access Key / SecretId', 'Access Key / SecretId')}
+                  </div>
+                  <SettingsInput
+                    value={activeLibrarySettings.translationApiKey}
+                    onChange={(event) => updateLibrarySetting('translationApiKey', event.target.value)}
+                    placeholder={l('Access Key', 'Access Key')}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
+                    {l('Secret Key', 'Secret Key')}
+                  </div>
+                  <SettingsInput
+                    type="password"
+                    value={activeLibrarySettings.translationSecretKey}
+                    onChange={(event) => updateLibrarySetting('translationSecretKey', event.target.value)}
+                    placeholder={l('Secret Key', 'Secret Key')}
+                  />
+                </div>
+              </div>
             )}
           </SettingsField>
 

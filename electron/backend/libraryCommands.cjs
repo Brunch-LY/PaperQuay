@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const {
@@ -600,6 +601,109 @@ function createLibraryCommands(context) {
       } finally {
         db.close();
       }
+    },
+
+    async library_translate_text({ request }) {
+      const { provider, text, sourceLang, targetLang, settings } = request ?? {};
+      if (!text || !provider) throw new Error('Missing required parameters');
+
+      const source = sourceLang || 'auto';
+      const target = targetLang || 'zh';
+
+      if (provider === 'baidu') {
+        const appid = settings?.translationAppId || '';
+        const secretKey = settings?.translationSecretKey || '';
+        if (!appid || !secretKey) throw new Error('Baidu Translate requires APP ID and Secret Key');
+
+        const salt = String(Date.now());
+        const sign = crypto.createHash('md5').update(`${appid}${text}${salt}${secretKey}`).digest('hex');
+        const url = `https://fanyi-api.baidu.com/api/trans/vip/translate?q=${encodeURIComponent(text)}&from=${source}&to=${target}&appid=${appid}&salt=${salt}&sign=${sign}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+        if (data.error_code && data.error_code !== '0') throw new Error(`Baidu Translate error: ${data.error_code} ${data.error_msg || ''}`);
+        return data.trans_result?.[0]?.dst ?? text;
+      }
+
+      if (provider === 'google') {
+        const apiKey = settings?.translationApiKey || '';
+        if (!apiKey) throw new Error('Google Translate requires API Key');
+
+        const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ q: text, source, target, format: 'text' }),
+        });
+        const data = await response.json();
+        if (data.error) throw new Error(`Google Translate error: ${data.error.message}`);
+        return data.data?.translations?.[0]?.translatedText ?? text;
+      }
+
+      if (provider === 'deepl') {
+        const apiKey = settings?.translationApiKey || '';
+        if (!apiKey) throw new Error('DeepL requires API Key');
+
+        const url = `https://api-free.deepl.com/v2/translate`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ auth_key: apiKey, text, source_lang: source.toUpperCase(), target_lang: target.toUpperCase() }),
+        });
+        const data = await response.json();
+        if (data.message) throw new Error(`DeepL error: ${data.message}`);
+        return data.translations?.[0]?.text ?? text;
+      }
+
+      if (provider === 'aliyun') {
+        const accessKey = settings?.translationApiKey || '';
+        const secretKey = settings?.translationSecretKey || '';
+        if (!accessKey || !secretKey) throw new Error('Alibaba Cloud Translate requires Access Key and Secret Key');
+
+        const url = 'https://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general';
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessKey}` },
+          body: JSON.stringify({ SourceText: text, SourceLanguage: source, TargetLanguage: target, FormatType: 'text' }),
+        });
+        const data = await response.json();
+        if (data.Code !== 'OK') throw new Error(`Alibaba Cloud Translate error: ${data.Message || data.Code}`);
+        return data.Data?.Translated ?? text;
+      }
+
+      if (provider === 'tencent') {
+        const secretId = settings?.translationApiKey || '';
+        const secretKey = settings?.translationSecretKey || '';
+        if (!secretId || !secretKey) throw new Error('Tencent Cloud Translate requires SecretId and SecretKey');
+
+        const url = 'https://tmt.tencentcloudapi.com';
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TC-Action': 'TextTranslate', 'X-TC-Region': 'ap-guangzhou' },
+          body: JSON.stringify({ SourceText: text, Source: source, Target: target, ProjectId: 0 }),
+        });
+        const data = await response.json();
+        if (data.Response?.Error) throw new Error(`Tencent Cloud error: ${data.Response.Error.Message}`);
+        return data.Response?.TargetText ?? text;
+      }
+
+      if (provider === 'volc') {
+        const accessKey = settings?.translationApiKey || '';
+        const secretKey = settings?.translationSecretKey || '';
+        if (!accessKey || !secretKey) throw new Error('Volcano Engine requires Access Key and Secret Key');
+
+        const url = 'https://translate.volcengineapi.com';
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ SourceLanguage: source, TargetLanguage: target, TextList: [text] }),
+        });
+        const data = await response.json();
+        if (data.ResponseMetadata?.Error) throw new Error(`Volcano Engine error: ${data.ResponseMetadata.Error.Message}`);
+        return data.TranslationList?.[0]?.Translation ?? text;
+      }
+
+      throw new Error(`Unsupported translation provider: ${provider}`);
     },
 
     async library_list_all_tags() {

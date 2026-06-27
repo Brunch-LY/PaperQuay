@@ -197,6 +197,22 @@ export async function savePaperTranslation(request: {
   }
 }
 
+export async function translateTextViaProvider(request: {
+  provider: string;
+  text: string;
+  sourceLang?: string;
+  targetLang?: string;
+}): Promise<string> {
+  const settings = await invoke<any>('library_get_settings');
+  try {
+    return await invoke<string>('library_translate_text', {
+      request: { ...request, settings },
+    });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '翻译失败'));
+  }
+}
+
 export async function listAllTags(): Promise<LiteratureTag[]> {
   try {
     return await invoke<LiteratureTag[]>('library_list_all_tags');
