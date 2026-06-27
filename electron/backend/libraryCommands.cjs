@@ -7,6 +7,7 @@ const {
   paperMatches,
   sortPapers,
 } = require('./libraryStore.cjs');
+const { DatabaseSync, sqlStringLiteral, withTransaction } = require('./nodeSqlite.cjs');
 const {
   cleanString,
   ensureFile,
@@ -570,6 +571,49 @@ function createLibraryCommands(context) {
 
       await store.save(library);
       return attachment;
+    },
+
+    async library_get_translation({ request }) {
+      const { paperId, field, targetLang } = request ?? {};
+      if (!paperId || !field || !targetLang) return null;
+      const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
+      try {
+        const row = db.prepare(
+          'SELECT translated_text, source_lang, updated_at FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?'
+        ).get(paperId, field, targetLang);
+        return row ?? null;
+      } finally {
+        db.close();
+      }
+    },
+
+    async library_save_translation({ request }) {
+      const { paperId, field, sourceLang, targetLang, translatedText } = request ?? {};
+      if (!paperId || !field || !targetLang || !translatedText) return;
+      const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
+      try {
+        db.prepare(`INSERT INTO paper_translations (paper_id, field, source_lang, target_lang, translated_text, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(paper_id, field, target_lang)
+          DO UPDATE SET translated_text = excluded.translated_text, source_lang = excluded.source_lang, updated_at = excluded.updated_at
+        `).run(paperId, field, sourceLang ?? null, targetLang, translatedText, Date.now());
+      } finally {
+        db.close();
+      }
+    },
+
+    async library_list_all_tags() {
+      const library = store.load();
+      const tagMap = new Map();
+      for (const paper of library.papers) {
+        for (const tag of paper.tags) {
+          if (!tagMap.has(tag.id)) {
+            tagMap.set(tag.id, { id: tag.id, name: tag.name, color: tag.color, paperCount: 0 });
+          }
+          tagMap.get(tag.id).paperCount += 1;
+        }
+      }
+      return Array.from(tagMap.values()).sort((a, b) => b.paperCount - a.paperCount);
     },
 
     async lookup_literature_metadata({ request }) {

@@ -11,6 +11,7 @@ import type {
   LiteratureAttachment,
   LiteratureCategory,
   LiteraturePaper,
+  LiteratureTag,
   MoveCategoryRequest,
   RelocateAttachmentRequest,
   ReorderPapersRequest,
@@ -167,6 +168,40 @@ export async function deleteLibraryPaper(
     await invoke('library_delete_paper', { request });
   } catch (error) {
     throw new Error(toErrorMessage(error, '删除文献记录失败'));
+  }
+}
+
+export async function getPaperTranslation(request: {
+  paperId: string;
+  field: string;
+  targetLang: string;
+}): Promise<{ translated_text: string; source_lang: string | null; updated_at: number } | null> {
+  try {
+    return await invoke('library_get_translation', { request });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '读取翻译失败'));
+  }
+}
+
+export async function savePaperTranslation(request: {
+  paperId: string;
+  field: string;
+  sourceLang?: string;
+  targetLang: string;
+  translatedText: string;
+}): Promise<void> {
+  try {
+    await invoke('library_save_translation', { request });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '保存翻译失败'));
+  }
+}
+
+export async function listAllTags(): Promise<LiteratureTag[]> {
+  try {
+    return await invoke<LiteratureTag[]>('library_list_all_tags');
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '读取标签列表失败'));
   }
 }
 

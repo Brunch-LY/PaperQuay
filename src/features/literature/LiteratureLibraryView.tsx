@@ -49,9 +49,13 @@ import type {
   ZoteroLibraryItem,
 } from '../../types/reader';
 import { getFileNameFromPath } from '../../utils/text';
+import CheckableListDialog from './components/CheckableListDialog';
 import ImportConfirmationDialog from './components/ImportConfirmationDialog';
 import LibraryConfirmDialog from './components/LibraryConfirmDialog';
 import LibraryTextInputDialog from './components/LibraryTextInputDialog';
+import TagFilterBar from './components/TagFilterBar';
+import TagManager from './components/TagManager';
+import ZoteroCollectionPicker from './components/ZoteroCollectionPicker';
 import {
   mergeLocalPdfMetadataIntoDraft,
   mergeRemoteMetadataIntoDraft,
@@ -234,6 +238,12 @@ export default function LiteratureLibraryView({
   const [metadataDialogBusy, setMetadataDialogBusy] = useState(false);
   const [paperDragOverCategoryId, setPaperDragOverCategoryId] = useState<string | null>(null);
   const [tagDialogPaper, setTagDialogPaper] = useState<LiteraturePaper | null>(null);
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [zoteroCollectionPickerOpen, setZoteroCollectionPickerOpen] = useState(false);
+  const [zoteroCollections, setZoteroCollections] = useState<ZoteroCollection[]>([]);
+  const [zoteroSelectedCollectionKeys, setZoteroSelectedCollectionKeys] = useState<Set<string>>(new Set());
+  const [zoteroImportDataDir, setZoteroImportDataDir] = useState('');
   const [detailsPanelWidth, setDetailsPanelWidth] = useState(loadDetailsPanelWidth);
   const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
   const detailsPanelResizeStartRef = useRef({
@@ -249,6 +259,18 @@ export default function LiteratureLibraryView({
   const mineruStatusConfigKeyRef = useRef(mineruStatusConfigKey);
 
   const flatCategories = useMemo(() => flattenCategories(categories), [categories]);
+  const allTags = useMemo(() => {
+    const tagMap = new Map<string, typeof papers[number]['tags'][number] & { paperCount: number }>();
+    for (const paper of papers) {
+      for (const tag of paper.tags) {
+        if (!tagMap.has(tag.id)) {
+          tagMap.set(tag.id, { ...tag, paperCount: 0 });
+        }
+        tagMap.get(tag.id)!.paperCount += 1;
+      }
+    }
+    return Array.from(tagMap.values()).sort((a, b) => b.paperCount - a.paperCount);
+  }, [papers]);
   const selectedCategory = useMemo(
     () => categories.find((category) => category.id === selectedCategoryId) ?? null,
     [categories, selectedCategoryId],
@@ -336,7 +358,7 @@ export default function LiteratureLibraryView({
   );
 
   const refreshPapers = useCallback(
-    async (nextCategoryId = selectedCategoryId) => {
+    async (nextCategoryId = selectedCategoryId, nextTagId: string | null = selectedTagId) => {
       if (demoLibrary) {
         const nextPapers = resolveDemoPapers(nextCategoryId);
 
@@ -347,6 +369,7 @@ export default function LiteratureLibraryView({
 
       const nextPapers = await listLibraryPapers({
         categoryId: nextCategoryId,
+        tagId: nextTagId,
         search: searchQuery,
         sortBy: 'manual',
         sortDirection: 'asc',
@@ -356,7 +379,7 @@ export default function LiteratureLibraryView({
       setPapers(nextPapers);
       setSelectedPaperId((current) => resolveSelectedPaperId(current, nextPapers));
     },
-    [demoLibrary, resolveDemoPapers, searchQuery, selectedCategoryId],
+    [demoLibrary, resolveDemoPapers, searchQuery, selectedCategoryId, selectedTagId],
   );
 
   const refreshAll = useCallback(async () => {
@@ -682,6 +705,17 @@ export default function LiteratureLibraryView({
     return () => window.clearTimeout(timer);
   }, [loading, l, refreshPapers]);
 
+  const handleSelectTag = (tagId: string | null) => {
+    setSelectedTagId(tagId);
+    setError('');
+    void refreshPapers(selectedCategoryId, tagId).catch((nextError) => {
+      const message =
+        nextError instanceof Error ? nextError.message : l('筛选标签失败', 'Failed to filter by tag');
+      setError(message);
+      setStatusMessage(message);
+    });
+  };
+
   const handleSelectCategory = (categoryId: string) => {
     setSelectedCategoryId(categoryId);
     setError('');
@@ -695,7 +729,7 @@ export default function LiteratureLibraryView({
     });
   };
 
-  const handleImportZoteroLibrary = async (preferredDataDir?: string) => {
+  const handleZoteroImportStep1 = async (preferredDataDir?: string) => {
     if (demoMode) {
       showDemoLockedMessage();
       return;
@@ -730,15 +764,42 @@ export default function LiteratureLibraryView({
       emitLibrarySettingsUpdated(nextSettings, 'literature-zotero-import');
 
       setStatusMessage(l('正在读取 Zotero 分类树...', 'Reading Zotero collection tree...'));
-      const zoteroCollections = await listLocalZoteroCollections({ dataDir });
-      setStatusMessage(l('正在读取 Zotero PDF 条目...', 'Reading Zotero PDF items...'));
-      const allZoteroItems = uniqueZoteroItems(await listLocalZoteroLibraryItems({ dataDir }));
+      const collections = await listLocalZoteroCollections({ dataDir });
 
-      if (zoteroCollections.length === 0 && allZoteroItems.length === 0) {
-        setStatusMessage(l('没有可导入的 Zotero PDF。', 'No Zotero PDFs are available to import.'));
+      if (collections.length === 0) {
+        setStatusMessage(l('没有可导入的 Zotero 分类。', 'No Zotero collections are available to import.'));
         return;
       }
 
+      setZoteroCollections(collections);
+      setZoteroSelectedCollectionKeys(new Set(collections.map((c) => c.collectionKey)));
+      setZoteroImportDataDir(dataDir);
+      setZoteroCollectionPickerOpen(true);
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? nextError.message : l('读取 Zotero 分类失败', 'Failed to read Zotero collections');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleZoteroImportStep2 = async () => {
+    if (zoteroSelectedCollectionKeys.size === 0) return;
+
+    const dataDir = zoteroImportDataDir;
+    const selectedCollections = zoteroCollections.filter((c) => zoteroSelectedCollectionKeys.has(c.collectionKey));
+    const selectedKeys = new Set(selectedCollections.map((c) => c.collectionKey));
+
+    setZoteroCollectionPickerOpen(false);
+    setWorking(true);
+    setError('');
+
+    try {
+      setStatusMessage(l('正在读取 Zotero PDF 条目...', 'Reading Zotero PDF items...'));
+
+      const allZoteroItems = uniqueZoteroItems(await listLocalZoteroLibraryItems({ dataDir }));
       let currentCategories = await listLibraryCategories();
       const categoryIdByZoteroKey = new Map<string, string>();
       const collectionByKey = new Map(
@@ -750,18 +811,10 @@ export default function LiteratureLibraryView({
         visiting = new Set<string>(),
       ): Promise<string> => {
         const existingId = categoryIdByZoteroKey.get(collection.collectionKey);
-
-        if (existingId) {
-          return existingId;
-        }
+        if (existingId) return existingId;
 
         if (visiting.has(collection.collectionKey)) {
-          throw new Error(
-            l(
-              'Zotero 分类树存在循环引用，无法导入。',
-              'The Zotero collection tree has a cycle and cannot be imported.',
-            ),
-          );
+          throw new Error(l('Zotero 分类树存在循环引用，无法导入。', 'The Zotero collection tree has a cycle and cannot be imported.'));
         }
 
         visiting.add(collection.collectionKey);
@@ -779,10 +832,7 @@ export default function LiteratureLibraryView({
             category.parentId === parentId &&
             categorySignature(category.name, category.parentId) === categorySignature(normalizedName, parentId),
         );
-        const category = existingCategory ?? await createLibraryCategory({
-          name: normalizedName,
-          parentId,
-        });
+        const category = existingCategory ?? await createLibraryCategory({ name: normalizedName, parentId });
 
         if (!existingCategory) {
           currentCategories = [...currentCategories, category];
@@ -800,15 +850,11 @@ export default function LiteratureLibraryView({
             category.parentId === null &&
             categorySignature(category.name, category.parentId) === categorySignature(normalizedName, null),
         );
-        const category = existingCategory ?? await createLibraryCategory({
-          name: normalizedName,
-          parentId: null,
-        });
+        const category = existingCategory ?? await createLibraryCategory({ name: normalizedName, parentId: null });
 
         if (!existingCategory) {
           currentCategories = [...currentCategories, category];
         }
-
         return category.id;
       };
 
@@ -820,28 +866,19 @@ export default function LiteratureLibraryView({
       let duplicateCount = 0;
       let failedCount = 0;
       let missingPdfCount = 0;
-      let unfiledCount = 0;
       const collectionItems: ZoteroLibraryItem[] = [];
 
-      for (const collection of zoteroCollections) {
+      for (const collection of selectedCollections) {
         const categoryId = categoryIdByZoteroKey.get(collection.collectionKey);
+        if (!categoryId) continue;
 
-        if (!categoryId) {
-          continue;
-        }
-
-        const items = await listLocalZoteroCollectionItems({
-          dataDir,
-          collectionKey: collection.collectionKey,
-        });
+        const items = await listLocalZoteroCollectionItems({ dataDir, collectionKey: collection.collectionKey });
         collectionItems.push(...items);
 
         const importableItems = items.filter((item) => item.localPdfPath);
         missingPdfCount += items.length - importableItems.length;
 
-        if (importableItems.length === 0) {
-          continue;
-        }
+        if (importableItems.length === 0) continue;
 
         const metadata = Object.fromEntries(
           importableItems.map((item) => [item.localPdfPath as string, metadataFromZoteroItem(item)]),
@@ -854,16 +891,11 @@ export default function LiteratureLibraryView({
         });
 
         for (const result of results) {
-          if (result.status === 'imported') {
-            importedCount += 1;
-          } else if (result.status === 'duplicate') {
+          if (result.status === 'imported') importedCount += 1;
+          else if (result.status === 'duplicate') {
             duplicateCount += 1;
-
             if (result.existingPaperId) {
-              await assignPaperToLibraryCategory({
-                paperId: result.existingPaperId,
-                categoryId,
-              });
+              await assignPaperToLibraryCategory({ paperId: result.existingPaperId, categoryId });
             }
           } else {
             failedCount += 1;
@@ -872,9 +904,9 @@ export default function LiteratureLibraryView({
       }
 
       const unfiledItems = filterZoteroItemsOutsideCollections(allZoteroItems, collectionItems);
-      unfiledCount = unfiledItems.length;
+      const unfiledCount = unfiledItems.length;
 
-      if (unfiledItems.length > 0) {
+      if (unfiledItems.length > 0 && selectedKeys.size > 0) {
         const unfiledCategoryId = await ensureTopLevelCategory(l('Zotero 未归档', 'Zotero Unfiled'));
         const importableItems = unfiledItems.filter((item) => item.localPdfPath);
         missingPdfCount += unfiledItems.length - importableItems.length;
@@ -891,16 +923,11 @@ export default function LiteratureLibraryView({
           });
 
           for (const result of results) {
-            if (result.status === 'imported') {
-              importedCount += 1;
-            } else if (result.status === 'duplicate') {
+            if (result.status === 'imported') importedCount += 1;
+            else if (result.status === 'duplicate') {
               duplicateCount += 1;
-
               if (result.existingPaperId) {
-                await assignPaperToLibraryCategory({
-                  paperId: result.existingPaperId,
-                  categoryId: unfiledCategoryId,
-                });
+                await assignPaperToLibraryCategory({ paperId: result.existingPaperId, categoryId: unfiledCategoryId });
               }
             } else {
               failedCount += 1;
@@ -940,7 +967,7 @@ export default function LiteratureLibraryView({
     const handleZoteroImportRequest = (event: Event) => {
       const detail = (event as CustomEvent<ZoteroImportRequestEventDetail>).detail;
 
-      void handleImportZoteroLibrary(detail?.dataDir);
+      void handleZoteroImportStep1(detail?.dataDir);
     };
 
     window.addEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
@@ -950,7 +977,7 @@ export default function LiteratureLibraryView({
       window.removeEventListener(LIBRARY_SETTINGS_UPDATED_EVENT, handleLibrarySettingsUpdated);
       window.removeEventListener(ZOTERO_IMPORT_REQUEST_EVENT, handleZoteroImportRequest);
     };
-  }, [handleImportZoteroLibrary]);
+  }, [handleZoteroImportStep1]);
 
   const handleImportPdfs = async () => {
     if (demoMode) {
@@ -1886,7 +1913,13 @@ export default function LiteratureLibraryView({
         />
       </div>
 
-      <div data-tour="paper-list" className="h-full min-h-0 overflow-hidden">
+      <div data-tour="paper-list" className="flex h-full min-h-0 flex-col overflow-hidden">
+        <TagFilterBar
+          tags={allTags}
+          selectedTagId={selectedTagId}
+          onSelectTag={handleSelectTag}
+          onOpenManager={() => setTagManagerOpen(true)}
+        />
         <LiteraturePaperList
           loading={loading}
           working={working}
@@ -2164,6 +2197,30 @@ export default function LiteratureLibraryView({
           }
         }}
         onSubmit={(value) => void handleSubmitCategoryName(value)}
+      />
+
+      <ZoteroCollectionPicker
+        open={zoteroCollectionPickerOpen}
+        collections={zoteroCollections}
+        selectedKeys={zoteroSelectedCollectionKeys}
+        busy={working}
+        onToggle={(key) => {
+          setZoteroSelectedCollectionKeys((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          });
+        }}
+        onClose={() => setZoteroCollectionPickerOpen(false)}
+        onConfirm={() => void handleZoteroImportStep2()}
+      />
+
+      <TagManager
+        open={tagManagerOpen}
+        tags={allTags}
+        onClose={() => setTagManagerOpen(false)}
+        onTagsChange={() => void refreshAll()}
       />
 
       <LibraryTextInputDialog

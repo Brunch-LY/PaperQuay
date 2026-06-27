@@ -107,6 +107,10 @@ const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   openAlexEnabled: true,
   openAlexApiKey: '',
   openAlexMailto: '',
+  translationProvider: 'ai',
+  translationApiKey: '',
+  translationBaseUrl: '',
+  translationModel: 'gpt-4o-mini',
 };
 
 export function buildReaderPreferencesSections(

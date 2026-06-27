@@ -8,6 +8,7 @@ import {
   Languages,
   Loader2,
   Pencil,
+  Plus,
   Save,
   Sparkles,
   Star,
@@ -22,6 +23,7 @@ import type {
   UpdatePaperRequest,
 } from '../../../types/library';
 import type { PdfReadingHeatmap } from '../../../types/reader';
+import { getPaperTranslation, savePaperTranslation } from '../../../services/library';
 import {
   loadPaperHistory,
   PAPER_READING_HEATMAP_UPDATED_EVENT,
@@ -484,6 +486,8 @@ export default function LiteraturePaperDetails({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<PaperEditDraft>(() => draftFromPaper(selectedPaper));
   const [activeOverviewKey, setActiveOverviewKey] = useState<OverviewSectionKey>('overview');
+  const [translatedTitle, setTranslatedTitle] = useState<string | null>(null);
+  const [translatingTitle, setTranslatingTitle] = useState(false);
   const [readingHeatmap, setReadingHeatmap] = useState<PdfReadingHeatmap | null>(() =>
     latestReadingHeatmapForPaper(selectedPaper?.id),
   );
@@ -563,6 +567,14 @@ export default function LiteraturePaperDetails({
     }
   }, [activeOverviewKey, overviewSections]);
 
+  useEffect(() => {
+    setTranslatedTitle(null);
+    if (!selectedPaper?.id) return;
+    void getPaperTranslation({ paperId: selectedPaper.id, field: 'title', targetLang: 'zh-CN' }).then((result) => {
+      if (result?.translated_text) setTranslatedTitle(result.translated_text);
+    }).catch(() => {});
+  }, [selectedPaper?.id]);
+
   return (
     <aside
       ref={rootRef}
@@ -594,6 +606,59 @@ export default function LiteraturePaperDetails({
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[#a0a0a0]">
                   {paperAuthors(selectedPaper, locale)}
                 </p>
+
+                {!editing && (
+                  <div className="mt-3 flex items-center gap-2">
+                    {translatedTitle ? (
+                      <div className="flex items-center gap-2 rounded-lg bg-[var(--pq-surface-2)] px-3 py-1.5">
+                        <Languages className="h-3.5 w-3.5 shrink-0 text-[var(--pq-text-faint)]" strokeWidth={1.9} />
+                        <span className="text-sm leading-5 text-[var(--pq-text-muted)]">{translatedTitle}</span>
+                        <button
+                          type="button"
+                          onClick={() => setTranslatedTitle(null)}
+                          className="flex h-4 w-4 items-center justify-center rounded text-[var(--pq-text-faint)] hover:text-[var(--pq-danger)]"
+                        >
+                          <X className="h-3 w-3" strokeWidth={2} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!selectedPaper?.id || translatingTitle) return;
+                          setTranslatingTitle(true);
+                          try {
+                            const { translateTextOpenAICompatible } = await import('../../../services/translation');
+                            const result = await translateTextOpenAICompatible({
+                              baseUrl: 'https://api.openai.com/v1',
+                              apiKey: '',
+                              model: 'gpt-4o-mini',
+                              sourceLanguage: 'English',
+                              targetLanguage: 'Chinese',
+                              text: selectedPaper.title,
+                            });
+                            setTranslatedTitle(result);
+                            await savePaperTranslation({
+                              paperId: selectedPaper.id,
+                              field: 'title',
+                              targetLang: 'zh-CN',
+                              translatedText: result,
+                            });
+                          } catch {
+                            setTranslatedTitle(null);
+                          } finally {
+                            setTranslatingTitle(false);
+                          }
+                        }}
+                        disabled={translatingTitle}
+                        className="flex items-center gap-1.5 text-xs font-medium text-[var(--pq-accent)] hover:underline disabled:opacity-60"
+                      >
+                        <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
+                        {translatingTitle ? l('翻译中...', 'Translating...') : l('翻译标题', 'Translate Title')}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
@@ -850,23 +915,34 @@ export default function LiteraturePaperDetails({
                   </div>
                 ) : null}
 
-                {selectedPaper.tags.length > 0 ? (
-                  <div>
+                <div>
+                  <div className="flex items-center justify-between">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400 dark:text-[#8d8d8d]">
                       {l('标签', 'Tags')}
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {selectedPaper.tags.map((tag) => (
-                        <span
-                          key={tag.id}
-                          className="rounded-full border border-[var(--pq-accent-ring)] bg-[var(--pq-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--pq-accent)]"
-                        >
-                          {tag.name}
-                        </span>
-                      ))}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditing(true)}
+                      className="text-xs font-medium text-[var(--pq-accent)] hover:underline"
+                    >
+                      {l('编辑', 'Edit')}
+                    </button>
                   </div>
-                ) : null}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {selectedPaper.tags.length > 0 ? selectedPaper.tags.map((tag) => (
+                      <span
+                        key={tag.id}
+                        className="rounded-full border border-[var(--pq-accent-ring)] bg-[var(--pq-accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--pq-accent)]"
+                      >
+                        {tag.name}
+                      </span>
+                    )) : (
+                      <span className="text-xs text-[var(--pq-text-faint)]">
+                        {l('无标签', 'No tags')}
+                      </span>
+                    )}
+                  </div>
+                </div>
 
                 <section className="pq-card p-4">
                   <div className="flex items-center justify-between gap-3">

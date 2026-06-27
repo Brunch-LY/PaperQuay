@@ -13,6 +13,10 @@ export interface LibrarySettings {
   openAlexEnabled: boolean;
   openAlexApiKey: string;
   openAlexMailto: string;
+  translationProvider: 'ai' | 'google' | 'deepl';
+  translationApiKey: string;
+  translationBaseUrl: string;
+  translationModel: string;
 }
 
 export interface LiteratureAuthor {

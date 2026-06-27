@@ -112,6 +112,17 @@ function createSchema(db) {
       FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS paper_translations (
+      paper_id TEXT NOT NULL,
+      field TEXT NOT NULL,
+      source_lang TEXT,
+      target_lang TEXT NOT NULL,
+      translated_text TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (paper_id, field, target_lang),
+      FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_papers_sort_order ON papers(sort_order);
     CREATE INDEX IF NOT EXISTS idx_attachments_paper_id ON attachments(paper_id);
     CREATE INDEX IF NOT EXISTS idx_authors_paper_id ON authors(paper_id, sort_order);

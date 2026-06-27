@@ -44,6 +44,10 @@ function createDefaultLibrary(appPaths) {
       openAlexEnabled: true,
       openAlexApiKey: '',
       openAlexMailto: '',
+      translationProvider: 'ai',
+      translationApiKey: '',
+      translationBaseUrl: '',
+      translationModel: 'gpt-4o-mini',
     },
     categories: SYSTEM_CATEGORIES.map(([id, name, systemKey, sortOrder]) => ({
       id,
