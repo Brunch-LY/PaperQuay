@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Edit3,
   Merge,
+  Palette,
   Plus,
   Trash2,
   X,
@@ -42,14 +43,27 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [colorPickerId, setColorPickerId] = useState<string | null>(null);
+  const colorPickerRef = useRef<HTMLDivElement | null>(null);
 
   const hasSelection = selectedIds.size > 0;
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target as Node)) {
+        setColorPickerId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (open) {
       setAllTags(tags);
       setSelectedIds(new Set());
       setMergeTargetId(null);
+      setColorPickerId(null);
       void listAllTags().then(setAllTags).catch(() => {});
     }
   }, [open, tags]);
@@ -248,24 +262,31 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
                     {isSelected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
                   </button>
 
-                  <div className="relative">
-                    <div
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setColorPickerId(colorPickerId === tag.id ? null : tag.id)}
                       className="h-4 w-4 rounded-full border border-[var(--pq-border)]"
                       style={{ backgroundColor: tag.color ?? '#6b7280' }}
                     />
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <div className="flex gap-0.5">
+                    {colorPickerId === tag.id && (
+                      <div
+                        ref={colorPickerRef}
+                        className="absolute left-0 top-5 z-50 flex gap-1 rounded-lg border border-[var(--pq-border)] bg-[var(--pq-surface-1)] p-1.5 shadow-lg"
+                      >
                         {TAG_COLORS.map((c) => (
                           <button
                             key={c}
                             type="button"
-                            onClick={() => handleColorChange(tag.id, c)}
-                            className="h-3 w-3 rounded-full border border-white"
+                            onClick={() => { handleColorChange(tag.id, c); setColorPickerId(null); }}
+                            className={`h-4 w-4 rounded-full border-2 transition hover:scale-110 ${
+                              tag.color === c ? 'border-[var(--pq-accent)]' : 'border-transparent'
+                            }`}
                             style={{ backgroundColor: c }}
                           />
                         ))}
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {editingId === tag.id ? (
@@ -291,8 +312,17 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
                     type="button"
                     onClick={() => { setEditingId(tag.id); setEditingName(tag.name); }}
                     className="pq-icon-button h-7 w-7 opacity-0 group-hover:opacity-100"
+                    title={l('重命名', 'Rename')}
                   >
                     <Edit3 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedIds(new Set([tag.id])); handleDeleteSelected(); }}
+                    className="pq-icon-button h-7 w-7 text-[var(--pq-text-faint)] hover:text-[var(--pq-danger)]"
+                    title={l('删除', 'Delete')}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
                   </button>
                 </div>
               );

@@ -4,6 +4,7 @@ import {
   readLocalTextFileIfExists,
   writeLocalTextFile,
 } from '../../services/desktop';
+import { syncPaperToRepo } from '../../services/library';
 import {
   buildMineruMarkdownDocument,
   buildSummaryBlockInputs,
@@ -163,6 +164,12 @@ export async function writeMineruParseCache({
   );
 
   await Promise.all(writeTasks);
+
+  const repoMatch = item.workspaceId?.match(/^native-library:(.+)$/);
+  if (repoMatch) {
+    syncPaperToRepo(repoMatch[1]).catch(() => {});
+  }
+
   return cachePaths;
 }
 

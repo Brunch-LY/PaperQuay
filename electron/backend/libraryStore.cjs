@@ -50,6 +50,7 @@ function createDefaultLibrary(appPaths) {
       translationModel: 'gpt-4o-mini',
       translationAppId: '',
       translationSecretKey: '',
+      paperRepoDir: '',
     },
     categories: SYSTEM_CATEGORIES.map(([id, name, systemKey, sortOrder]) => ({
       id,

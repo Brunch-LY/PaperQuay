@@ -574,6 +574,76 @@ function createLibraryCommands(context) {
       }
     },
 
+    async library_sync_paper_to_repo({ request }) {
+      const { paperId } = request ?? {};
+      if (!paperId) throw new Error('paperId is required');
+
+      const library = store.load();
+      const paper = library.papers.find((p) => p.id === paperId);
+      if (!paper) throw new Error('Paper does not exist');
+
+      const repoDir = cleanString(library.settings.paperRepoDir);
+      if (!repoDir) return;
+
+      const paperDir = path.join(repoDir, paperId);
+      await fsp.mkdir(paperDir, { recursive: true });
+
+      await fsp.writeFile(
+        path.join(paperDir, 'metadata.json'),
+        JSON.stringify({
+          id: paper.id,
+          title: paper.title,
+          authors: paper.authors.map((a) => a.name),
+          year: paper.year,
+          publication: paper.publication,
+          doi: paper.doi,
+          url: paper.url,
+          abstract: paper.abstractText,
+          keywords: paper.keywords,
+          tags: paper.tags.map((t) => t.name),
+          isFavorite: paper.isFavorite,
+          source: paper.source,
+          importedAt: paper.importedAt,
+          updatedAt: paper.updatedAt,
+        }, null, 2),
+      );
+
+      const mineruDir = path.join(appPaths.mineruCacheDir, `document-${paperId}`);
+      const fullMdPath = path.join(mineruDir, 'full.md');
+      try {
+        await fsp.access(fullMdPath);
+        await fsp.copyFile(fullMdPath, path.join(paperDir, 'full.md'));
+      } catch {}
+
+      const jsonPath = path.join(mineruDir, 'content_list_v2.json');
+      try {
+        await fsp.access(jsonPath);
+        await fsp.copyFile(jsonPath, path.join(paperDir, 'content_list_v2.json'));
+      } catch {}
+
+      const indexEntry = {
+        id: paper.id,
+        title: paper.title,
+        authors: paper.authors.map((a) => a.name),
+        year: paper.year,
+        doi: paper.doi,
+        tags: paper.tags.map((t) => t.name),
+      };
+
+      const indexPath = path.join(repoDir, 'index.json');
+      let index = [];
+      try {
+        index = JSON.parse(await fsp.readFile(indexPath, 'utf8'));
+      } catch {}
+      const existingIdx = index.findIndex((e) => e.id === paperId);
+      if (existingIdx >= 0) {
+        index[existingIdx] = indexEntry;
+      } else {
+        index.push(indexEntry);
+      }
+      await fsp.writeFile(indexPath, JSON.stringify(index, null, 2));
+    },
+
     async library_batch_rename_tag({ request }) {
       const { sourceTagId, targetName, targetColor } = request ?? {};
       if (!sourceTagId || !targetName) throw new Error('sourceTagId and targetName are required');

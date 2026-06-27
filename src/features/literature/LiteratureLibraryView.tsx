@@ -508,7 +508,7 @@ export default function LiteratureLibraryView({
     const handlePointerMove = (event: PointerEvent) => {
       const start = detailsPanelResizeStartRef.current;
 
-      setDetailsPanelWidth(clampDetailsPanelWidth(start.width + start.clientX - event.clientX));
+      setDetailsPanelWidth(clampDetailsPanelWidth(start.width + event.clientX - start.clientX));
     };
 
     const handlePointerUp = () => {
@@ -1945,7 +1945,29 @@ export default function LiteratureLibraryView({
       />
       </div>
 
-      <div data-tour="ai-summary" className="h-full min-h-0 overflow-hidden">
+      <div data-tour="ai-summary" className="relative h-full min-h-0 overflow-hidden">
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={l('拖动调整详情面板宽度', 'Drag to resize the details panel')}
+          title={l('拖动调整详情面板宽度', 'Drag to resize the details panel')}
+          onPointerDown={handleStartDetailsPanelResize}
+          onDoubleClick={() => setDetailsPanelWidth(DETAILS_PANEL_DEFAULT_WIDTH)}
+          className={[
+            'absolute bottom-0 left-0 top-0 z-40 w-4 -translate-x-1/2 cursor-col-resize touch-none',
+            detailsPanelResizing ? 'bg-teal-400/10' : 'bg-transparent hover:bg-teal-400/[0.04]',
+          ].join(' ')}
+          style={{ touchAction: 'none' }}
+        >
+          <div
+            className={[
+              'mx-auto h-full w-px transition',
+              detailsPanelResizing
+                ? 'bg-teal-400 shadow-[0_0_0_3px_rgba(45,212,191,0.16)]'
+                : 'bg-slate-200 hover:bg-teal-300 dark:bg-white/10 dark:hover:bg-teal-300/60',
+            ].join(' ')}
+          />
+        </div>
         <LiteraturePaperDetails
           selectedPaper={selectedPaper}
           saving={paperSaving}
@@ -1955,32 +1977,6 @@ export default function LiteratureLibraryView({
           onRunMineruParse={onRunMineruParse}
           onTranslatePaper={onTranslatePaper}
           onGenerateSummary={onGenerateSummary}
-        />
-      </div>
-
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={l('拖动调整详情面板宽度', 'Drag to resize the details panel')}
-        title={l('拖动调整详情面板宽度', 'Drag to resize the details panel')}
-        onPointerDown={handleStartDetailsPanelResize}
-        onDoubleClick={() => setDetailsPanelWidth(DETAILS_PANEL_DEFAULT_WIDTH)}
-        className={[
-          'absolute bottom-0 top-0 z-40 w-4 -translate-x-1/2 cursor-col-resize touch-none',
-          detailsPanelResizing ? 'bg-teal-400/10' : 'bg-transparent hover:bg-teal-400/[0.04]',
-        ].join(' ')}
-        style={{
-          right: detailsPanelWidth - 1,
-          touchAction: 'none',
-        }}
-      >
-        <div
-          className={[
-            'mx-auto h-full w-px transition',
-            detailsPanelResizing
-              ? 'bg-teal-400 shadow-[0_0_0_3px_rgba(45,212,191,0.16)]'
-              : 'bg-slate-200 hover:bg-teal-300 dark:bg-white/10 dark:hover:bg-teal-300/60',
-          ].join(' ')}
         />
       </div>
 

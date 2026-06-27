@@ -19,6 +19,7 @@ export interface LibrarySettings {
   translationModel: string;
   translationAppId: string;
   translationSecretKey: string;
+  paperRepoDir: string;
 }
 
 export interface LiteratureAuthor {

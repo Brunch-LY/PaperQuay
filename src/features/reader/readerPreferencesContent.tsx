@@ -1,17 +1,22 @@
+import { useState } from 'react';
 import {
   BookOpenText,
+  CheckCircle2,
   Cloud,
   Database,
   FolderOpen,
   Languages,
   Library,
+  Loader2,
   RefreshCw,
   Settings2,
   Sparkles,
+  XCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
 
 import { openExternalUrl } from '../../services/desktop';
+import { translateTextViaProvider } from '../../services/library';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
 import type { LibraryImportMode, LibrarySettings } from '../../types/library';
 import type { ReaderSettings } from '../../types/reader';
@@ -113,6 +118,7 @@ const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   translationModel: 'gpt-4o-mini',
   translationAppId: '',
   translationSecretKey: '',
+  paperRepoDir: '',
 };
 
 export function buildReaderPreferencesSections(
@@ -697,6 +703,40 @@ export function ReaderPreferencesContent({
           </SettingsField>
 
           <SettingsField
+            label={l('文献仓库目录', 'Paper Repository Directory')}
+            description={l(
+              'MinerU 解析完成后自动同步 full.md 和元数据到该目录，供其他工具或 Agent 读取。',
+              'Syncs full.md and metadata here after MinerU parsing, for other tools and Agents to consume.',
+            )}
+          >
+            <SettingsInput
+              value={activeLibrarySettings.paperRepoDir}
+              onChange={(event) => updateLibrarySetting('paperRepoDir', event.target.value)}
+              placeholder={l(
+                '选择一个共享目录作为文献仓库',
+                'Choose a shared directory for the paper repository',
+              )}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onSelectLibraryStorageDir}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+              >
+                <FolderOpen className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
+                {l('选择目录', 'Select Directory')}
+              </button>
+              <button
+                type="button"
+                onClick={() => updateLibrarySetting('paperRepoDir', '')}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+              >
+                {l('清空路径', 'Clear Path')}
+              </button>
+            </div>
+          </SettingsField>
+
+          <SettingsField
             label={l('MinerU 自动解析与批量任务', 'MinerU Automation and Batch Jobs')}
             description={l(
               '控制 MinerU 自动解析、批量解析和并发数。',
@@ -1272,6 +1312,11 @@ export function ReaderPreferencesContent({
                 </div>
               </div>
             )}
+
+            <TranslationTestButton
+              settings={activeLibrarySettings}
+              l={l}
+            />
           </SettingsField>
         </>
       ) : null}
@@ -1534,6 +1579,103 @@ export function ReaderPreferencesContent({
           </SettingsField>
         </>
       ) : null}
+    </div>
+  );
+}
+
+interface TranslationTestButtonProps {
+  settings: LibrarySettings;
+  l: ReaderPreferencesLocalizer;
+}
+
+function TranslationTestButton({ settings, l }: TranslationTestButtonProps) {
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+
+    try {
+      if (settings.translationProvider === 'ai') {
+        const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
+        if (!settings.translationApiKey) throw new Error(l('请先填写 API Key', 'Please enter an API Key first'));
+        const { translateTextOpenAICompatible } = await import('../../services/translation');
+        const result = await translateTextOpenAICompatible({
+          baseUrl,
+          apiKey: settings.translationApiKey,
+          model: settings.translationModel || 'gpt-4o-mini',
+          sourceLanguage: 'English',
+          targetLanguage: 'Chinese',
+          text: 'Hello, this is a test.',
+        });
+        setTestResult({ ok: true, message: result });
+      } else if (settings.translationProvider === 'baidu') {
+        if (!settings.translationAppId || !settings.translationSecretKey) {
+          throw new Error(l('请填写 APP ID 和密钥', 'Please enter APP ID and Secret Key'));
+        }
+        const result = await translateTextViaProvider({
+          provider: 'baidu', text: 'Hello, this is a test.',
+          sourceLang: 'en', targetLang: 'zh',
+        });
+        setTestResult({ ok: true, message: result });
+      } else if (settings.translationProvider === 'google' || settings.translationProvider === 'deepl') {
+        if (!settings.translationApiKey) throw new Error(l('请填写 API Key', 'Please enter an API Key first'));
+        const result = await translateTextViaProvider({
+          provider: settings.translationProvider, text: 'Hello, this is a test.',
+          sourceLang: 'en', targetLang: 'zh',
+        });
+        setTestResult({ ok: true, message: result });
+      } else {
+        if (!settings.translationApiKey || !settings.translationSecretKey) {
+          throw new Error(l('请填写 Access Key 和 Secret Key', 'Please enter Access Key and Secret Key'));
+        }
+        const result = await translateTextViaProvider({
+          provider: settings.translationProvider, text: 'Hello, this is a test.',
+          sourceLang: 'en', targetLang: 'zh',
+        });
+        setTestResult({ ok: true, message: result });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setTestResult({ ok: false, message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 space-y-2">
+      <button
+        type="button"
+        onClick={handleTest}
+        disabled={testing}
+        className="pq-button flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-60"
+      >
+        {testing ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
+        ) : (
+          <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
+        )}
+        {testing ? l('测试中...', 'Testing...') : l('测试翻译', 'Test Translation')}
+      </button>
+
+      {testResult && (
+        <div
+          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5 ${
+            testResult.ok
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-900/20 dark:text-emerald-300'
+              : 'border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-300'
+          }`}
+        >
+          {testResult.ok ? (
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.9} />
+          ) : (
+            <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.9} />
+          )}
+          <span className="whitespace-pre-wrap break-words">{testResult.message}</span>
+        </div>
+      )}
     </div>
   );
 }

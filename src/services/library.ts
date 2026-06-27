@@ -229,6 +229,14 @@ export async function batchRenameTag(sourceTagId: string, targetName: string, ta
   }
 }
 
+export async function syncPaperToRepo(paperId: string): Promise<void> {
+  try {
+    await invoke('library_sync_paper_to_repo', { request: { paperId } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '同步文献到仓库失败'));
+  }
+}
+
 export async function listAllTags(): Promise<LiteratureTag[]> {
   try {
     return await invoke<LiteratureTag[]>('library_list_all_tags');

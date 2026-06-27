@@ -488,6 +488,8 @@ export default function LiteraturePaperDetails({
   const [activeOverviewKey, setActiveOverviewKey] = useState<OverviewSectionKey>('overview');
   const [translatedTitle, setTranslatedTitle] = useState<string | null>(null);
   const [translatingTitle, setTranslatingTitle] = useState(false);
+  const [editingTranslation, setEditingTranslation] = useState(false);
+  const [editTranslationText, setEditTranslationText] = useState('');
   const [readingHeatmap, setReadingHeatmap] = useState<PdfReadingHeatmap | null>(() =>
     latestReadingHeatmapForPaper(selectedPaper?.id),
   );
@@ -496,6 +498,8 @@ export default function LiteraturePaperDetails({
     setEditing(false);
     setDraft(draftFromPaper(selectedPaper));
     setReadingHeatmap(latestReadingHeatmapForPaper(selectedPaper?.id));
+    setTranslatingTitle(false);
+    setEditingTranslation(false);
   }, [selectedPaper?.id]);
 
   useEffect(() => {
@@ -547,6 +551,19 @@ export default function LiteraturePaperDetails({
     });
   };
 
+  const handleSaveEditedTranslation = async () => {
+    const text = editTranslationText.trim();
+    if (!selectedPaper?.id) return;
+    setTranslatedTitle(text);
+    setEditingTranslation(false);
+    await savePaperTranslation({
+      paperId: selectedPaper.id,
+      field: 'title',
+      targetLang: 'zh-CN',
+      translatedText: text,
+    }).catch(() => {});
+  };
+
   const hasPdf = selectedPaper ? Boolean(paperPdfPath(selectedPaper)) : false;
   const activeTaskKind: LiteraturePaperTaskKind | null =
     actionState?.status === 'running' ? actionState.kind : null;
@@ -569,9 +586,13 @@ export default function LiteraturePaperDetails({
 
   useEffect(() => {
     setTranslatedTitle(null);
+    setEditingTranslation(false);
     if (!selectedPaper?.id) return;
     void getPaperTranslation({ paperId: selectedPaper.id, field: 'title', targetLang: 'zh-CN' }).then((result) => {
-      if (result?.translated_text) setTranslatedTitle(result.translated_text);
+      if (result?.translated_text) {
+        setTranslatedTitle(result.translated_text);
+        setEditTranslationText(result.translated_text);
+      }
     }).catch(() => {});
   }, [selectedPaper?.id]);
 
@@ -600,114 +621,163 @@ export default function LiteraturePaperDetails({
       >
         {selectedPaper ? (
           <div className="space-y-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-lg font-semibold leading-7">{selectedPaper.title}</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-[#a0a0a0]">
-                  {paperAuthors(selectedPaper, locale)}
-                </p>
+            <h2 className="break-words text-[15px] font-semibold leading-6 text-[var(--pq-text)]">
+              {selectedPaper.title}
+            </h2>
 
-                {!editing && (
-                  <div className="mt-3 flex items-center gap-2">
-                    {translatedTitle ? (
-                      <div className="flex items-center gap-2 rounded-lg bg-[var(--pq-surface-2)] px-3 py-1.5">
-                        <Languages className="h-3.5 w-3.5 shrink-0 text-[var(--pq-text-faint)]" strokeWidth={1.9} />
-                        <span className="text-sm leading-5 text-[var(--pq-text-muted)]">{translatedTitle}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                disabled={saving}
+                className={
+                selectedPaper.isFavorite
+                  ? 'pq-icon-button h-8 w-8 border border-amber-300/70 bg-amber-100 text-amber-700 disabled:opacity-60 dark:border-amber-300/25 dark:bg-amber-300/14 dark:text-amber-200'
+                  : 'pq-icon-button h-8 w-8 border border-[var(--pq-border)] bg-white/65 text-[var(--pq-text-faint)] disabled:opacity-60'
+              }
+              title={selectedPaper.isFavorite ? l('取消收藏', 'Remove from favorites') : l('加入收藏', 'Add to favorites')}
+              aria-label={selectedPaper.isFavorite ? l('取消收藏', 'Remove from favorites') : l('加入收藏', 'Add to favorites')}
+            >
+              <Star className="h-4 w-4" fill={selectedPaper.isFavorite ? 'currentColor' : 'none'} strokeWidth={1.9} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setEditing((current) => !current)}
+              disabled={saving}
+              className="pq-button px-2.5 py-1.5 text-xs"
+            >
+              {editing ? (
+                <X className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.9} />
+              ) : (
+                <Pencil className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.9} />
+              )}
+              {editing ? l('取消', 'Cancel') : l('编辑', 'Edit')}
+            </button>
+            </div>
+
+            <p className="mt-1.5 text-sm leading-5 text-slate-500 dark:text-[#a0a0a0]">
+              {paperAuthors(selectedPaper, locale)}
+            </p>
+
+            {!editing && (
+              <div className="mt-2">
+                {translatedTitle !== null ? (
+                  <div className="rounded-lg border border-[var(--pq-border)] bg-[var(--pq-surface-2)] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--pq-text-faint)]">
+                        {l('标题翻译', 'Title Translation')}
+                      </span>
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => setTranslatedTitle(null)}
-                          className="flex h-4 w-4 items-center justify-center rounded text-[var(--pq-text-faint)] hover:text-[var(--pq-danger)]"
+                          onClick={() => setEditingTranslation(true)}
+                          className="flex h-5 w-5 items-center justify-center rounded text-[var(--pq-text-faint)] hover:text-[var(--pq-text)]"
+                        >
+                          <Pencil className="h-3 w-3" strokeWidth={2} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setTranslatedTitle(null); setEditTranslationText(''); setEditingTranslation(false); if (selectedPaper?.id) savePaperTranslation({ paperId: selectedPaper.id, field: 'title', targetLang: 'zh-CN', translatedText: '' }).catch(() => {}); }}
+                          className="flex h-5 w-5 items-center justify-center rounded text-[var(--pq-text-faint)] hover:text-[var(--pq-danger)]"
                         >
                           <X className="h-3 w-3" strokeWidth={2} />
                         </button>
                       </div>
+                    </div>
+
+                    {editingTranslation ? (
+                      <div className="mt-2 flex flex-col gap-2">
+                        <textarea
+                          value={editTranslationText}
+                          onChange={(e) => setEditTranslationText(e.target.value)}
+                          className="pq-input min-h-[60px] w-full resize-y px-2.5 py-2 text-sm leading-5"
+                          autoFocus
+                          rows={3}
+                        />
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingTranslation(false)}
+                            className="pq-button px-2.5 py-1.5 text-xs"
+                          >
+                            {l('取消', 'Cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveEditedTranslation}
+                            className="pq-button-primary px-2.5 py-1.5 text-xs"
+                          >
+                            <Save className="mr-1 h-3 w-3" strokeWidth={2} />
+                            {l('保存', 'Save')}
+                          </button>
+                        </div>
+                      </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (!selectedPaper?.id || translatingTitle) return;
-                          setTranslatingTitle(true);
-                          try {
-                            const settings = await getLibrarySettings();
-                            let result: string;
-
-                            if (settings.translationProvider === 'ai') {
-                              const { translateTextOpenAICompatible } = await import('../../../services/translation');
-                              const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
-                              result = await translateTextOpenAICompatible({
-                                baseUrl,
-                                apiKey: settings.translationApiKey,
-                                model: settings.translationModel || 'gpt-4o-mini',
-                                sourceLanguage: 'English',
-                                targetLanguage: 'Chinese',
-                                text: selectedPaper.title,
-                              });
-                            } else {
-                              result = await translateTextViaProvider({
-                                provider: settings.translationProvider,
-                                text: selectedPaper.title,
-                                sourceLang: 'en',
-                                targetLang: 'zh',
-                              });
-                            }
-
-                            setTranslatedTitle(result);
-                            await savePaperTranslation({
-                              paperId: selectedPaper.id,
-                              field: 'title',
-                              targetLang: 'zh-CN',
-                              translatedText: result,
-                            });
-                          } catch {
-                            setTranslatedTitle(null);
-                          } finally {
-                            setTranslatingTitle(false);
-                          }
-                        }}
-                        disabled={translatingTitle}
-                        className="flex items-center gap-1.5 text-xs font-medium text-[var(--pq-accent)] hover:underline disabled:opacity-60"
-                      >
-                        <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
-                        {translatingTitle ? l('翻译中...', 'Translating...') : l('翻译标题', 'Translate Title')}
-                      </button>
+                      <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-5 text-[var(--pq-text-muted)]">
+                        {translatedTitle}
+                      </p>
                     )}
                   </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!selectedPaper?.id || translatingTitle) return;
+                      setTranslatingTitle(true);
+                      try {
+                        const settings = await getLibrarySettings();
+                        let result: string;
+
+                        if (settings.translationProvider === 'ai') {
+                          const { translateTextOpenAICompatible } = await import('../../../services/translation');
+                          const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
+                          result = await translateTextOpenAICompatible({
+                            baseUrl,
+                            apiKey: settings.translationApiKey,
+                            model: settings.translationModel || 'gpt-4o-mini',
+                            sourceLanguage: 'English',
+                            targetLanguage: 'Chinese',
+                            text: selectedPaper.title,
+                          });
+                        } else {
+                          result = await translateTextViaProvider({
+                            provider: settings.translationProvider,
+                            text: selectedPaper.title,
+                            sourceLang: 'en',
+                            targetLang: 'zh',
+                          });
+                        }
+
+                        setTranslatedTitle(result);
+                        setEditTranslationText(result);
+                        await savePaperTranslation({
+                          paperId: selectedPaper.id,
+                          field: 'title',
+                          targetLang: 'zh-CN',
+                          translatedText: result,
+                        });
+                      } catch {
+                        setTranslatedTitle(null);
+                      } finally {
+                        setTranslatingTitle(false);
+                      }
+                    }}
+                    disabled={translatingTitle}
+                    className="flex items-center gap-1.5 text-xs font-medium text-[var(--pq-accent)] hover:underline disabled:opacity-60"
+                  >
+                    {translatingTitle ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.9} />
+                    ) : (
+                      <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
+                    )}
+                    {translatingTitle ? l('翻译中...', 'Translating...') : l('翻译标题', 'Translate Title')}
+                  </button>
                 )}
               </div>
+            )}
 
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleToggleFavorite}
-                  disabled={saving}
-                  className={
-                    selectedPaper.isFavorite
-                      ? 'pq-icon-button h-9 w-9 border border-amber-300/70 bg-amber-100 text-amber-700 disabled:opacity-60 dark:border-amber-300/25 dark:bg-amber-300/14 dark:text-amber-200'
-                      : 'pq-icon-button h-9 w-9 border border-[var(--pq-border)] bg-white/65 text-[var(--pq-text-faint)] disabled:opacity-60'
-                  }
-                  title={selectedPaper.isFavorite ? l('取消收藏', 'Remove from favorites') : l('加入收藏', 'Add to favorites')}
-                  aria-label={selectedPaper.isFavorite ? l('取消收藏', 'Remove from favorites') : l('加入收藏', 'Add to favorites')}
-                >
-                  <Star className="h-4 w-4" fill={selectedPaper.isFavorite ? 'currentColor' : 'none'} strokeWidth={1.9} />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setEditing((current) => !current)}
-                  disabled={saving}
-                  className="pq-button px-3 py-2 text-xs"
-                >
-                  {editing ? (
-                    <X className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.9} />
-                  ) : (
-                    <Pencil className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.9} />
-                  )}
-                  {editing ? l('取消', 'Cancel') : l('编辑', 'Edit')}
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-3">
+          <div className="space-y-3">
               <ActionButton
                 primary
                 disabled={!hasPdf}
