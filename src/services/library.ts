@@ -213,6 +213,22 @@ export async function translateTextViaProvider(request: {
   }
 }
 
+export async function batchDeleteTags(tagIds: string[]): Promise<void> {
+  try {
+    await invoke('library_batch_delete_tags', { request: { tagIds } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '批量删除标签失败'));
+  }
+}
+
+export async function batchRenameTag(sourceTagId: string, targetName: string, targetColor?: string): Promise<void> {
+  try {
+    await invoke('library_batch_rename_tag', { request: { sourceTagId, targetName, targetColor } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '重命名标签失败'));
+  }
+}
+
 export async function listAllTags(): Promise<LiteratureTag[]> {
   try {
     return await invoke<LiteratureTag[]>('library_list_all_tags');

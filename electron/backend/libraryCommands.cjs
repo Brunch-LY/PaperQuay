@@ -555,6 +555,47 @@ function createLibraryCommands(context) {
       await store.save(library);
     },
 
+    async library_batch_delete_tags({ request }) {
+      const tagIds = Array.isArray(request?.tagIds) ? request.tagIds : [];
+      if (tagIds.length === 0) return;
+
+      const library = store.load();
+      const tagIdSet = new Set(tagIds);
+      let changed = false;
+
+      for (const paper of library.papers) {
+        const before = paper.tags.length;
+        paper.tags = paper.tags.filter((tag) => !tagIdSet.has(tag.id));
+        if (paper.tags.length !== before) changed = true;
+      }
+
+      if (changed) {
+        await store.save(library);
+      }
+    },
+
+    async library_batch_rename_tag({ request }) {
+      const { sourceTagId, targetName, targetColor } = request ?? {};
+      if (!sourceTagId || !targetName) throw new Error('sourceTagId and targetName are required');
+
+      const library = store.load();
+      let changed = false;
+
+      for (const paper of library.papers) {
+        for (const tag of paper.tags) {
+          if (tag.id === sourceTagId) {
+            tag.name = targetName.trim();
+            if (targetColor) tag.color = targetColor;
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        await store.save(library);
+      }
+    },
+
     async library_relocate_attachment({ request }) {
       const library = store.load();
       const paper = library.papers.find((item) => item.attachments.some((attachment) => attachment.id === request.attachmentId));
