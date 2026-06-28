@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 const { createLibraryDatabaseStore } = require('./libraryDatabaseStore.cjs');
 const { hashBytes, now } = require('./utils.cjs');
@@ -10,26 +11,28 @@ const SYSTEM_CATEGORIES = [
 ];
 
 function createAppPaths(app) {
-  const baseDir = process.env.PAPERQUAY_DATA_DIR || app.getPath('userData');
+  let baseDir = process.env.PAPERQUAY_DATA_DIR;
+  if (!baseDir && app.isPackaged) {
+    const exeDir = path.dirname(app.getPath('exe'));
+    const configFile = path.join(exeDir, '.paperquay-datadir');
+    try { baseDir = fs.readFileSync(configFile, 'utf8').trim(); } catch {}
+  }
+  if (!baseDir) baseDir = app.getPath('userData');
   const dataDir = path.join(baseDir, 'PaperQuay');
-
-  const exeDir = app.isPackaged ? path.dirname(app.getPath('exe')) : path.join(baseDir, 'PaperQuay');
-  const paperQuayDataDir = path.join(exeDir, 'PaperQuay_data');
 
   return {
     dataDir,
     configPath: path.join(dataDir, '.settings', 'paperquay.config.json'),
-    mineruCacheDir: path.join(paperQuayDataDir, 'cache'),
+    mineruCacheDir: path.join(dataDir, '.mineru-cache'),
     remotePdfDownloadDir: path.join(dataDir, '.downloads', 'pdfs'),
     libraryPath: path.join(dataDir, 'paperquay-library.json'),
     libraryDatabasePath: path.join(dataDir, 'paperquay-library.sqlite'),
     notesDatabasePath: path.join(dataDir, 'paperquay-notes.sqlite'),
     ragDatabasePath: path.join(dataDir, 'paperquay-rag.sqlite'),
     screenshotDir: path.join(dataDir, '.screenshots'),
-    paperQuayDataDir,
-    paperRepoDefaultDir: path.join(paperQuayDataDir, 'library'),
-    mineruCacheDefaultDir: path.join(paperQuayDataDir, 'cache'),
-    storageDefaultDir: path.join(paperQuayDataDir, 'storage'),
+    paperRepoDefaultDir: path.join(dataDir, 'PaperQuay_data', 'library'),
+    mineruCacheDefaultDir: path.join(dataDir, '.mineru-cache'),
+    storageDefaultDir: path.join(dataDir, 'paperquay-data'),
   };
 }
 

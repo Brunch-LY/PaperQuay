@@ -253,6 +253,38 @@ export async function migrateAllToRepo(): Promise<{ total: number; synced: numbe
   }
 }
 
+export async function mergeLibraryCategories(sourceCategoryId: string, targetCategoryId: string): Promise<void> {
+  try {
+    await invoke('library_merge_categories', { request: { sourceCategoryId, targetCategoryId } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '合并分类失败'));
+  }
+}
+
+export async function batchDeletePapers(paperIds: string[], deleteFiles = false): Promise<{ deleted: number }> {
+  try {
+    return await invoke('library_batch_delete_papers', { request: { paperIds, deleteFiles } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '批量删除文献失败'));
+  }
+}
+
+export async function zoteroSupplement(request: { dataDir: string; collectionKeys: string[] }): Promise<{ total: number; supplemented: number; imported: number; duplicates: number; errors: number; skipped: number; titleMismatches: { zotero: string; library: string }[] }> {
+  try {
+    return await invoke('library_zotero_supplement', { request });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, 'Zotero 补充 PDF 失败'));
+  }
+}
+
+export async function findDuplicatePapers(): Promise<{ totalDuplicates: number; groups: { type: string; value?: string; entries: { id: string; title: string; norm?: string; authors: string; year: string; doi: string }[] }[] }> {
+  try {
+    return await invoke('library_find_duplicates');
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '查找重复文献失败'));
+  }
+}
+
 export async function exportBibtex(): Promise<string> {
   try {
     return await invoke<string>('library_export_bibtex');

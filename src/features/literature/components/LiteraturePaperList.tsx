@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useAppLocale, useLocaleText } from '../../../i18n/uiLanguage';
 import { useWheelScrollDelegate } from '../../../hooks/useWheelScrollDelegate';
+import { localPathExists } from '../../../services/desktop';
 import type { LiteraturePaper } from '../../../types/library';
 import type { PdfReadingHeatmap } from '../../../types/reader';
 import {
@@ -49,6 +51,9 @@ interface LiteraturePaperListProps {
   searchQuery: string;
   statusMessage: string;
   error: string;
+  batchMode?: boolean;
+  batchSelectedIds?: Set<string>;
+  onBatchToggle?: (paperId: string) => void;
   onSearchQueryChange: (value: string) => void;
   onImportPdfs: () => void;
   onRefresh: () => void;
@@ -92,6 +97,9 @@ export default function LiteraturePaperList({
   onPaperDropOnCategory,
   onPaperPointerDragOverCategory,
   onPaperContextMenu,
+  batchMode = false,
+  batchSelectedIds,
+  onBatchToggle,
 }: LiteraturePaperListProps) {
   const l = useLocaleText();
   const locale = useAppLocale();
@@ -138,6 +146,25 @@ export default function LiteraturePaperList({
 
     return nextHeatmaps;
   }, [heatmapRevision, papers, showReadingHeatmap]);
+
+  const [pdfExistsMap, setPdfExistsMap] = useState<Record<string, boolean>>({});
+
+  const checkPdfExistence = useCallback(async () => {
+    const paths = papers.map((p) => ({ id: p.id, path: paperPdfPath(p) }));
+    const results: Record<string, boolean> = {};
+    for (const entry of paths) {
+      if (entry.path) {
+        results[entry.id] = await localPathExists(entry.path).catch(() => false);
+      } else {
+        results[entry.id] = false;
+      }
+    }
+    setPdfExistsMap(results);
+  }, [papers]);
+
+  useEffect(() => {
+    checkPdfExistence();
+  }, [checkPdfExistence]);
 
   useEffect(() => {
     if (!showReadingHeatmap) {
@@ -527,6 +554,16 @@ export default function LiteraturePaperList({
                       categoryDraggingPaperId === paper.id && 'opacity-70 ring-2 ring-teal-300/70',
                     )}
                   >
+                    {batchMode && (
+                      <span className="flex items-center justify-center pl-1 pr-0.5">
+                        <input
+                          type="checkbox"
+                          checked={batchSelectedIds?.has(paper.id) ?? false}
+                          onChange={() => onBatchToggle?.(paper.id)}
+                          className="h-4 w-4 rounded border-[var(--pq-border)] text-[var(--pq-accent)]"
+                        />
+                      </span>
+                    )}
                     <span
                       data-paper-sort-handle
                       draggable={false}
@@ -557,6 +594,16 @@ export default function LiteraturePaperList({
                         {paperAuthors(paper, locale)}
                       </span>
                       <span className="mt-2 flex flex-wrap gap-1.5">
+                        <span
+                          className={clsx(
+                            'rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                            pdfPath && pdfExistsMap[paper.id]
+                              ? 'border-emerald-300/55 bg-emerald-50 text-emerald-700 dark:border-emerald-300/20 dark:bg-emerald-300/10 dark:text-emerald-100'
+                              : 'border-amber-300/55 bg-amber-50 text-amber-700 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-100',
+                          )}
+                        >
+                          {pdfPath && pdfExistsMap[paper.id] ? l('PDF 存在', 'PDF OK') : l('PDF 缺失', 'PDF Missing')}
+                        </span>
                         <span
                           className={clsx(
                             'rounded-full border px-2 py-0.5 text-[10px] font-semibold',

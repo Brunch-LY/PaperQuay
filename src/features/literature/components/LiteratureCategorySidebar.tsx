@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   ChevronRight,
   FolderPlus,
+  Merge,
   Pencil,
   Trash2,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ interface LiteratureCategorySidebarProps {
     event: DragEvent<HTMLButtonElement>,
     category: LiteratureCategory,
   ) => void;
+  onMergeCategory: (category: LiteratureCategory) => void;
 }
 
 interface CategoryContextMenuState {
@@ -49,6 +51,7 @@ export default function LiteratureCategorySidebar({
   onCategoryMove,
   externalDragOverCategoryId = null,
   onCategoryDrop,
+  onMergeCategory,
 }: LiteratureCategorySidebarProps) {
   const l = useLocaleText();
   const locale = useAppLocale();
@@ -407,6 +410,18 @@ export default function LiteratureCategorySidebar({
                 >
                   <Pencil className="h-4 w-4 text-slate-500 dark:text-[#a0a0a0]" strokeWidth={1.9} />
                   {l('重命名分类', 'Rename Category')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const category = contextMenu.category;
+                    if (category) { onMergeCategory(category); }
+                    closeContextMenu();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100 dark:text-[#e0e0e0] dark:hover:bg-[#2f2f2f]"
+                >
+                  <Merge className="h-4 w-4 text-indigo-500" strokeWidth={1.9} />
+                  {l('合并到其他分类…', 'Merge into…')}
                 </button>
                 <div className="my-1 border-t border-slate-100 dark:border-white/10" />
                 <button

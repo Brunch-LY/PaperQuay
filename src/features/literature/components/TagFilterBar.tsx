@@ -1,4 +1,4 @@
-import { Settings2 } from 'lucide-react';
+import { Settings2, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../../i18n/uiLanguage';
 import type { LiteratureTag } from '../../../types/library';
 
@@ -7,6 +7,7 @@ interface TagFilterBarProps {
   selectedTagId: string | null;
   onSelectTag: (tagId: string | null) => void;
   onOpenManager: () => void;
+  onBatchModeToggle?: () => void;
 }
 
 export default function TagFilterBar({
@@ -14,6 +15,7 @@ export default function TagFilterBar({
   selectedTagId,
   onSelectTag,
   onOpenManager,
+  onBatchModeToggle,
 }: TagFilterBarProps) {
   const l = useLocaleText();
 
@@ -62,6 +64,19 @@ export default function TagFilterBar({
       >
         <Settings2 className="h-3.5 w-3.5" strokeWidth={1.9} />
       </button>
+
+      <span className="ml-auto" />
+
+      {onBatchModeToggle && (
+        <button
+          type="button"
+          onClick={onBatchModeToggle}
+          className="pq-button flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--pq-text-muted)]"
+        >
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+          {l('批量删除', 'Batch Delete')}
+        </button>
+      )}
     </div>
   );
 }

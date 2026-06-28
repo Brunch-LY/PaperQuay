@@ -854,7 +854,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onDetectLocalZotero={() => void handleDetectLocalZotero()}
           onSelectLocalZoteroDir={() => void handleSelectLocalZoteroDir()}
           onReloadLocalZotero={() => void handleReloadLocalZotero()}
-          onImportLocalZotero={() => void handleImportLocalZoteroToNativeLibrary()}
+          onImportLocalZotero={() => { setPreferencesOpen(false); setTimeout(() => void handleImportLocalZoteroToNativeLibrary(), 100); }}
           onEnrichAllLibraryMetadata={emitLibraryMetadataEnrichRequest}
           onSelectMineruCacheDir={() => void handleSelectMineruCacheDir()}
           onSelectRemotePdfDownloadDir={() => void handleSelectRemotePdfDownloadDir()}

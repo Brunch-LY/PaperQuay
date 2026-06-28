@@ -9,22 +9,26 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Sparkles, Star, Tag, Trash2 } from 'lucide-react';
+import { FolderPlus, Sparkles, Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { localPathExists } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
 import { extractLocalPdfMetadataPreview } from '../../services/pdfMetadata';
 import {
   assignPaperToLibraryCategory,
+  batchDeletePapers,
   batchGetPaperTranslations,
+  findDuplicatePapers,
+  importPdfsToLibrary,
+  zoteroSupplement,
   createLibraryCategory,
   deleteLibraryPaper,
   deleteLibraryCategory,
   getLibrarySettings,
-  importPdfsToLibrary,
   initializeLiteratureLibrary,
   listLibraryCategories,
   listLibraryPapers,
+  mergeLibraryCategories,
   moveLibraryCategory,
   reorderLibraryPapers,
   selectLibraryPdfFiles,
@@ -52,10 +56,12 @@ import type {
 import { getFileNameFromPath } from '../../utils/text';
 import CheckableListDialog from './components/CheckableListDialog';
 import ImportConfirmationDialog from './components/ImportConfirmationDialog';
+import LibraryStatusBar from './components/LibraryStatusBar';
 import LibraryConfirmDialog from './components/LibraryConfirmDialog';
 import LibraryTextInputDialog from './components/LibraryTextInputDialog';
 import TagFilterBar from './components/TagFilterBar';
 import TagManager from './components/TagManager';
+import TagPickerDialog from './components/TagPickerDialog';
 import ZoteroCollectionPicker from './components/ZoteroCollectionPicker';
 import {
   mergeLocalPdfMetadataIntoDraft,
@@ -68,11 +74,8 @@ import LiteraturePaperDetails from './components/LiteraturePaperDetails';
 import LiteraturePaperList, {
   type LiteraturePaperListStatus,
 } from './components/LiteraturePaperList';
-import { flattenCategories, paperPdfPath } from './literatureUi';
-import {
-  filterZoteroItemsOutsideCollections,
-  uniqueZoteroItems,
-} from './zoteroImport';
+import { categoryDisplayName, flattenCategories, paperPdfPath, type FlatLiteratureCategory } from './literatureUi';
+
 import {
   emitLibrarySettingsUpdated,
   LIBRARY_METADATA_ENRICH_REQUEST_EVENT,
@@ -97,7 +100,6 @@ import {
   loadDetailsPanelWidth,
   markPaperStatusesCheckingMineru,
   metadataFromDraft,
-  metadataFromZoteroItem,
   metadataUpdateForPaper,
   reorderPaperList,
   resolveSelectedPaperId,
@@ -241,10 +243,19 @@ export default function LiteratureLibraryView({
   const [tagDialogPaper, setTagDialogPaper] = useState<LiteraturePaper | null>(null);
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDateFrom, setBatchDateFrom] = useState('');
+  const [batchDateTo, setBatchDateTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState<null | 'no-pdf' | 'no-mineru' | 'no-overview' | 'duplicates'>(null);
+  const [duplicateIds, setDuplicateIds] = useState<string[] | null>(null);
+  const [mergeSourceCategory, setMergeSourceCategory] = useState<LiteratureCategory | null>(null);
+  const [moveTargetDialogOpen, setMoveTargetDialogOpen] = useState(false);
   const [zoteroCollectionPickerOpen, setZoteroCollectionPickerOpen] = useState(false);
   const [zoteroCollections, setZoteroCollections] = useState<ZoteroCollection[]>([]);
   const [zoteroSelectedCollectionKeys, setZoteroSelectedCollectionKeys] = useState<Set<string>>(new Set());
   const [zoteroImportDataDir, setZoteroImportDataDir] = useState('');
+  const [zoteroImportWithFolders, setZoteroImportWithFolders] = useState(true);
   const [detailsPanelWidth, setDetailsPanelWidth] = useState(loadDetailsPanelWidth);
   const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
   const detailsPanelResizeStartRef = useRef({
@@ -273,13 +284,33 @@ export default function LiteratureLibraryView({
     return Array.from(tagMap.values()).sort((a, b) => b.paperCount - a.paperCount);
   }, [papers]);
   const [paperTranslations, setPaperTranslations] = useState<Record<string, string>>({});
+  const translationsFetchRef = useRef(0);
   useEffect(() => {
     const ids = papers.map((p) => p.id);
     if (ids.length === 0) { setPaperTranslations({}); return; }
-    let cancelled = false;
-    batchGetPaperTranslations(ids).then((result) => { if (!cancelled) setPaperTranslations(result); }).catch(() => {});
-    return () => { cancelled = true; };
+    const fetchId = ++translationsFetchRef.current;
+    batchGetPaperTranslations(ids).then((result) => {
+      if (fetchId === translationsFetchRef.current) setPaperTranslations(result);
+    }).catch(() => {});
   }, [papers]);
+
+  const filteredPapers = useMemo(() => {
+    if (statusFilter === 'duplicates' && duplicateIds) {
+      return papers.filter((p) => duplicateIds.includes(p.id));
+    }
+    if (statusFilter === 'no-pdf') {
+      return papers.filter((p) => {
+        const pdfAtts = p.attachments.filter((a) => a.kind === 'pdf');
+        if (pdfAtts.length === 0) return true;
+        return pdfAtts.every((a) => a.missing);
+      });
+    }
+    if (statusFilter === 'no-overview') {
+      return papers.filter((p) => !p.aiSummary?.trim());
+    }
+    return papers;
+  }, [papers, statusFilter, duplicateIds]);
+
   const selectedCategory = useMemo(
     () => categories.find((category) => category.id === selectedCategoryId) ?? null,
     [categories, selectedCategoryId],
@@ -799,7 +830,6 @@ export default function LiteratureLibraryView({
 
     const dataDir = zoteroImportDataDir;
     const selectedCollections = zoteroCollections.filter((c) => zoteroSelectedCollectionKeys.has(c.collectionKey));
-    const selectedKeys = new Set(selectedCollections.map((c) => c.collectionKey));
 
     setZoteroCollectionPickerOpen(false);
     setWorking(true);
@@ -808,12 +838,10 @@ export default function LiteratureLibraryView({
     try {
       setStatusMessage(l('正在读取 Zotero PDF 条目...', 'Reading Zotero PDF items...'));
 
-      const allZoteroItems = uniqueZoteroItems(await listLocalZoteroLibraryItems({ dataDir }));
       let currentCategories = await listLibraryCategories();
       const categoryIdByZoteroKey = new Map<string, string>();
-      const collectionByKey = new Map(
-        zoteroCollections.map((collection) => [collection.collectionKey, collection]),
-      );
+      const selectedCollectionKeys = new Set(selectedCollections.map((c) => c.collectionKey));
+      const collectionByKey = new Map(zoteroCollections.map((c) => [c.collectionKey, c]));
 
       const ensureCategoryForCollection = async (
         collection: ZoteroCollection,
@@ -821,137 +849,60 @@ export default function LiteratureLibraryView({
       ): Promise<string> => {
         const existingId = categoryIdByZoteroKey.get(collection.collectionKey);
         if (existingId) return existingId;
-
-        if (visiting.has(collection.collectionKey)) {
-          throw new Error(l('Zotero 分类树存在循环引用，无法导入。', 'The Zotero collection tree has a cycle and cannot be imported.'));
-        }
-
+        if (visiting.has(collection.collectionKey)) throw new Error(l('Zotero 分类树存在循环引用，无法导入。', 'The Zotero collection tree has a cycle and cannot be imported.'));
         visiting.add(collection.collectionKey);
 
-        const parentCollection = collection.parentCollectionKey
-          ? collectionByKey.get(collection.parentCollectionKey)
-          : null;
-        const parentId = parentCollection
-          ? await ensureCategoryForCollection(parentCollection, visiting)
-          : null;
-        const normalizedName = collection.name.trim() || l('未命名 Zotero 分类', 'Untitled Zotero Collection');
-        const existingCategory = currentCategories.find(
-          (category) =>
-            !category.isSystem &&
-            category.parentId === parentId &&
-            categorySignature(category.name, category.parentId) === categorySignature(normalizedName, parentId),
-        );
-        const category = existingCategory ?? await createLibraryCategory({ name: normalizedName, parentId });
+        const parentCollection = collection.parentCollectionKey ? collectionByKey.get(collection.parentCollectionKey) : null;
 
-        if (!existingCategory) {
-          currentCategories = [...currentCategories, category];
+        if (!selectedCollectionKeys.has(collection.collectionKey)) {
+          if (parentCollection) return await ensureCategoryForCollection(parentCollection, visiting) || '';
+          return '';
         }
 
+        const parentId = parentCollection ? await ensureCategoryForCollection(parentCollection, visiting) : null;
+        const normalizedName = collection.name.trim() || l('未命名 Zotero 分类', 'Untitled Zotero Collection');
+        const existingCategory = currentCategories.find(
+          (c) => !c.isSystem && c.parentId === parentId && categorySignature(c.name, c.parentId) === categorySignature(normalizedName, parentId),
+        );
+        const category = existingCategory ?? await createLibraryCategory({ name: normalizedName, parentId });
+        if (!existingCategory) currentCategories = [...currentCategories, category];
         categoryIdByZoteroKey.set(collection.collectionKey, category.id);
         return category.id;
       };
 
-      const ensureTopLevelCategory = async (name: string): Promise<string> => {
-        const normalizedName = name.trim();
-        const existingCategory = currentCategories.find(
-          (category) =>
-            !category.isSystem &&
-            category.parentId === null &&
-            categorySignature(category.name, category.parentId) === categorySignature(normalizedName, null),
-        );
-        const category = existingCategory ?? await createLibraryCategory({ name: normalizedName, parentId: null });
-
-        if (!existingCategory) {
-          currentCategories = [...currentCategories, category];
-        }
-        return category.id;
-      };
-
-      for (const collection of zoteroCollections) {
-        await ensureCategoryForCollection(collection);
-      }
-
-      let importedCount = 0;
-      let duplicateCount = 0;
-      let failedCount = 0;
-      let missingPdfCount = 0;
-      const collectionItems: ZoteroLibraryItem[] = [];
-
-      for (const collection of selectedCollections) {
-        const categoryId = categoryIdByZoteroKey.get(collection.collectionKey);
-        if (!categoryId) continue;
-
-        const items = await listLocalZoteroCollectionItems({ dataDir, collectionKey: collection.collectionKey });
-        collectionItems.push(...items);
-
-        const importableItems = items.filter((item) => item.localPdfPath);
-        missingPdfCount += items.length - importableItems.length;
-
-        if (importableItems.length === 0) continue;
-
-        const metadata = Object.fromEntries(
-          importableItems.map((item) => [item.localPdfPath as string, metadataFromZoteroItem(item)]),
-        );
-        const results = await importPdfsToLibrary({
-          paths: importableItems.map((item) => item.localPdfPath as string),
-          targetCategoryId: categoryId,
-          importMode: 'copy',
-          metadata,
-        });
-
-        for (const result of results) {
-          if (result.status === 'imported') importedCount += 1;
-          else if (result.status === 'duplicate') {
-            duplicateCount += 1;
-            if (result.existingPaperId) {
-              await assignPaperToLibraryCategory({ paperId: result.existingPaperId, categoryId });
-            }
-          } else {
-            failedCount += 1;
-          }
+      if (zoteroImportWithFolders) {
+        for (const collection of zoteroCollections) {
+          await ensureCategoryForCollection(collection);
         }
       }
 
-      const unfiledItems = filterZoteroItemsOutsideCollections(allZoteroItems, collectionItems);
-      const unfiledCount = unfiledItems.length;
+      const result = await zoteroSupplement({ dataDir, collectionKeys: selectedCollections.map((c) => c.collectionKey) });
 
-      if (unfiledItems.length > 0 && selectedKeys.size > 0) {
-        const unfiledCategoryId = await ensureTopLevelCategory(l('Zotero 未归档', 'Zotero Unfiled'));
-        const importableItems = unfiledItems.filter((item) => item.localPdfPath);
-        missingPdfCount += unfiledItems.length - importableItems.length;
-
-        if (importableItems.length > 0) {
-          const metadata = Object.fromEntries(
-            importableItems.map((item) => [item.localPdfPath as string, metadataFromZoteroItem(item)]),
-          );
-          const results = await importPdfsToLibrary({
-            paths: importableItems.map((item) => item.localPdfPath as string),
-            targetCategoryId: unfiledCategoryId,
-            importMode: 'copy',
-            metadata,
-          });
-
-          for (const result of results) {
-            if (result.status === 'imported') importedCount += 1;
-            else if (result.status === 'duplicate') {
-              duplicateCount += 1;
-              if (result.existingPaperId) {
-                await assignPaperToLibraryCategory({ paperId: result.existingPaperId, categoryId: unfiledCategoryId });
-              }
-            } else {
-              failedCount += 1;
-            }
+      if (zoteroImportWithFolders) {
+        for (const collection of selectedCollections) {
+          const targetId = categoryIdByZoteroKey.get(collection.collectionKey);
+          if (!targetId) continue;
+          const items = await listLocalZoteroCollectionItems({ dataDir, collectionKey: collection.collectionKey });
+          for (const item of items) {
+            if (!item.localPdfPath) continue;
+            const matched = papers.find((p) => {
+              const norm = (t: string) => (t || '').replace(/[^a-z0-9\u4e00-\u9fa5]/gi, '').toLowerCase();
+              return norm(p.title) && norm(p.title) === norm(item.title);
+            });
+            if (matched) await assignPaperToLibraryCategory({ paperId: matched.id, categoryId: targetId });
           }
         }
       }
 
       await refreshAll();
-      setStatusMessage(
-        l(
-          `Zotero 导入完成：${zoteroCollections.length} 个分类，${unfiledCount} 个未归档条目，导入 ${importedCount}，重复 ${duplicateCount}，失败 ${failedCount}，缺少本地 PDF ${missingPdfCount}。`,
-          `Zotero import finished: ${zoteroCollections.length} collections, ${unfiledCount} unfiled items, ${importedCount} imported, ${duplicateCount} duplicated, ${failedCount} failed, ${missingPdfCount} missing local PDFs.`,
-        ),
-      );
+      let msg = `Zotero 导入完成：总计 ${result.total} 篇 PDF，新增 ${result.imported}，补充 ${result.supplemented}，重复 ${result.duplicates}，无PDF ${result.skipped}，失败 ${result.errors}。`;
+      if (result.titleMismatches?.length > 0) {
+        msg += `\n前 ${Math.min(result.titleMismatches.length, 3)} 个标题不匹配：`;
+        for (const m of result.titleMismatches.slice(0, 3)) {
+          msg += `\n  Zotero: "${m.zotero}"\n  文库:   "${m.library}"`;
+        }
+      }
+      setStatusMessage(l(msg, `Zotero import: ${result.total} PDFs, ${result.imported} new, ${result.supplemented} supplemented, ${result.duplicates} dupes, ${result.skipped} no-PDF, ${result.errors} errors.`));
     } catch (nextError) {
       const message =
         nextError instanceof Error ? nextError.message : l('导入 Zotero 文库失败', 'Failed to import the Zotero library');
@@ -1807,7 +1758,7 @@ export default function LiteratureLibraryView({
     }
   };
 
-  const handleSubmitPaperTag = async (tagName: string) => {
+  const handleSubmitPaperTag = async (tagNames: string | string[]) => {
     if (demoMode) {
       showDemoLockedMessage();
       setTagDialogPaper(null);
@@ -1818,20 +1769,23 @@ export default function LiteratureLibraryView({
       return;
     }
 
-    const normalizedTag = tagName.trim();
+    const normalizedNames = (Array.isArray(tagNames) ? tagNames : [tagNames])
+      .map((t) => t.trim())
+      .filter(Boolean);
 
-    if (!normalizedTag) {
+    if (normalizedNames.length === 0) {
       return;
     }
 
-    const existingTags = tagDialogPaper.tags.map((tag) => tag.name.trim()).filter(Boolean);
-    const hasTag = existingTags.some(
-      (tag) => tag.toLocaleLowerCase() === normalizedTag.toLocaleLowerCase(),
+    const existingLower = new Set(
+      tagDialogPaper.tags.map((tag) => tag.name.trim().toLowerCase()),
     );
+    const existingOriginal = tagDialogPaper.tags.map((tag) => tag.name.trim()).filter(Boolean);
+    const newNames = normalizedNames.filter((n) => !existingLower.has(n.toLowerCase()));
 
-    if (hasTag) {
+    if (newNames.length === 0) {
       setTagDialogPaper(null);
-      setStatusMessage(l(`标签已存在：${normalizedTag}`, `Tag already exists: ${normalizedTag}`));
+      setStatusMessage(l('标签已存在', 'Tag already exists'));
       return;
     }
 
@@ -1841,7 +1795,7 @@ export default function LiteratureLibraryView({
     try {
       const updatedPaper = await updateLibraryPaper({
         paperId: tagDialogPaper.id,
-        tags: [...existingTags, normalizedTag],
+        tags: [...existingOriginal, ...newNames],
       });
       const [nextCategories, nextPapers] = await Promise.all([
         listLibraryCategories(),
@@ -1862,7 +1816,7 @@ export default function LiteratureLibraryView({
           : nextPapers[0]?.id ?? null,
       );
       setTagDialogPaper(null);
-      setStatusMessage(l(`已添加标签：${normalizedTag}`, `Added tag: ${normalizedTag}`));
+      setStatusMessage(l(`已添加 ${newNames.length} 个标签`, `Added ${newNames.length} tag(s)`));
     } catch (nextError) {
       const message =
         nextError instanceof Error ? nextError.message : l('添加标签失败', 'Failed to add tag');
@@ -1870,6 +1824,47 @@ export default function LiteratureLibraryView({
       setStatusMessage(message);
     } finally {
       setDialogBusy(false);
+    }
+  };
+
+  const handleMergeCategory = async (sourceCategory: LiteratureCategory) => {
+    setMergeSourceCategory(sourceCategory);
+  };
+
+  const handleConfirmMerge = async (targetCategoryId: string) => {
+    if (!mergeSourceCategory) return;
+    setDialogBusy(true);
+    try {
+      await mergeLibraryCategories(mergeSourceCategory.id, targetCategoryId);
+      setMergeSourceCategory(null);
+      await refreshAll();
+      setStatusMessage(l(`已合并分类`, `Category merged`));
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : l('合并分类失败', 'Failed to merge');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  const handleBatchMovePapers = async (targetCategoryId: string) => {
+    if (batchSelectedIds.size === 0) return;
+    setMoveTargetDialogOpen(false);
+    setWorking(true);
+    try {
+      for (const paperId of batchSelectedIds) {
+        await assignPaperToLibraryCategory({ paperId, categoryId: targetCategoryId });
+      }
+      setBatchSelectedIds(new Set());
+      await refreshAll();
+      setStatusMessage(l(`已移动 ${batchSelectedIds.size} 篇文献`, `Moved ${batchSelectedIds.size} papers`));
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : l('移动文献失败', 'Failed to move');
+      setError(message);
+      setStatusMessage(message);
+    } finally {
+      setWorking(false);
     }
   };
 
@@ -1919,20 +1914,122 @@ export default function LiteratureLibraryView({
           onCategoryMove={(categoryId, parentId) => void handleMoveCategory(categoryId, parentId)}
           externalDragOverCategoryId={paperDragOverCategoryId}
           onCategoryDrop={(event, category) => void handleCategoryDrop(event, category)}
+          onMergeCategory={handleMergeCategory}
         />
       </div>
 
       <div data-tour="paper-list" className="flex h-full min-h-0 flex-col overflow-hidden">
+        <LibraryStatusBar
+          papers={papers}
+          onFilterByStatus={(filter) => {
+            setStatusFilter(filter);
+            if (filter === 'duplicates') {
+              void findDuplicatePapers().then((r) => setDuplicateIds([...new Set(r.groups.flatMap((g) => g.entries.map((e) => e.id)))]));
+            } else if (filter === null) {
+              setDuplicateIds(null);
+            }
+          }}
+        />
         <TagFilterBar
           tags={allTags}
           selectedTagId={selectedTagId}
           onSelectTag={handleSelectTag}
           onOpenManager={() => setTagManagerOpen(true)}
+          onBatchModeToggle={batchMode ? undefined : () => setBatchMode(true)}
         />
+
+        {batchMode ? (
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--pq-border)] px-3 py-2">
+            <button
+              type="button"
+              onClick={() => { setBatchMode(false); setBatchSelectedIds(new Set()); }}
+              className="pq-button px-2.5 py-1.5 text-xs"
+            >
+              {l('退出批量模式', 'Exit Batch Mode')}
+            </button>
+
+            <span className="h-4 w-px bg-[var(--pq-border)]" />
+
+            <input
+              type="date"
+              value={batchDateFrom}
+              onChange={(e) => setBatchDateFrom(e.target.value)}
+              className="pq-input h-7 w-36 px-2 text-xs"
+              title={l('导入起始日期', 'Import date from')}
+            />
+            <span className="text-xs text-[var(--pq-text-faint)]">~</span>
+            <input
+              type="date"
+              value={batchDateTo}
+              onChange={(e) => setBatchDateTo(e.target.value)}
+              className="pq-input h-7 w-36 px-2 text-xs"
+              title={l('导入结束日期', 'Import date to')}
+            />
+
+            <button
+              type="button"
+              onClick={() => {
+                const filtered = papers.filter((p) => {
+                  if (batchDateFrom && p.importedAt < new Date(batchDateFrom).getTime()) return false;
+                  if (batchDateTo && p.importedAt > new Date(batchDateTo + 'T23:59:59').getTime()) return false;
+                  return true;
+                });
+                setBatchSelectedIds(new Set(filtered.map((p) => p.id)));
+              }}
+              className="pq-button px-2.5 py-1.5 text-xs"
+              disabled={!batchDateFrom && !batchDateTo}
+            >
+              {l('筛选并全选', 'Filter & Select All')}
+            </button>
+
+            <span className="flex-1" />
+
+            <span className="text-xs text-[var(--pq-text-muted)]">
+              {l(`已选 ${batchSelectedIds.size} 篇`, `${batchSelectedIds.size} selected`)}
+            </span>
+
+            {batchSelectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!window.confirm(l(`确定删除选中的 ${batchSelectedIds.size} 篇文献？`, `Delete ${batchSelectedIds.size} selected papers?`))) return;
+                  setWorking(true);
+                  try {
+                    const result = await batchDeletePapers(Array.from(batchSelectedIds), false);
+                    setBatchSelectedIds(new Set());
+                    setBatchMode(false);
+                    await refreshAll();
+                    setStatusMessage(l(`已删除 ${result.deleted} 篇文献`, `${result.deleted} papers deleted`));
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setWorking(false);
+                  }
+                }}
+                className="pq-button flex items-center gap-1 px-3 py-1.5 text-xs text-[var(--pq-danger)]"
+              >
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                {l(`删除 ${batchSelectedIds.size} 篇`, `Delete ${batchSelectedIds.size}`)}
+              </button>
+            )}
+
+            {batchSelectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setMoveTargetDialogOpen(true)}
+                className="pq-button flex items-center gap-1 px-3 py-1.5 text-xs"
+              >
+                <FolderPlus className="h-3.5 w-3.5" strokeWidth={1.9} />
+                {l(`移动到分类`, `Move to category`)}
+              </button>
+            )}
+          </div>
+        ) : null}
+
         <LiteraturePaperList
           loading={loading}
           working={working}
-          papers={papers}
+          papers={filteredPapers}
           paperTranslations={paperTranslations}
           paperStatuses={paperStatuses}
           showReadingHeatmap={showReadingHeatmap}
@@ -1951,6 +2048,9 @@ export default function LiteratureLibraryView({
         }
         onPaperDropOnCategory={handlePaperDropOnCategory}
         onPaperPointerDragOverCategory={setPaperDragOverCategoryId}
+        batchMode={batchMode}
+        batchSelectedIds={batchSelectedIds}
+        onBatchToggle={(paperId) => setBatchSelectedIds((prev) => { const next = new Set(prev); if (next.has(paperId)) next.delete(paperId); else next.add(paperId); return next; })}
         onPaperContextMenu={handlePaperContextMenu}
       />
       </div>
@@ -2210,6 +2310,7 @@ export default function LiteratureLibraryView({
         collections={zoteroCollections}
         selectedKeys={zoteroSelectedCollectionKeys}
         busy={working}
+        importWithFolders={zoteroImportWithFolders}
         onToggle={(key) => {
           setZoteroSelectedCollectionKeys((prev) => {
             const next = new Set(prev);
@@ -2220,7 +2321,35 @@ export default function LiteratureLibraryView({
         }}
         onClose={() => setZoteroCollectionPickerOpen(false)}
         onConfirm={() => void handleZoteroImportStep2()}
+        onImportModeChange={setZoteroImportWithFolders}
       />
+
+      {mergeSourceCategory && (
+        <CategorySelectDialog
+          title={l(`合并“${mergeSourceCategory.name}”到…`, `Merge "${mergeSourceCategory.name}" into…`)}
+          categories={flatCategories}
+          excludeIds={new Set([
+            mergeSourceCategory.id,
+            ...flatCategories.filter((c) => c.parentId === mergeSourceCategory.id).map((c) => c.id),
+          ])}
+          busy={dialogBusy}
+          confirmLabel={l('合并', 'Merge')}
+          onClose={() => setMergeSourceCategory(null)}
+          onSelect={(targetId) => void handleConfirmMerge(targetId)}
+        />
+      )}
+
+      {moveTargetDialogOpen && (
+        <CategorySelectDialog
+          title={l(`移动 ${batchSelectedIds.size} 篇文献到…`, `Move ${batchSelectedIds.size} papers to…`)}
+          categories={flatCategories}
+          excludeIds={new Set()}
+          busy={working}
+          confirmLabel={l('移动', 'Move')}
+          onClose={() => setMoveTargetDialogOpen(false)}
+          onSelect={(targetId) => void handleBatchMovePapers(targetId)}
+        />
+      )}
 
       <TagManager
         open={tagManagerOpen}
@@ -2229,27 +2358,18 @@ export default function LiteratureLibraryView({
         onTagsChange={() => void refreshAll()}
       />
 
-      <LibraryTextInputDialog
+      <TagPickerDialog
         open={tagDialogPaper !== null}
-        title={l('添加自定义标签', 'Add Custom Tag')}
-        description={
-          tagDialogPaper
-            ? l(`为“${tagDialogPaper.title}”添加自定义标签。状态徽章不会保存为文献标签。`, `Add a custom tag to "${tagDialogPaper.title}". Status badges are not saved as paper tags.`,
-              )
-            : ''
-        }
-        label={l('标签名称', 'Tag Name')}
-        initialValue=""
-        placeholder={l('例如：待读 / 方法 / 综述', 'e.g. To Read / Method / Review')}
-        confirmLabel={l('添加', 'Add')}
-        cancelLabel={l('取消', 'Cancel')}
+        paperTitle={tagDialogPaper?.title ?? ''}
+        paperTags={tagDialogPaper?.tags ?? []}
+        allTags={allTags}
         busy={dialogBusy}
         onClose={() => {
           if (!dialogBusy) {
             setTagDialogPaper(null);
           }
         }}
-        onSubmit={(value) => void handleSubmitPaperTag(value)}
+        onSubmit={(values) => void handleSubmitPaperTag(values)}
       />
 
       <LibraryConfirmDialog
@@ -2293,6 +2413,79 @@ export default function LiteratureLibraryView({
           void deletePaperAfterConfirm(confirmDialog.paper, confirmDialog.deleteFiles);
         }}
       />
+    </div>
+  );
+}
+
+function CategorySelectDialog({
+  title,
+  categories,
+  excludeIds,
+  busy,
+  confirmLabel,
+  onClose,
+  onSelect,
+}: {
+  title: string;
+  categories: FlatLiteratureCategory[];
+  excludeIds: Set<string>;
+  busy: boolean;
+  confirmLabel: string;
+  onClose: () => void;
+  onSelect: (categoryId: string) => void;
+}) {
+  const l = useLocaleText();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const available = categories.filter(
+    (c) => !c.isSystem && !excludeIds.has(c.id),
+  );
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/42 px-4 py-6 backdrop-blur-sm dark:bg-black/56">
+      <div className="w-[min(380px,calc(100vw-32px))] rounded-[var(--pq-radius-lg)] border border-[var(--pq-border)] bg-[var(--pq-surface-1)] text-[var(--pq-text)] shadow-[var(--pq-shadow-dialog)]">
+        <div className="border-b border-[var(--pq-border)] px-5 py-4">
+          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+        </div>
+        <div className="max-h-[300px] overflow-y-auto px-3 py-3">
+          {available.length === 0 ? (
+            <p className="py-4 text-center text-sm text-[var(--pq-text-faint)]">
+              {l('没有可用的分类', 'No available categories')}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {available.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setSelectedId(c.id)}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                    selectedId === c.id
+                      ? 'bg-[var(--pq-accent-soft)] text-[var(--pq-accent)]'
+                      : 'hover:bg-[var(--pq-surface-2)] text-[var(--pq-text)]'
+                  }`}
+                >
+                  <span className="text-xs text-[var(--pq-text-faint)]">{c.paperCount}</span>
+                  <span className="flex-1 truncate">{categoryDisplayName(c, 'zh-CN')}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-[var(--pq-border)] px-5 py-3">
+          <button type="button" onClick={onClose} disabled={busy} className="pq-button px-4 py-2 text-sm disabled:opacity-60">
+            {l('取消', 'Cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (selectedId) { onSelect(selectedId); } }}
+            disabled={busy || !selectedId}
+            className="pq-button-primary px-4 py-2 text-sm disabled:opacity-60"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

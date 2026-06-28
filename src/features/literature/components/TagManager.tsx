@@ -79,8 +79,7 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
 
     setAllTags((prev) => [...prev, { id: `tag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, name, color: nextColor }]);
     setNewTagName('');
-    onTagsChange();
-  }, [newTagName, allTags, onTagsChange]);
+  }, [newTagName, allTags]);
 
   const handleDeleteSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -126,17 +125,15 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
       await batchRenameTag(id, name);
       setAllTags((prev) => prev.map((t) => (t.id === id ? { ...t, name } : t)));
       setEditingId(null);
-      onTagsChange();
     } finally {
       setBusy(false);
     }
-  }, [editingName, onTagsChange]);
+  }, [editingName]);
 
   const handleColorChange = useCallback((id: string, color: string) => {
     setAllTags((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)));
     void batchRenameTag(id, tagNameMap.get(id) || '', color);
-    onTagsChange();
-  }, [tagNameMap, onTagsChange]);
+  }, [tagNameMap]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {

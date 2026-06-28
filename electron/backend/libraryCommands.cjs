@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
@@ -105,7 +106,11 @@ async function doTranslateText(provider, text, sourceLang, targetLang, settings)
 }
 
 async function translateOnePaperTitle(paper, library, appPaths) {
+  const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
   try {
+    const existing = db.prepare('SELECT 1 FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?').get(paper.id, 'title', 'zh-CN');
+    if (existing) return 'skipped';
+
     const translated = await doTranslateText(
       library.settings.translationProvider,
       paper.title,
@@ -113,17 +118,16 @@ async function translateOnePaperTitle(paper, library, appPaths) {
       'zh',
       library.settings,
     );
-    const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
-    try {
-      db.prepare(`INSERT INTO paper_translations (paper_id, field, source_lang, target_lang, translated_text, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(paper_id, field, target_lang) DO UPDATE SET translated_text = excluded.translated_text, updated_at = excluded.updated_at
-      `).run(paper.id, 'title', 'en', 'zh-CN', translated.trim(), Date.now());
-    } finally {
-      db.close();
-    }
+    db.prepare(`INSERT INTO paper_translations (paper_id, field, source_lang, target_lang, translated_text, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(paper_id, field, target_lang) DO UPDATE SET translated_text = excluded.translated_text, updated_at = excluded.updated_at
+    `).run(paper.id, 'title', 'en', 'zh-CN', translated.trim(), Date.now());
+    return 'ok';
   } catch (error) {
     console.error(`[paperquay] Failed to translate title for paper ${paper.id}:`, error);
+    return 'error';
+  } finally {
+    db.close();
   }
 }
 
@@ -626,16 +630,83 @@ function createLibraryCommands(context) {
 
           const bytes = await fsp.readFile(sourcePath);
           const contentHash = hashBytes(bytes);
-          const duplicate = library.papers.find((paper) =>
+          const metadata = request.metadata?.[sourcePath] ?? {};
+
+          let existingPaper = library.papers.find((paper) =>
             paper.attachments.some((attachment) => attachment.contentHash === contentHash),
           );
 
-          if (duplicate) {
-            results.push({ sourcePath, paper: duplicate, duplicated: true, existingPaperId: duplicate.id, status: 'duplicate', message: 'Duplicate PDF' });
+          if (!existingPaper) {
+            const sourceDoi = cleanString(metadata.doi);
+            if (sourceDoi) {
+              existingPaper = library.papers.find((p) => cleanString(p.doi) === sourceDoi) ?? null;
+            }
+          }
+
+          if (!existingPaper) {
+            const sourceTitle = cleanString(metadata.title || path.basename(sourcePath, '.pdf').replace(/\.pdf$/i, ''));
+            if (sourceTitle) {
+              const norm = (t) => t.replace(/[^a-z0-9\u4e00-\u9fa5]/gi, '').toLowerCase();
+              const titleNorm = norm(sourceTitle);
+              existingPaper = library.papers.find((p) => {
+                const pNorm = norm(cleanString(p.title));
+                return pNorm && (pNorm === titleNorm || pNorm.includes(titleNorm) || titleNorm.includes(pNorm));
+              }) ?? null;
+            }
+          }
+
+          if (!existingPaper) {
+            const fileNameNoExt = path.basename(sourcePath).replace(/\.pdf$/i, '').toLowerCase();
+            if (fileNameNoExt) {
+              existingPaper = library.papers.find((p) => {
+                const storedFile = p.attachments.find((a) => a.kind === 'pdf' && a.fileName);
+                return storedFile && storedFile.fileName.toLowerCase().replace(/\.pdf$/i, '') === fileNameNoExt;
+              }) ?? null;
+            }
+          }
+
+          if (existingPaper) {
+            let matchedHashFileMissing = false;
+            let anyValidPdf = false;
+            for (const a of existingPaper.attachments) {
+              if (a.kind !== 'pdf' || !a.storedPath) continue;
+              let fileExists = false;
+              try { await fsp.access(a.storedPath); fileExists = true; } catch { a.missing = true; }
+              if (fileExists) anyValidPdf = true;
+              if (a.contentHash === contentHash && !fileExists) matchedHashFileMissing = true;
+            }
+
+            if (anyValidPdf) {
+              results.push({ sourcePath, paper: existingPaper, duplicated: true, existingPaperId: existingPaper.id, status: 'duplicate', message: 'PDF already exists' });
+              if (matchedHashFileMissing) await store.save(library);
+              continue;
+            }
+
+            const attId = id('att');
+            const fileName = safeFileName(fileNameFromPath(sourcePath));
+            const storedPath = path.join(storageDir, `${attId}-${fileName}`);
+            await fsp.copyFile(sourcePath, storedPath);
+            const stat = await fsp.stat(storedPath);
+            existingPaper.attachments.push({
+              id: attId,
+              paperId: existingPaper.id,
+              kind: 'pdf',
+              originalPath: sourcePath,
+              storedPath,
+              relativePath: path.relative(storageDir, storedPath),
+              fileName,
+              mimeType: 'application/pdf',
+              fileSize: stat.size,
+              contentHash,
+              createdAt: now(),
+              missing: false,
+            });
+            existingPaper.updatedAt = now();
+            await store.save(library);
+            results.push({ sourcePath, paper: existingPaper, duplicated: false, existingPaperId: existingPaper.id, status: 'imported', message: 'PDF supplemented' });
             continue;
           }
 
-          const metadata = request.metadata?.[sourcePath] ?? {};
           const paperId = id('paper');
           const fileName = safeFileName(fileNameFromPath(sourcePath));
           let storedPath = sourcePath;
@@ -759,6 +830,50 @@ function createLibraryCommands(context) {
       }
     },
 
+    async library_merge_categories({ request }) {
+      const { sourceCategoryId, targetCategoryId } = request ?? {};
+      if (!sourceCategoryId || !targetCategoryId) throw new Error('sourceCategoryId and targetCategoryId are required');
+      if (sourceCategoryId === targetCategoryId) throw new Error('Cannot merge a category into itself');
+
+      const library = store.load();
+      const source = library.categories.find((c) => c.id === sourceCategoryId);
+      if (!source) throw new Error('Source category does not exist');
+      const target = library.categories.find((c) => c.id === targetCategoryId);
+      if (!target) throw new Error('Target category does not exist');
+
+      const allDescendantIds = (parentId) => {
+        const ids = [];
+        const queue = [parentId];
+        while (queue.length) {
+          const id = queue.shift();
+          ids.push(id);
+          for (const c of library.categories) {
+            if (c.parentId === id && !ids.includes(c.id)) queue.push(c.id);
+          }
+        }
+        return ids;
+      };
+
+      const targetDescendants = allDescendantIds(targetCategoryId);
+      if (targetDescendants.includes(sourceCategoryId)) {
+        throw new Error('Cannot merge a parent category into its descendant');
+      }
+
+      for (const paper of library.papers) {
+        if (paper.categoryIds.includes(sourceCategoryId)) {
+          if (!paper.categoryIds.includes(targetCategoryId)) {
+            paper.categoryIds.push(targetCategoryId);
+          }
+          paper.categoryIds = paper.categoryIds.filter((id) => id !== sourceCategoryId);
+        }
+      }
+
+      const removeIds = new Set([sourceCategoryId, ...allDescendantIds(sourceCategoryId).filter((id) => id !== sourceCategoryId)]);
+      library.categories = library.categories.filter((c) => !removeIds.has(c.id));
+
+      await store.save(library);
+    },
+
     async library_sync_paper_to_repo({ request }) {
       const { paperId } = request ?? {};
       if (!paperId) return;
@@ -771,6 +886,225 @@ function createLibraryCommands(context) {
       if (!repoDir) return;
 
       await syncSinglePaperToRepo(paper, repoDir, appPaths);
+    },
+
+    async library_batch_delete_papers({ request }) {
+      const { paperIds, deleteFiles } = request ?? {};
+      if (!paperIds?.length) return { deleted: 0 };
+
+      const library = store.load();
+      let deleted = 0;
+      for (const paperId of paperIds) {
+        const paper = library.papers.find((p) => p.id === paperId);
+        if (!paper) continue;
+        if (deleteFiles) {
+          for (const attachment of paper.attachments) {
+            await fsp.rm(attachment.storedPath, { force: true }).catch(() => {});
+          }
+        }
+        deleted += 1;
+      }
+      library.papers = library.papers.filter((p) => !paperIds.includes(p.id));
+      await store.save(library);
+      return { deleted };
+    },
+
+    async library_find_duplicates() {
+      const library = store.load();
+      const groups = [];
+      const seen = new Set();
+
+      const isGenericTitle = (t) => {
+        const raw = cleanString(t);
+        if (!raw) return true;
+        const lowered = raw.toLowerCase().trim();
+        const generics = [
+          'untitled', 'no title', 'notitle', 'untitled pdf', 'no title available',
+          '未命名', 'unknown', 'unnamed', 'pdf', 'document', 'paper',
+          /^\d{10,}$/,    // purely numeric (e.g. timestamps)
+          /^[a-z0-9]{20,}$/,  // random alphanumeric (e.g. hashes)
+        ];
+        return generics.some((g) => typeof g === 'string' ? lowered.includes(g) : g.test(lowered));
+      };
+
+      const normalizeDoi = (d) => {
+        const raw = cleanString(d);
+        if (!raw) return null;
+        const lowered = raw.toLowerCase()
+          .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')
+          .replace(/^doi:\s*/i, '')
+          .replace(/[^a-z0-9.\-\/_:]/g, '')
+          .trim();
+        if (!lowered) return null;
+        const placeholders = /^(n\/?a|none|nil|na|\-|\.|unknown|null|not\s*available)$/;
+        if (placeholders.test(lowered)) return null;
+        return lowered;
+      };
+
+      const normalizeTitle = (t) => {
+        const raw = cleanString(t);
+        if (!raw || raw.length < 15 || isGenericTitle(raw)) return null;
+        const norm = raw.toLowerCase()
+          .replace(/[\[\]{}()《》【】「」『』""''“”‘’.,;:!?。，；：！？、·…\-—\s]+/g, '')
+          .trim();
+        return norm.length >= 15 ? norm : null;
+      };
+
+      const doiMap = new Map();
+      const titleMap = new Map();
+      const hashMap = new Map();
+
+      for (const paper of library.papers) {
+        const doi = normalizeDoi(paper.doi);
+        if (doi) {
+          if (!doiMap.has(doi)) doiMap.set(doi, []);
+          doiMap.get(doi).push(paper);
+        }
+
+        const title = normalizeTitle(paper.title);
+        if (title) {
+          if (!titleMap.has(title)) titleMap.set(title, []);
+          titleMap.get(title).push(paper);
+        }
+
+        for (const att of paper.attachments) {
+          if (att.kind === 'pdf' && att.contentHash) {
+            let fileExists = false;
+            try { fs.accessSync(att.storedPath); fileExists = true; } catch {}
+            if (fileExists) {
+              if (!hashMap.has(att.contentHash)) hashMap.set(att.contentHash, []);
+              hashMap.get(att.contentHash).push(paper);
+            }
+          }
+        }
+      }
+
+      const normStr = (t) => (t || '').replace(/[^a-z0-9\u4e00-\u9fa5]/gi, '').toLowerCase().trim();
+      const makeEntry = (p) => ({ id: p.id, title: p.title, norm: normStr(p.title), authors: p.authors.map((a) => a.name).join(', '), year: p.year, doi: p.doi });
+
+      for (const [, papers] of doiMap) {
+        const ids = [...new Set(papers.map((p) => p.id))].filter((id) => !seen.has(id));
+        if (ids.length >= 2) {
+          ids.forEach((id) => seen.add(id));
+          groups.push({ type: 'doi', value: papers[0].doi, entries: papers.map(makeEntry) });
+        }
+      }
+
+      for (const [, papers] of titleMap) {
+        const ids = [...new Set(papers.map((p) => p.id))].filter((id) => !seen.has(id));
+        if (ids.length >= 2 && ids.length <= 5) {
+          ids.forEach((id) => seen.add(id));
+          groups.push({ type: 'title', entries: papers.map(makeEntry) });
+        }
+      }
+
+      for (const [, papers] of hashMap) {
+        const ids = [...new Set(papers.map((p) => p.id))].filter((id) => !seen.has(id));
+        if (ids.length >= 2) {
+          ids.forEach((id) => seen.add(id));
+          groups.push({ type: 'hash', entries: papers.map(makeEntry) });
+        }
+      }
+
+      return { totalDuplicates: seen.size, groups };
+    },
+
+    async library_zotero_supplement({ request }) {
+      const { dataDir, collectionKeys } = request ?? {};
+      if (!dataDir || !collectionKeys?.length) return { total: 0, supplemented: 0, imported: 0, duplicates: 0, errors: 0, skipped: 0, titleMismatches: [] };
+
+      const { listLocalCollectionItems } = require('./zoteroLocal.cjs');
+      const library = store.load();
+      const storageDir = library.settings.storageDir || path.join(appPaths.dataDir, 'paperquay-data');
+      await fsp.mkdir(storageDir, { recursive: true });
+      const norm = (t) => (t || '').replace(/[^a-z0-9\u4e00-\u9fa5]/gi, '').toLowerCase();
+      let total = 0, supplemented = 0, imported = 0, duplicates = 0, errors = 0, skipped = 0;
+      const titleMismatches = [];
+
+      for (const key of collectionKeys) {
+        const items = await listLocalCollectionItems({ dataDir, collectionKey: key });
+        for (const item of items) {
+          if (!item.localPdfPath) { skipped += 1; continue; }
+          total += 1;
+          try {
+            await ensureFile(item.localPdfPath);
+            const bytes = await fsp.readFile(item.localPdfPath);
+            const contentHash = hashBytes(bytes);
+            const itemTitle = item.title?.trim() || item.attachmentFilename || item.itemKey;
+            const itemTitleNorm = norm(itemTitle);
+
+            let matched = library.papers.find((p) =>
+              p.attachments.some((a) => a.contentHash === contentHash && (() => { try { fs.accessSync(a.storedPath); return true; } catch { return false; } })()),
+            );
+            if (matched) { duplicates += 1; continue; }
+
+            matched = library.papers.find((p) => {
+              const pNorm = norm(p.title);
+              return pNorm && (pNorm === itemTitleNorm || pNorm.includes(itemTitleNorm) || itemTitleNorm.includes(pNorm));
+            });
+
+            if (matched) {
+              const hasValidPdf = matched.attachments.some((a) => { try { fs.accessSync(a.storedPath); return true; } catch { return false; } });
+              if (!hasValidPdf) {
+                const attId = id('att');
+                const fileName = safeFileName(fileNameFromPath(item.localPdfPath));
+                const storedPath = path.join(storageDir, `${attId}-${fileName}`);
+                await fsp.copyFile(item.localPdfPath, storedPath);
+                const stat = await fsp.stat(storedPath);
+                matched.attachments.push({
+                  id: attId,
+                  paperId: matched.id,
+                  kind: 'pdf',
+                  originalPath: item.localPdfPath,
+                  storedPath,
+                  relativePath: path.relative(storageDir, storedPath),
+                  fileName,
+                  mimeType: 'application/pdf',
+                  fileSize: stat.size,
+                  contentHash,
+                  createdAt: now(),
+                  missing: false,
+                });
+                matched.updatedAt = now();
+                supplemented += 1;
+              } else {
+                duplicates += 1;
+              }
+              continue;
+            }
+
+            library.papers.find((p) => {
+              const pNorm = norm(p.title);
+              if (pNorm && pNorm.length > 3) {
+                const itemShort = itemTitleNorm.slice(0, 20);
+                const pShort = pNorm.slice(0, 20);
+                if (pShort === itemShort) titleMismatches.push({ zotero: itemTitle.slice(0, 60), library: p.title.slice(0, 60) });
+              }
+              return false;
+            });
+
+            const paperId = id('paper');
+            const fileName = safeFileName(fileNameFromPath(item.localPdfPath));
+            const storedPath = path.join(storageDir, `${paperId}-${fileName}`);
+            await fsp.copyFile(item.localPdfPath, storedPath);
+            const stat = await fsp.stat(storedPath);
+            library.papers.push({
+              id: paperId, title: itemTitle, year: item.year || null,
+              publication: null, doi: null, url: null, abstractText: null, keywords: [],
+              importedAt: now(), updatedAt: now(), lastReadAt: null, readingProgress: 0,
+              isFavorite: false, userNote: null, aiSummary: null, citation: null,
+              source: 'zotero',
+              sortOrder: Math.min(0, ...library.papers.map((p) => p.sortOrder ?? 0)) - 1,
+              authors: item.creators ? [{ id: id('auth'), paperId, name: item.creators, givenName: null, familyName: null, sortOrder: 0 }] : [],
+              tags: [], categoryIds: [],
+              attachments: [{ id: id('att'), paperId, kind: 'pdf', originalPath: item.localPdfPath, storedPath, relativePath: null, fileName, mimeType: 'application/pdf', fileSize: stat.size, contentHash, createdAt: now(), missing: false }],
+            });
+            imported += 1;
+          } catch (e) { errors += 1; }
+        }
+      }
+      await store.save(library);
+      return { total, supplemented, imported, duplicates, errors, skipped, titleMismatches };
     },
 
     async library_export_bibtex() {
@@ -868,16 +1202,15 @@ function createLibraryCommands(context) {
 
     async library_batch_get_translations({ request }) {
       const { paperIds, field, targetLang } = request ?? {};
-      if (!paperIds || !field || !targetLang) return {};
+      if (!paperIds?.length || !field || !targetLang) return {};
+      const placeholders = paperIds.map(() => '?').join(',');
       const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
       try {
         const rows = db.prepare(
-          'SELECT paper_id, translated_text FROM paper_translations WHERE field = ? AND target_lang = ?'
-        ).all(field, targetLang);
+          `SELECT paper_id, translated_text FROM paper_translations WHERE field = ? AND target_lang = ? AND paper_id IN (${placeholders})`
+        ).all(field, targetLang, ...paperIds);
         const result = {};
-        for (const row of rows) {
-          if (paperIds.includes(row.paper_id)) result[row.paper_id] = row.translated_text;
-        }
+        for (const row of rows) result[row.paper_id] = row.translated_text;
         return result;
       } finally {
         db.close();
@@ -912,46 +1245,22 @@ function createLibraryCommands(context) {
         throw new Error('请先在设置中配置翻译服务');
       }
 
-      const results = { total: 0, translated: 0, skipped: 0, failed: 0, errors: [] };
+      const results = { total: 0, translated: 0, skipped: 0, failed: 0 };
+      const filtered = library.papers.filter((p) => p.title?.trim() && p.id);
+      results.total = filtered.length;
+
       const BATCH_SIZE = 3;
       const DELAY_MS = 600;
-      let batch = [];
 
-      for (const paper of library.papers) {
-        results.total += 1;
-
-        if (!paper.title?.trim() || !paper.id) {
-          results.skipped += 1;
-          continue;
+      for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
+        const batch = filtered.slice(i, i + BATCH_SIZE);
+        const statuses = await Promise.all(batch.map((p) => translateOnePaperTitle(p, library, appPaths)));
+        for (const s of statuses) {
+          if (s === 'ok') results.translated += 1;
+          else if (s === 'skipped') results.skipped += 1;
+          else results.failed += 1;
         }
-
-        const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
-        let alreadyTranslated = false;
-        try {
-          const row = db.prepare('SELECT 1 FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?').get(paper.id, 'title', 'zh-CN');
-          alreadyTranslated = Boolean(row);
-        } finally {
-          db.close();
-        }
-
-        if (alreadyTranslated) {
-          results.skipped += 1;
-          continue;
-        }
-
-        batch.push(paper);
-
-        if (batch.length >= BATCH_SIZE) {
-          await Promise.all(batch.map((p) => translateOnePaperTitle(p, library, appPaths)));
-          results.translated += batch.length;
-          batch = [];
-          await new Promise((r) => setTimeout(r, DELAY_MS));
-        }
-      }
-
-      if (batch.length > 0) {
-        await Promise.all(batch.map((p) => translateOnePaperTitle(p, library, appPaths)));
-        results.translated += batch.length;
+        if (i + BATCH_SIZE < filtered.length) await new Promise((r) => setTimeout(r, DELAY_MS));
       }
 
       return results;
