@@ -1,6 +1,191 @@
 const crypto = require('node:crypto');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+
+async function doTranslateText(provider, text, sourceLang, targetLang, settings) {
+  const source = sourceLang || 'auto';
+  const target = targetLang || 'zh';
+
+  if (provider === 'ai') {
+    const baseUrl = (settings?.translationBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+    const apiKey = settings?.translationApiKey || '';
+    const model = settings?.translationModel || 'gpt-4o-mini';
+    if (!apiKey) throw new Error('AI translation requires API Key');
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: `You are a professional translator. Translate the following academic paper title from ${source} to ${target}. Only output the translated text, nothing else.` },
+          { role: 'user', content: text },
+        ],
+        temperature: 0.3,
+      }),
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(`AI translation error: ${data.error.message || JSON.stringify(data.error)}`);
+    return (data.choices?.[0]?.message?.content || text).trim();
+  }
+
+  if (provider === 'baidu') {
+    const appid = settings?.translationAppId || '';
+    const secretKey = settings?.translationSecretKey || '';
+    if (!appid || !secretKey) throw new Error('Baidu Translate requires APP ID and Secret Key');
+    const salt = String(Date.now());
+    const sign = crypto.createHash('md5').update(`${appid}${text}${salt}${secretKey}`).digest('hex');
+    const response = await fetch(`https://fanyi-api.baidu.com/api/trans/vip/translate?q=${encodeURIComponent(text)}&from=${source}&to=${target}&appid=${appid}&salt=${salt}&sign=${sign}`);
+    const data = await response.json();
+    if (data.error_code && data.error_code !== '0') throw new Error(`Baidu error: ${data.error_code} ${data.error_msg || ''}`);
+    return data.trans_result?.[0]?.dst ?? text;
+  }
+
+  if (provider === 'google') {
+    if (!settings?.translationApiKey) throw new Error('Google Translate requires API Key');
+    const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${settings.translationApiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: text, source, target, format: 'text' }),
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(`Google error: ${data.error.message}`);
+    return data.data?.translations?.[0]?.translatedText ?? text;
+  }
+
+  if (provider === 'deepl') {
+    if (!settings?.translationApiKey) throw new Error('DeepL requires API Key');
+    const response = await fetch('https://api-free.deepl.com/v2/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ auth_key: settings.translationApiKey, text, source_lang: source.toUpperCase(), target_lang: target.toUpperCase() }),
+    });
+    const data = await response.json();
+    if (data.message) throw new Error(`DeepL error: ${data.message}`);
+    return data.translations?.[0]?.text ?? text;
+  }
+
+  if (provider === 'aliyun') {
+    if (!settings?.translationApiKey || !settings?.translationSecretKey) throw new Error('Alibaba requires Access Key and Secret Key');
+    const response = await fetch('https://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ SourceText: text, SourceLanguage: source, TargetLanguage: target, FormatType: 'text' }),
+    });
+    const data = await response.json();
+    if (data.Code !== 'OK') throw new Error(`Alibaba error: ${data.Message || data.Code}`);
+    return data.Data?.Translated ?? text;
+  }
+
+  if (provider === 'tencent') {
+    if (!settings?.translationApiKey || !settings?.translationSecretKey) throw new Error('Tencent requires SecretId and SecretKey');
+    const response = await fetch('https://tmt.tencentcloudapi.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-TC-Action': 'TextTranslate', 'X-TC-Region': 'ap-guangzhou' },
+      body: JSON.stringify({ SourceText: text, Source: source, Target: target, ProjectId: 0 }),
+    });
+    const data = await response.json();
+    if (data.Response?.Error) throw new Error(`Tencent error: ${data.Response.Error.Message}`);
+    return data.Response?.TargetText ?? text;
+  }
+
+  if (provider === 'volc') {
+    if (!settings?.translationApiKey || !settings?.translationSecretKey) throw new Error('Volcano requires Access Key and Secret Key');
+    const response = await fetch('https://translate.volcengineapi.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ SourceLanguage: source, TargetLanguage: target, TextList: [text] }),
+    });
+    const data = await response.json();
+    if (data.ResponseMetadata?.Error) throw new Error(`Volcano error: ${data.ResponseMetadata.Error.Message}`);
+    return data.TranslationList?.[0]?.Translation ?? text;
+  }
+
+  throw new Error(`Unsupported translation provider: ${provider}`);
+}
+
+async function translateOnePaperTitle(paper, library, appPaths) {
+  try {
+    const translated = await doTranslateText(
+      library.settings.translationProvider,
+      paper.title,
+      'en',
+      'zh',
+      library.settings,
+    );
+    const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
+    try {
+      db.prepare(`INSERT INTO paper_translations (paper_id, field, source_lang, target_lang, translated_text, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(paper_id, field, target_lang) DO UPDATE SET translated_text = excluded.translated_text, updated_at = excluded.updated_at
+      `).run(paper.id, 'title', 'en', 'zh-CN', translated.trim(), Date.now());
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    console.error(`[paperquay] Failed to translate title for paper ${paper.id}:`, error);
+  }
+}
+
+async function syncSinglePaperToRepo(paper, repoDir, appPaths) {
+  const paperDir = path.join(repoDir, paper.id);
+  await fsp.mkdir(paperDir, { recursive: true });
+
+  await fsp.writeFile(
+    path.join(paperDir, 'metadata.json'),
+    JSON.stringify({
+      id: paper.id,
+      title: paper.title,
+      authors: paper.authors.map((a) => a.name),
+      year: paper.year,
+      publication: paper.publication,
+      doi: paper.doi,
+      url: paper.url,
+      abstract: paper.abstractText,
+      keywords: paper.keywords,
+      tags: paper.tags.map((t) => t.name),
+      userNote: paper.userNote,
+      isFavorite: paper.isFavorite,
+      source: paper.source,
+      importedAt: paper.importedAt,
+      updatedAt: paper.updatedAt,
+    }, null, 2),
+  );
+
+  const mineruDir = path.join(appPaths.mineruCacheDir, `document-${paper.id}`);
+  for (const [src, dst] of [['full.md', 'full.md'], ['content_list_v2.json', 'content_list_v2.json']]) {
+    try { await fsp.access(path.join(mineruDir, src)); await fsp.copyFile(path.join(mineruDir, src), path.join(paperDir, dst)); } catch {}
+  }
+
+  const pdfAttachment = paper.attachments.find((a) => a.kind === 'pdf');
+  if (pdfAttachment) {
+    try { await fsp.access(pdfAttachment.storedPath); await fsp.copyFile(pdfAttachment.storedPath, path.join(paperDir, 'paper.pdf')); } catch {}
+  }
+
+  if (paper.userNote?.trim()) {
+    try { await fsp.writeFile(path.join(paperDir, 'note.md'), paper.userNote); } catch {}
+  }
+
+  const indexEntry = {
+    id: paper.id,
+    title: paper.title,
+    authors: paper.authors.map((a) => a.name),
+    year: paper.year,
+    doi: paper.doi,
+    tags: paper.tags.map((t) => t.name),
+    hasPdf: Boolean(pdfAttachment),
+    hasMarkdown: false,
+  };
+  try { await fsp.access(path.join(paperDir, 'full.md')); indexEntry.hasMarkdown = true; } catch {}
+
+  const indexPath = path.join(repoDir, 'index.json');
+  let index = [];
+  try { index = JSON.parse(await fsp.readFile(indexPath, 'utf8')); } catch {}
+  const existingIdx = index.findIndex((e) => e.id === paper.id);
+  if (existingIdx >= 0) { index[existingIdx] = indexEntry; } else { index.push(indexEntry); }
+  await fsp.writeFile(indexPath, JSON.stringify(index, null, 2));
+}
+
 const {
   attachCategoryCounts,
   normalizeAuthor,
@@ -576,72 +761,54 @@ function createLibraryCommands(context) {
 
     async library_sync_paper_to_repo({ request }) {
       const { paperId } = request ?? {};
-      if (!paperId) throw new Error('paperId is required');
+      if (!paperId) return;
 
       const library = store.load();
       const paper = library.papers.find((p) => p.id === paperId);
-      if (!paper) throw new Error('Paper does not exist');
+      if (!paper) return;
 
       const repoDir = cleanString(library.settings.paperRepoDir);
       if (!repoDir) return;
 
-      const paperDir = path.join(repoDir, paperId);
-      await fsp.mkdir(paperDir, { recursive: true });
+      await syncSinglePaperToRepo(paper, repoDir, appPaths);
+    },
 
-      await fsp.writeFile(
-        path.join(paperDir, 'metadata.json'),
-        JSON.stringify({
-          id: paper.id,
-          title: paper.title,
-          authors: paper.authors.map((a) => a.name),
-          year: paper.year,
-          publication: paper.publication,
-          doi: paper.doi,
-          url: paper.url,
-          abstract: paper.abstractText,
-          keywords: paper.keywords,
-          tags: paper.tags.map((t) => t.name),
-          isFavorite: paper.isFavorite,
-          source: paper.source,
-          importedAt: paper.importedAt,
-          updatedAt: paper.updatedAt,
-        }, null, 2),
-      );
+    async library_export_bibtex() {
+      const library = store.load();
+      const entries = library.papers.map((paper) => {
+        const authors = paper.authors.map((a) => a.name).join(' and ');
+        const year = paper.year || 'n.d.';
+        const key = `${paper.authors[0]?.name?.split(' ').pop() || 'Unknown'}${year}${paper.id.slice(-4)}`;
+        const lines = [`@article{${key},`];
+        if (paper.title) lines.push(`  title = {${paper.title}},`);
+        if (authors) lines.push(`  author = {${authors}},`);
+        if (paper.year) lines.push(`  year = {${paper.year}},`);
+        if (paper.publication) lines.push(`  journal = {${paper.publication}},`);
+        if (paper.doi) lines.push(`  doi = {${paper.doi}},`);
+        if (paper.url) lines.push(`  url = {${paper.url}},`);
+        lines.push('}');
+        return lines.join('\n');
+      });
+      return entries.join('\n\n');
+    },
 
-      const mineruDir = path.join(appPaths.mineruCacheDir, `document-${paperId}`);
-      const fullMdPath = path.join(mineruDir, 'full.md');
-      try {
-        await fsp.access(fullMdPath);
-        await fsp.copyFile(fullMdPath, path.join(paperDir, 'full.md'));
-      } catch {}
+    async library_migrate_all_to_repo() {
+      const library = store.load();
+      const repoDir = cleanString(library.settings.paperRepoDir);
+      if (!repoDir) throw new Error('请先配置文献仓库目录');
 
-      const jsonPath = path.join(mineruDir, 'content_list_v2.json');
-      try {
-        await fsp.access(jsonPath);
-        await fsp.copyFile(jsonPath, path.join(paperDir, 'content_list_v2.json'));
-      } catch {}
-
-      const indexEntry = {
-        id: paper.id,
-        title: paper.title,
-        authors: paper.authors.map((a) => a.name),
-        year: paper.year,
-        doi: paper.doi,
-        tags: paper.tags.map((t) => t.name),
-      };
-
-      const indexPath = path.join(repoDir, 'index.json');
-      let index = [];
-      try {
-        index = JSON.parse(await fsp.readFile(indexPath, 'utf8'));
-      } catch {}
-      const existingIdx = index.findIndex((e) => e.id === paperId);
-      if (existingIdx >= 0) {
-        index[existingIdx] = indexEntry;
-      } else {
-        index.push(indexEntry);
+      const results = { total: 0, synced: 0, failed: 0, errors: [] };
+      for (const paper of library.papers) {
+        results.total += 1;
+        try {
+          await syncSinglePaperToRepo(paper, repoDir, appPaths);
+          results.synced += 1;
+        } catch (error) {
+          results.failed += 1;
+          results.errors.push({ id: paper.id, error: String(error) });
+        }
       }
-      await fsp.writeFile(indexPath, JSON.stringify(index, null, 2));
+      return results;
     },
 
     async library_batch_rename_tag({ request }) {
@@ -699,6 +866,24 @@ function createLibraryCommands(context) {
       }
     },
 
+    async library_batch_get_translations({ request }) {
+      const { paperIds, field, targetLang } = request ?? {};
+      if (!paperIds || !field || !targetLang) return {};
+      const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
+      try {
+        const rows = db.prepare(
+          'SELECT paper_id, translated_text FROM paper_translations WHERE field = ? AND target_lang = ?'
+        ).all(field, targetLang);
+        const result = {};
+        for (const row of rows) {
+          if (paperIds.includes(row.paper_id)) result[row.paper_id] = row.translated_text;
+        }
+        return result;
+      } finally {
+        db.close();
+      }
+    },
+
     async library_save_translation({ request }) {
       const { paperId, field, sourceLang, targetLang, translatedText } = request ?? {};
       if (!paperId || !field || !targetLang || !translatedText) return;
@@ -717,104 +902,59 @@ function createLibraryCommands(context) {
     async library_translate_text({ request }) {
       const { provider, text, sourceLang, targetLang, settings } = request ?? {};
       if (!text || !provider) throw new Error('Missing required parameters');
+      return doTranslateText(provider, text, sourceLang, targetLang, settings);
+    },
 
-      const source = sourceLang || 'auto';
-      const target = targetLang || 'zh';
-
-      if (provider === 'baidu') {
-        const appid = settings?.translationAppId || '';
-        const secretKey = settings?.translationSecretKey || '';
-        if (!appid || !secretKey) throw new Error('Baidu Translate requires APP ID and Secret Key');
-
-        const salt = String(Date.now());
-        const sign = crypto.createHash('md5').update(`${appid}${text}${salt}${secretKey}`).digest('hex');
-        const url = `https://fanyi-api.baidu.com/api/trans/vip/translate?q=${encodeURIComponent(text)}&from=${source}&to=${target}&appid=${appid}&salt=${salt}&sign=${sign}`;
-
-        const response = await fetch(url);
-        const data = await response.json();
-        if (data.error_code && data.error_code !== '0') throw new Error(`Baidu Translate error: ${data.error_code} ${data.error_msg || ''}`);
-        return data.trans_result?.[0]?.dst ?? text;
+    async library_translate_all_titles() {
+      const library = store.load();
+      const provider = library.settings.translationProvider;
+      if (!provider || provider === 'ai' && !library.settings.translationApiKey) {
+        throw new Error('请先在设置中配置翻译服务');
       }
 
-      if (provider === 'google') {
-        const apiKey = settings?.translationApiKey || '';
-        if (!apiKey) throw new Error('Google Translate requires API Key');
+      const results = { total: 0, translated: 0, skipped: 0, failed: 0, errors: [] };
+      const BATCH_SIZE = 3;
+      const DELAY_MS = 600;
+      let batch = [];
 
-        const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ q: text, source, target, format: 'text' }),
-        });
-        const data = await response.json();
-        if (data.error) throw new Error(`Google Translate error: ${data.error.message}`);
-        return data.data?.translations?.[0]?.translatedText ?? text;
+      for (const paper of library.papers) {
+        results.total += 1;
+
+        if (!paper.title?.trim() || !paper.id) {
+          results.skipped += 1;
+          continue;
+        }
+
+        const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
+        let alreadyTranslated = false;
+        try {
+          const row = db.prepare('SELECT 1 FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?').get(paper.id, 'title', 'zh-CN');
+          alreadyTranslated = Boolean(row);
+        } finally {
+          db.close();
+        }
+
+        if (alreadyTranslated) {
+          results.skipped += 1;
+          continue;
+        }
+
+        batch.push(paper);
+
+        if (batch.length >= BATCH_SIZE) {
+          await Promise.all(batch.map((p) => translateOnePaperTitle(p, library, appPaths)));
+          results.translated += batch.length;
+          batch = [];
+          await new Promise((r) => setTimeout(r, DELAY_MS));
+        }
       }
 
-      if (provider === 'deepl') {
-        const apiKey = settings?.translationApiKey || '';
-        if (!apiKey) throw new Error('DeepL requires API Key');
-
-        const url = `https://api-free.deepl.com/v2/translate`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ auth_key: apiKey, text, source_lang: source.toUpperCase(), target_lang: target.toUpperCase() }),
-        });
-        const data = await response.json();
-        if (data.message) throw new Error(`DeepL error: ${data.message}`);
-        return data.translations?.[0]?.text ?? text;
+      if (batch.length > 0) {
+        await Promise.all(batch.map((p) => translateOnePaperTitle(p, library, appPaths)));
+        results.translated += batch.length;
       }
 
-      if (provider === 'aliyun') {
-        const accessKey = settings?.translationApiKey || '';
-        const secretKey = settings?.translationSecretKey || '';
-        if (!accessKey || !secretKey) throw new Error('Alibaba Cloud Translate requires Access Key and Secret Key');
-
-        const url = 'https://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general';
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessKey}` },
-          body: JSON.stringify({ SourceText: text, SourceLanguage: source, TargetLanguage: target, FormatType: 'text' }),
-        });
-        const data = await response.json();
-        if (data.Code !== 'OK') throw new Error(`Alibaba Cloud Translate error: ${data.Message || data.Code}`);
-        return data.Data?.Translated ?? text;
-      }
-
-      if (provider === 'tencent') {
-        const secretId = settings?.translationApiKey || '';
-        const secretKey = settings?.translationSecretKey || '';
-        if (!secretId || !secretKey) throw new Error('Tencent Cloud Translate requires SecretId and SecretKey');
-
-        const url = 'https://tmt.tencentcloudapi.com';
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-TC-Action': 'TextTranslate', 'X-TC-Region': 'ap-guangzhou' },
-          body: JSON.stringify({ SourceText: text, Source: source, Target: target, ProjectId: 0 }),
-        });
-        const data = await response.json();
-        if (data.Response?.Error) throw new Error(`Tencent Cloud error: ${data.Response.Error.Message}`);
-        return data.Response?.TargetText ?? text;
-      }
-
-      if (provider === 'volc') {
-        const accessKey = settings?.translationApiKey || '';
-        const secretKey = settings?.translationSecretKey || '';
-        if (!accessKey || !secretKey) throw new Error('Volcano Engine requires Access Key and Secret Key');
-
-        const url = 'https://translate.volcengineapi.com';
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ SourceLanguage: source, TargetLanguage: target, TextList: [text] }),
-        });
-        const data = await response.json();
-        if (data.ResponseMetadata?.Error) throw new Error(`Volcano Engine error: ${data.ResponseMetadata.Error.Message}`);
-        return data.TranslationList?.[0]?.Translation ?? text;
-      }
-
-      throw new Error(`Unsupported translation provider: ${provider}`);
+      return results;
     },
 
     async library_list_all_tags() {

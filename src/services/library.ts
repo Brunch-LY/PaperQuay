@@ -171,6 +171,14 @@ export async function deleteLibraryPaper(
   }
 }
 
+export async function batchGetPaperTranslations(paperIds: string[], field = 'title', targetLang = 'zh-CN'): Promise<Record<string, string>> {
+  try {
+    return await invoke('library_batch_get_translations', { request: { paperIds, field, targetLang } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '批量读取翻译失败'));
+  }
+}
+
 export async function getPaperTranslation(request: {
   paperId: string;
   field: string;
@@ -234,6 +242,30 @@ export async function syncPaperToRepo(paperId: string): Promise<void> {
     await invoke('library_sync_paper_to_repo', { request: { paperId } });
   } catch (error) {
     throw new Error(toErrorMessage(error, '同步文献到仓库失败'));
+  }
+}
+
+export async function migrateAllToRepo(): Promise<{ total: number; synced: number; failed: number; errors: { id: string; error: string }[] }> {
+  try {
+    return await invoke('library_migrate_all_to_repo');
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '迁移全部文献失败'));
+  }
+}
+
+export async function exportBibtex(): Promise<string> {
+  try {
+    return await invoke<string>('library_export_bibtex');
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '导出 BibTeX 失败'));
+  }
+}
+
+export async function translateAllTitles(): Promise<{ total: number; translated: number; skipped: number; failed: number }> {
+  try {
+    return await invoke('library_translate_all_titles');
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '批量翻译标题失败'));
   }
 }
 

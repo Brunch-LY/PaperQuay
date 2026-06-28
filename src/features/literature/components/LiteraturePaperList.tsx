@@ -42,6 +42,7 @@ interface LiteraturePaperListProps {
   loading: boolean;
   working: boolean;
   papers: LiteraturePaper[];
+  paperTranslations?: Record<string, string>;
   paperStatuses: Record<string, LiteraturePaperListStatus>;
   showReadingHeatmap?: boolean;
   selectedPaper: LiteraturePaper | null;
@@ -74,6 +75,7 @@ export default function LiteraturePaperList({
   loading,
   working,
   papers,
+  paperTranslations,
   paperStatuses,
   showReadingHeatmap = true,
   selectedPaper,
@@ -545,6 +547,11 @@ export default function LiteraturePaperList({
                         <span className="block truncate text-sm font-semibold">
                           {paper.title}
                         </span>
+                        {paperTranslations?.[paper.id] && (
+                          <span className="mt-0.5 block truncate text-xs text-[var(--pq-text-faint)]">
+                            {paperTranslations[paper.id]}
+                          </span>
+                        )}
                       </span>
                       <span className="mt-1 block truncate text-xs text-slate-500 dark:text-[#a0a0a0]">
                         {paperAuthors(paper, locale)}

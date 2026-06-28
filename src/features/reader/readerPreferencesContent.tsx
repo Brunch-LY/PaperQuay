@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   BookOpenText,
   CheckCircle2,
@@ -11,12 +11,13 @@ import {
   RefreshCw,
   Settings2,
   Sparkles,
+  Upload,
   XCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
 
 import { openExternalUrl } from '../../services/desktop';
-import { translateTextViaProvider } from '../../services/library';
+import { exportBibtex, migrateAllToRepo, translateAllTitles, translateTextViaProvider } from '../../services/library';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
 import type { LibraryImportMode, LibrarySettings } from '../../types/library';
 import type { ReaderSettings } from '../../types/reader';
@@ -62,6 +63,7 @@ interface ReaderPreferencesContentProps
     | 'onSettingChange'
     | 'onNativeLibrarySettingsChange'
     | 'onSelectLibraryStorageDir'
+    | 'onSelectPaperRepoDir'
     | 'onZoteroLocalDataDirChange'
     | 'onMineruApiTokenChange'
     | 'onEmbeddingApiKeyChange'
@@ -231,6 +233,7 @@ export function ReaderPreferencesContent({
   onSettingChange,
   onNativeLibrarySettingsChange,
   onSelectLibraryStorageDir,
+  onSelectPaperRepoDir,
   onZoteroLocalDataDirChange,
   onMineruApiTokenChange,
   onEmbeddingApiKeyChange,
@@ -487,6 +490,8 @@ export function ReaderPreferencesContent({
                 </button>
               </div>
             </SettingsField>
+
+            <ExportBibtexButton l={l} />
           </div>
 
           <ToggleRow
@@ -720,7 +725,7 @@ export function ReaderPreferencesContent({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={onSelectLibraryStorageDir}
+                onClick={onSelectPaperRepoDir}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
               >
                 <FolderOpen className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
@@ -734,6 +739,11 @@ export function ReaderPreferencesContent({
                 {l('清空路径', 'Clear Path')}
               </button>
             </div>
+
+            <MigrateRepoButton
+              repoDir={activeLibrarySettings.paperRepoDir}
+              l={l}
+            />
           </SettingsField>
 
           <SettingsField
@@ -1317,6 +1327,10 @@ export function ReaderPreferencesContent({
               settings={activeLibrarySettings}
               l={l}
             />
+
+            <BatchTranslateButton
+              l={l}
+            />
           </SettingsField>
         </>
       ) : null}
@@ -1674,6 +1688,153 @@ function TranslationTestButton({ settings, l }: TranslationTestButtonProps) {
             <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.9} />
           )}
           <span className="whitespace-pre-wrap break-words">{testResult.message}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface MigrateRepoButtonProps {
+  repoDir: string;
+  l: ReaderPreferencesLocalizer;
+}
+
+function MigrateRepoButton({ repoDir, l }: MigrateRepoButtonProps) {
+  const [migrating, setMigrating] = useState(false);
+  const [result, setResult] = useState<{ total: number; synced: number; failed: number } | null>(null);
+
+  const handleMigrate = useCallback(async () => {
+    if (!repoDir.trim()) return;
+    setMigrating(true);
+    setResult(null);
+    try {
+      const res = await migrateAllToRepo();
+      setResult(res);
+    } catch (error) {
+      setResult({ total: 0, synced: 0, failed: 1 });
+    } finally {
+      setMigrating(false);
+    }
+  }, [repoDir]);
+
+  return (
+    <div className="mt-3 space-y-2">
+      <button
+        type="button"
+        onClick={handleMigrate}
+        disabled={migrating || !repoDir.trim()}
+        className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+      >
+        {migrating ? (
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" strokeWidth={1.8} />
+        ) : (
+          <Upload className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
+        )}
+        {migrating ? l('迁移中...', 'Migrating...') : l('一键迁移全部文献', 'Migrate All Papers')}
+      </button>
+
+      {result && (
+        <div className={`rounded-lg border px-3 py-2 text-xs leading-5 ${
+          result.failed === 0
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : result.synced > 0
+              ? 'border-amber-200 bg-amber-50 text-amber-700'
+              : 'border-rose-200 bg-rose-50 text-rose-600'
+        }`}>
+          {result.failed === 0
+            ? l(`迁移完成：共 ${result.total} 篇，全部成功`, `Done: ${result.total} papers, all synced`)
+            : l(
+                `迁移完成：共 ${result.total} 篇，成功 ${result.synced}，失败 ${result.failed}`,
+                `Done: ${result.total} papers, ${result.synced} synced, ${result.failed} failed`,
+              )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface BatchTranslateButtonProps {
+  l: ReaderPreferencesLocalizer;
+}
+
+function ExportBibtexButton({ l }: { l: ReaderPreferencesLocalizer }) {
+  const [busy, setBusy] = useState(false);
+
+  const handleExport = useCallback(async () => {
+    setBusy(true);
+    try {
+      const bibtex = await exportBibtex();
+      const blob = new Blob([bibtex], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `paperquay-export-${Date.now()}.bib`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Export failed');
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={handleExport}
+      disabled={busy}
+      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+    >
+      {busy ? l('导出中...', 'Exporting...') : l('导出 BibTeX', 'Export BibTeX')}
+    </button>
+  );
+}
+
+function BatchTranslateButton({ l }: BatchTranslateButtonProps) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ total: number; translated: number; skipped: number; failed: number } | null>(null);
+
+  const handleBatchTranslate = useCallback(async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await translateAllTitles();
+      setResult(res);
+    } catch (error) {
+      setResult({ total: 0, translated: 0, skipped: 0, failed: 1 });
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return (
+    <div className="mt-3 space-y-2">
+      <button
+        type="button"
+        onClick={handleBatchTranslate}
+        disabled={busy}
+        className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60"
+      >
+        {busy ? (
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" strokeWidth={1.8} />
+        ) : (
+          <Languages className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
+        )}
+        {busy ? l('翻译中...', 'Translating...') : l('一键翻译所有标题', 'Translate All Titles')}
+      </button>
+
+      {result && (
+        <div className={`rounded-lg border px-3 py-2 text-xs leading-5 ${
+          result.failed === 0
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : result.translated > 0
+              ? 'border-amber-200 bg-amber-50 text-amber-700'
+              : 'border-rose-200 bg-rose-50 text-rose-600'
+        }`}>
+          {l(
+            `完成：共 ${result.total} 篇，翻译 ${result.translated}，跳过 ${result.skipped}`,
+            `Done: ${result.total} papers, ${result.translated} translated, ${result.skipped} skipped`,
+          )}
         </div>
       )}
     </div>

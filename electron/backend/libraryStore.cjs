@@ -13,16 +13,23 @@ function createAppPaths(app) {
   const baseDir = process.env.PAPERQUAY_DATA_DIR || app.getPath('userData');
   const dataDir = path.join(baseDir, 'PaperQuay');
 
+  const exeDir = app.isPackaged ? path.dirname(app.getPath('exe')) : path.join(baseDir, 'PaperQuay');
+  const paperQuayDataDir = path.join(exeDir, 'PaperQuay_data');
+
   return {
     dataDir,
     configPath: path.join(dataDir, '.settings', 'paperquay.config.json'),
-    mineruCacheDir: path.join(dataDir, '.mineru-cache'),
+    mineruCacheDir: path.join(paperQuayDataDir, 'cache'),
     remotePdfDownloadDir: path.join(dataDir, '.downloads', 'pdfs'),
     libraryPath: path.join(dataDir, 'paperquay-library.json'),
     libraryDatabasePath: path.join(dataDir, 'paperquay-library.sqlite'),
     notesDatabasePath: path.join(dataDir, 'paperquay-notes.sqlite'),
     ragDatabasePath: path.join(dataDir, 'paperquay-rag.sqlite'),
     screenshotDir: path.join(dataDir, '.screenshots'),
+    paperQuayDataDir,
+    paperRepoDefaultDir: path.join(paperQuayDataDir, 'library'),
+    mineruCacheDefaultDir: path.join(paperQuayDataDir, 'cache'),
+    storageDefaultDir: path.join(paperQuayDataDir, 'storage'),
   };
 }
 
@@ -32,7 +39,7 @@ function createDefaultLibrary(appPaths) {
   return {
     version: 1,
     settings: {
-      storageDir: path.join(appPaths.dataDir, 'paperquay-data'),
+      storageDir: appPaths.storageDefaultDir,
       zoteroLocalDataDir: '',
       importMode: 'copy',
       autoRenameFiles: true,
@@ -50,7 +57,7 @@ function createDefaultLibrary(appPaths) {
       translationModel: 'gpt-4o-mini',
       translationAppId: '',
       translationSecretKey: '',
-      paperRepoDir: '',
+      paperRepoDir: appPaths.paperRepoDefaultDir,
     },
     categories: SYSTEM_CATEGORIES.map(([id, name, systemKey, sortOrder]) => ({
       id,

@@ -538,6 +538,21 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     );
   }, [l, updateNativeLibrarySettings]);
 
+  const handleSelectPaperRepoDir = useCallback(async () => {
+    const directory = await selectDirectory(
+      l('选择文献仓库目录', 'Select the paper repository directory'),
+    );
+
+    if (!directory) {
+      return;
+    }
+
+    await updateNativeLibrarySettings(
+      { paperRepoDir: directory },
+      'reader-paper-repo-dir',
+    );
+  }, [l, updateNativeLibrarySettings]);
+
   const handleBridgeStateChange = useCallback((tabId: string, bridge: ReaderTabBridgeState | null) => {
     setReaderBridges((current) => {
       if (!bridge) {
@@ -828,6 +843,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onSettingChange={updateSetting}
           onNativeLibrarySettingsChange={(patch) => void updateNativeLibrarySettings(patch)}
           onSelectLibraryStorageDir={() => void handleSelectLibraryStorageDir()}
+          onSelectPaperRepoDir={() => void handleSelectPaperRepoDir()}
           onZoteroLocalDataDirChange={setZoteroLocalDataDir}
           onMineruApiTokenChange={(value) => updateReaderSecret('mineruApiToken', value)}
           onTranslationApiKeyChange={(value) => updateReaderSecret('translationApiKey', value)}

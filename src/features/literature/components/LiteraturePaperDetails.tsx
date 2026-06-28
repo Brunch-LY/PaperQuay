@@ -488,6 +488,7 @@ export default function LiteraturePaperDetails({
   const [activeOverviewKey, setActiveOverviewKey] = useState<OverviewSectionKey>('overview');
   const [translatedTitle, setTranslatedTitle] = useState<string | null>(null);
   const [translatingTitle, setTranslatingTitle] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
   const [editingTranslation, setEditingTranslation] = useState(false);
   const [editTranslationText, setEditTranslationText] = useState('');
   const [readingHeatmap, setReadingHeatmap] = useState<PdfReadingHeatmap | null>(() =>
@@ -587,6 +588,7 @@ export default function LiteraturePaperDetails({
   useEffect(() => {
     setTranslatedTitle(null);
     setEditingTranslation(false);
+    setTranslationError(null);
     if (!selectedPaper?.id) return;
     void getPaperTranslation({ paperId: selectedPaper.id, field: 'title', targetLang: 'zh-CN' }).then((result) => {
       if (result?.translated_text) {
@@ -751,14 +753,16 @@ export default function LiteraturePaperDetails({
 
                         setTranslatedTitle(result);
                         setEditTranslationText(result);
+                        setTranslationError(null);
                         await savePaperTranslation({
                           paperId: selectedPaper.id,
                           field: 'title',
                           targetLang: 'zh-CN',
                           translatedText: result,
                         });
-                      } catch {
+                      } catch (err) {
                         setTranslatedTitle(null);
+                        setTranslationError(err instanceof Error ? err.message : String(err));
                       } finally {
                         setTranslatingTitle(false);
                       }
@@ -771,11 +775,17 @@ export default function LiteraturePaperDetails({
                     ) : (
                       <Languages className="h-3.5 w-3.5" strokeWidth={1.9} />
                     )}
-                    {translatingTitle ? l('翻译中...', 'Translating...') : l('翻译标题', 'Translate Title')}
-                  </button>
+                        {translatingTitle ? l('翻译中...', 'Translating...') : l('翻译标题', 'Translate Title')}
+                      </button>
+                    )}
+
+                    {translationError && !translatingTitle && (
+                      <p className="mt-2 text-xs leading-4 text-[var(--pq-danger)]">
+                        {translationError}
+                      </p>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
 
           <div className="space-y-3">
               <ActionButton

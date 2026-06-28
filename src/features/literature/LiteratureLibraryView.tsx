@@ -16,6 +16,7 @@ import { lookupLiteratureMetadata } from '../../services/metadata';
 import { extractLocalPdfMetadataPreview } from '../../services/pdfMetadata';
 import {
   assignPaperToLibraryCategory,
+  batchGetPaperTranslations,
   createLibraryCategory,
   deleteLibraryPaper,
   deleteLibraryCategory,
@@ -270,6 +271,14 @@ export default function LiteratureLibraryView({
       }
     }
     return Array.from(tagMap.values()).sort((a, b) => b.paperCount - a.paperCount);
+  }, [papers]);
+  const [paperTranslations, setPaperTranslations] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const ids = papers.map((p) => p.id);
+    if (ids.length === 0) { setPaperTranslations({}); return; }
+    let cancelled = false;
+    batchGetPaperTranslations(ids).then((result) => { if (!cancelled) setPaperTranslations(result); }).catch(() => {});
+    return () => { cancelled = true; };
   }, [papers]);
   const selectedCategory = useMemo(
     () => categories.find((category) => category.id === selectedCategoryId) ?? null,
@@ -1924,6 +1933,7 @@ export default function LiteratureLibraryView({
           loading={loading}
           working={working}
           papers={papers}
+          paperTranslations={paperTranslations}
           paperStatuses={paperStatuses}
           showReadingHeatmap={showReadingHeatmap}
           selectedPaper={selectedPaper}
