@@ -992,10 +992,11 @@ function createLibraryCommands(context) {
 
       for (const [, papers] of titleMap) {
         const ids = [...new Set(papers.map((p) => p.id))].filter((id) => !seen.has(id));
-        if (ids.length >= 2 && ids.length <= 5) {
-          ids.forEach((id) => seen.add(id));
-          groups.push({ type: 'title', entries: papers.map(makeEntry) });
-        }
+        if (ids.length < 2 || ids.length > 5) continue;
+        const years = [...new Set(papers.map((p) => p.year?.trim() || '').filter(Boolean))];
+        if (years.length > 1) continue;
+        ids.forEach((id) => seen.add(id));
+        groups.push({ type: 'title', entries: papers.map(makeEntry) });
       }
 
       for (const [, papers] of hashMap) {
