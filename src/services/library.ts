@@ -285,6 +285,14 @@ export async function zoteroSupplement(request: { dataDir: string; collectionKey
   }
 }
 
+export async function scanPapersFolder(): Promise<{ found: number; imported: number; ignored: number }> {
+  try {
+    return await invoke('library_scan_papers_folder');
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '扫描 papers 文件夹失败'));
+  }
+}
+
 export async function findDuplicatePapers(): Promise<{ totalDuplicates: number; groups: { type: string; value?: string; entries: { id: string; title: string; norm?: string; authors: string; year: string; doi: string }[] }[] }> {
   try {
     return await invoke('library_find_duplicates');

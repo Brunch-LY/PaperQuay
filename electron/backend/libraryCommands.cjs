@@ -132,11 +132,11 @@ async function translateOnePaperTitle(paper, library, appPaths) {
 }
 
 async function syncSinglePaperToRepo(paper, repoDir, appPaths) {
-  const paperDir = path.join(repoDir, paper.id);
-  await fsp.mkdir(paperDir, { recursive: true });
+  await fsp.mkdir(repoDir, { recursive: true });
+  const fnBase = safeFileName(paper.title || 'paper').replace(/\.pdf$/i, '');
 
   await fsp.writeFile(
-    path.join(paperDir, 'metadata.json'),
+    path.join(repoDir, `${paper.id}.meta.json`),
     JSON.stringify({
       id: paper.id,
       title: paper.title,
@@ -157,32 +157,22 @@ async function syncSinglePaperToRepo(paper, repoDir, appPaths) {
   );
 
   const mineruDir = path.join(appPaths.mineruCacheDir, `document-${paper.id}`);
-  for (const [src, dst] of [['full.md', 'full.md'], ['content_list_v2.json', 'content_list_v2.json']]) {
-    try { await fsp.access(path.join(mineruDir, src)); await fsp.copyFile(path.join(mineruDir, src), path.join(paperDir, dst)); } catch {}
+  for (const [src, dst] of [['full.md', `${paper.id}.full.md`], ['content_list_v2.json', `${paper.id}.content.json`]]) {
+    try { await fsp.access(path.join(mineruDir, src)); await fsp.copyFile(path.join(mineruDir, src), path.join(repoDir, dst)); } catch {}
   }
 
-  const pdfAttachment = paper.attachments.find((a) => a.kind === 'pdf');
-  if (pdfAttachment) {
-    try { await fsp.access(pdfAttachment.storedPath); await fsp.copyFile(pdfAttachment.storedPath, path.join(paperDir, 'paper.pdf')); } catch {}
+  const pdfAtt = paper.attachments.find((a) => a.kind === 'pdf');
+  if (pdfAtt) {
+    try { await fsp.access(pdfAtt.storedPath); await fsp.copyFile(pdfAtt.storedPath, path.join(repoDir, `${paper.id}.pdf`)); } catch {}
   }
 
   if (paper.userNote?.trim()) {
-    try { await fsp.writeFile(path.join(paperDir, 'note.md'), paper.userNote); } catch {}
+    try { await fsp.writeFile(path.join(repoDir, `${paper.id}.note.md`), paper.userNote); } catch {}
   }
 
-  const indexEntry = {
-    id: paper.id,
-    title: paper.title,
-    authors: paper.authors.map((a) => a.name),
-    year: paper.year,
-    doi: paper.doi,
-    tags: paper.tags.map((t) => t.name),
-    hasPdf: Boolean(pdfAttachment),
-    hasMarkdown: false,
-  };
-  try { await fsp.access(path.join(paperDir, 'full.md')); indexEntry.hasMarkdown = true; } catch {}
-
   const indexPath = path.join(repoDir, 'index.json');
+  const indexEntry = { id: paper.id, title: paper.title, authors: paper.authors.map((a) => a.name), year: paper.year, doi: paper.doi, tags: paper.tags.map((t) => t.name), hasPdf: Boolean(pdfAtt), hasMarkdown: false };
+  try { await fsp.access(path.join(repoDir, `${paper.id}.full.md`)); indexEntry.hasMarkdown = true; } catch {}
   let index = [];
   try { index = JSON.parse(await fsp.readFile(indexPath, 'utf8')); } catch {}
   const existingIdx = index.findIndex((e) => e.id === paper.id);
@@ -501,8 +491,85 @@ function createLibraryCommands(context) {
 
   const commands = {
     async library_init() {
+      const oldPaths = ['E:/PaperQuayData', 'E:/opencode_project/PaperQuay/.dev-data/PaperQuay'];
+      const targetPath = appPaths.dataDir;
+      const hasData = (p) => { try { fs.accessSync(path.join(p, 'paperquay-library.sqlite')); return true; } catch { return false; } };
+
+      for (const oldPath of oldPaths) {
+        if (oldPath === targetPath || !hasData(oldPath)) continue;
+        try {
+          for (const dir of ['paperquay-data', 'papers', '.mineru-cache', '.settings', '.downloads', '.screenshots', 'PaperQuay_data']) {
+            const src = path.join(oldPath, dir);
+            const dst = path.join(targetPath, dir);
+            try { fs.accessSync(src); await fsp.cp(src, dst, { recursive: true, force: true }); } catch {}
+          }
+          for (const file of ['paperquay-library.sqlite', 'paperquay-library.sqlite-shm', 'paperquay-library.sqlite-wal', 'paperquay-notes.sqlite', 'paperquay-notes.sqlite-shm', 'paperquay-notes.sqlite-wal', 'paperquay-rag.sqlite', 'paperquay-rag.sqlite-shm', 'paperquay-rag.sqlite-wal']) {
+            const src = path.join(oldPath, file);
+            const dst = path.join(targetPath, file);
+            try { fs.accessSync(src); await fsp.copyFile(src, dst); } catch {}
+          }
+        } catch {}
+      }
+
       const library = store.load();
-      await store.save(library);
+
+      if (library.settings.storageDir && (
+        library.settings.storageDir.includes('.dev-data') ||
+        !path.isAbsolute(library.settings.storageDir) ||
+        (() => { try { fs.accessSync(library.settings.storageDir); return false; } catch { return true; } })()
+      )) {
+        const newDir = appPaths.storageDefaultDir;
+        await fsp.mkdir(newDir, { recursive: true });
+        library.settings.storageDir = newDir;
+      }
+
+      let fixed = 0;
+      for (const paper of library.papers) {
+        for (const att of paper.attachments) {
+          if (!att.storedPath) continue;
+          if (att.storedPath.startsWith('.dev-data') || !path.isAbsolute(att.storedPath)) {
+            const baseName = path.basename(att.storedPath);
+            for (const sub of ['paperquay-data', 'papers']) {
+              const newPath = path.join(appPaths.dataDir, sub, baseName);
+              try { fs.accessSync(newPath); att.storedPath = newPath; att.missing = false; fixed++; break; } catch {}
+            }
+            if (att.storedPath.startsWith('.dev-data')) att.missing = true;
+          } else {
+            try { fs.accessSync(att.storedPath); } catch { att.missing = true; }
+          }
+        }
+      }
+
+      const papersDir = library.settings.storageDir || appPaths.storageDefaultDir;
+      let scanned = 0;
+      try {
+        const entries = await fsp.readdir(papersDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.pdf')) continue;
+          const filePath = path.join(papersDir, entry.name);
+          const bytes = await fsp.readFile(filePath);
+          const contentHash = hashBytes(bytes);
+          if (library.papers.some((p) => p.attachments.some((a) => a.contentHash === contentHash))) continue;
+          const fnNoExt = entry.name.replace(/\.pdf$/i, '');
+          library.papers.push({
+            id: id('paper'),
+            title: fnNoExt,
+            year: null, publication: null, doi: null, url: null, abstractText: null, keywords: [],
+            importedAt: now(), updatedAt: now(), lastReadAt: null, readingProgress: 0,
+            isFavorite: false, userNote: null, aiSummary: null, citation: null,
+            source: 'local',
+            sortOrder: Math.min(0, ...library.papers.map((p) => p.sortOrder ?? 0)) - 1,
+            authors: [], tags: [], categoryIds: [],
+            attachments: [{ id: id('att'), paperId: '', kind: 'pdf', originalPath: filePath, storedPath: filePath, relativePath: null, fileName: entry.name, mimeType: 'application/pdf', fileSize: entries.find(() => true) ? (await fsp.stat(filePath)).size : 0, contentHash, createdAt: now(), missing: false }],
+          });
+          const last = library.papers[library.papers.length - 1];
+          last.attachments[0].paperId = last.id;
+          last.attachments[0].id = id('att');
+          scanned += 1;
+        }
+      } catch {}
+
+      if (fixed > 0 || scanned > 0) store.save(library);
       return {
         settings: library.settings,
         categories: attachCategoryCounts(library),
@@ -620,7 +687,7 @@ function createLibraryCommands(context) {
     async library_import_pdfs({ request }) {
       const library = store.load();
       const results = [];
-      const storageDir = library.settings.storageDir || path.join(appPaths.dataDir, 'paperquay-data');
+      const storageDir = library.settings.storageDir || appPaths.storageDefaultDir;
       await fsp.mkdir(storageDir, { recursive: true });
 
       for (const sourcePath of request.paths ?? []) {
@@ -1016,7 +1083,7 @@ function createLibraryCommands(context) {
 
       const { listLocalCollectionItems } = require('./zoteroLocal.cjs');
       const library = store.load();
-      const storageDir = library.settings.storageDir || path.join(appPaths.dataDir, 'paperquay-data');
+      const storageDir = library.settings.storageDir || appPaths.storageDefaultDir;
       await fsp.mkdir(storageDir, { recursive: true });
       const norm = (t) => (t || '').replace(/[^a-z0-9\u4e00-\u9fa5]/gi, '').toLowerCase();
       let total = 0, supplemented = 0, imported = 0, duplicates = 0, errors = 0, skipped = 0;
@@ -1158,7 +1225,7 @@ function createLibraryCommands(context) {
         const itemTitleNorm = norm(item.title || item.attachmentFilename || item.itemKey);
         if (itemTitleNorm !== paperTitleNorm && !itemTitleNorm.includes(paperTitleNorm) && !paperTitleNorm.includes(itemTitleNorm)) continue;
 
-        const storageDir = library.settings.storageDir || path.join(appPaths.dataDir, 'paperquay-data');
+        const storageDir = library.settings.storageDir || appPaths.storageDefaultDir;
         const bytes = await fsp.readFile(item.localPdfPath);
         const contentHash = hashBytes(bytes);
         const attId = id('att');
@@ -1172,6 +1239,51 @@ function createLibraryCommands(context) {
         return { ok: true, fileName };
       }
       return { ok: false, error: 'No matching Zotero item found' };
+    },
+
+    async library_scan_papers_folder() {
+      const library = store.load();
+      const papersDir = library.settings.storageDir || appPaths.storageDefaultDir;
+      let found = 0, imported = 0, ignored = 0;
+      try {
+        const entries = await fsp.readdir(papersDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.pdf')) continue;
+          found += 1;
+          const filePath = path.join(papersDir, entry.name);
+          const bytes = await fsp.readFile(filePath);
+          const contentHash = hashBytes(bytes);
+          const existing = library.papers.find((p) =>
+            p.attachments.some((a) => a.contentHash === contentHash),
+          );
+          if (existing) { ignored += 1; continue; }
+
+          const fnNoExt = entry.name.replace(/\.pdf$/i, '');
+          library.papers.push({
+            id: id('paper'),
+            title: fnNoExt,
+            year: null,
+            publication: null, doi: null, url: null, abstractText: null, keywords: [],
+            importedAt: now(), updatedAt: now(), lastReadAt: null, readingProgress: 0,
+            isFavorite: false, userNote: null, aiSummary: null, citation: null,
+            source: 'local',
+            sortOrder: Math.min(0, ...library.papers.map((p) => p.sortOrder ?? 0)) - 1,
+            authors: [], tags: [], categoryIds: [],
+            attachments: [{
+              id: id('att'), paperId: '', kind: 'pdf',
+              originalPath: filePath, storedPath: filePath,
+              relativePath: null, fileName: entry.name, mimeType: 'application/pdf',
+              fileSize: await fsp.stat(filePath).then(s => s.size),
+              contentHash, createdAt: now(), missing: false,
+            }],
+          });
+          library.papers[library.papers.length - 1].attachments[0].paperId = library.papers[library.papers.length - 1].id;
+          library.papers[library.papers.length - 1].attachments[0].id = id('att');
+          imported += 1;
+        }
+        if (imported > 0) await store.save(library);
+        return { found, imported, ignored };
+      } catch { return { found: 0, imported: 0, ignored: 0 }; }
     },
 
     async library_export_bibtex() {

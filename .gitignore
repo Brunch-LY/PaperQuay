@@ -180,6 +180,7 @@ $RECYCLE.BIN/
 # Dev output logs
 dev-output.txt
 dev-error.txt
+dev-*.txt
 
 # Local AI assistant instructions
 AGENTS.md

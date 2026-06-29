@@ -18,7 +18,7 @@ function createFileCommands(context) {
     const library = store.load();
     const roots = [
       path.resolve(appPaths.dataDir),
-      path.resolve(library.settings.storageDir || path.join(appPaths.dataDir, 'paperquay-data')),
+      path.resolve(library.settings.storageDir || appPaths.storageDefaultDir),
     ];
 
     if (roots.some((root) => absolute === root || absolute.startsWith(`${root}${path.sep}`))) return;

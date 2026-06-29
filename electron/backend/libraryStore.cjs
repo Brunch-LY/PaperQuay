@@ -16,13 +16,15 @@ function createAppPaths(app) {
   const envDir = process.env.PAPERQUAY_DATA_DIR;
   if (envDir) {
     dataDir = envDir;
+  } else if (app.isPackaged) {
+    const exeDir = path.dirname(app.getPath('exe'));
+    dataDir = path.join(path.dirname(exeDir), 'PaperQuayData');
   } else {
     const homeDir = os.homedir();
-    for (const cf of [path.join(homeDir, '.paperquay-datadir'), ...(app.isPackaged ? [path.join(path.dirname(app.getPath('exe')), '.paperquay-datadir')] : [])]) {
-      try { dataDir = fs.readFileSync(cf, 'utf8').trim(); if (dataDir) break; } catch { dataDir = null; }
-    }
+    const homeConfig = path.join(homeDir, '.paperquay-datadir');
+    try { dataDir = fs.readFileSync(homeConfig, 'utf8').trim(); } catch { dataDir = null; }
+    if (!dataDir) dataDir = path.join(app.getPath('userData'), 'PaperQuay');
   }
-  if (!dataDir) dataDir = path.join(app.getPath('userData'), 'PaperQuay');
 
   return {
     dataDir,
@@ -34,9 +36,9 @@ function createAppPaths(app) {
     notesDatabasePath: path.join(dataDir, 'paperquay-notes.sqlite'),
     ragDatabasePath: path.join(dataDir, 'paperquay-rag.sqlite'),
     screenshotDir: path.join(dataDir, '.screenshots'),
-    paperRepoDefaultDir: path.join(dataDir, 'PaperQuay_data', 'library'),
+    paperRepoDefaultDir: path.join(dataDir, 'papers'),
     mineruCacheDefaultDir: path.join(dataDir, '.mineru-cache'),
-    storageDefaultDir: path.join(dataDir, 'paperquay-data'),
+    storageDefaultDir: path.join(dataDir, 'papers'),
   };
 }
 
