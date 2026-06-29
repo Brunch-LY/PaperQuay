@@ -6,15 +6,19 @@ import type { LiteraturePaper } from '../../../types/library';
 
 interface LibraryStatusBarProps {
   papers: LiteraturePaper[];
+  pdfExistsMap?: Record<string, boolean>;
   onFilterByStatus?: (filter: null | 'no-pdf' | 'no-overview' | 'duplicates') => void;
 }
 
-export default function LibraryStatusBar({ papers, onFilterByStatus }: LibraryStatusBarProps) {
+export default function LibraryStatusBar({ papers, pdfExistsMap, onFilterByStatus }: LibraryStatusBarProps) {
   const l = useLocaleText();
   const [expanded, setExpanded] = useState(false);
   const [dupInfo, setDupInfo] = useState<{ totalDuplicates: number; groups: { type: string; value?: string; entries: { id: string; title: string; norm?: string; authors: string; year: string; doi: string }[] }[] } | null>(null);
   const [dupDialogOpen, setDupDialogOpen] = useState(false);
-  const pdfOkCount = useMemo(() => papers.filter((p) => p.attachments.some((a) => a.kind === 'pdf')).length, [papers]);
+  const pdfOkCount = useMemo(() => {
+    if (pdfExistsMap) return papers.filter((p) => pdfExistsMap[p.id]).length;
+    return papers.filter((p) => p.attachments.some((a) => a.kind === 'pdf')).length;
+  }, [papers, pdfExistsMap]);
 
   useEffect(() => {
     findDuplicatePapers().then(setDupInfo).catch(() => {});

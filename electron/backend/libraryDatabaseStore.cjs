@@ -361,7 +361,9 @@ function saveLibraryToDb(db, appPaths, normalizeLibrary, library) {
   const normalized = normalizeLibrary(library, appPaths);
 
   withTransaction(db, () => {
+    db.exec('PRAGMA foreign_keys = OFF');
     clearData(db);
+    db.exec('PRAGMA foreign_keys = ON');
     saveKeyValueTable(db, 'library_settings', normalized.settings);
     saveKeyValueTable(db, 'webdav_settings', normalized.webdav);
     db.prepare(`

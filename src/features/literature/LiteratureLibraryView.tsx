@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderPlus, Sparkles, Star, Tag, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, FolderPlus, Sparkles, Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { localPathExists } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
@@ -242,6 +242,10 @@ export default function LiteratureLibraryView({
   const [paperDragOverCategoryId, setPaperDragOverCategoryId] = useState<string | null>(null);
   const [tagDialogPaper, setTagDialogPaper] = useState<LiteraturePaper | null>(null);
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<string>('manual');
+  const [sortBy2, setSortBy2] = useState<string>('title');
+  const [sortDir, setSortDir] = useState<string>('asc');
+  const [sortDir2, setSortDir2] = useState<string>('asc');
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(new Set());
@@ -284,6 +288,7 @@ export default function LiteratureLibraryView({
     return Array.from(tagMap.values()).sort((a, b) => b.paperCount - a.paperCount);
   }, [papers]);
   const [paperTranslations, setPaperTranslations] = useState<Record<string, string>>({});
+  const [pdfExistsMap, setPdfExistsMap] = useState<Record<string, boolean>>({});
   const translationsFetchRef = useRef(0);
   useEffect(() => {
     const ids = papers.map((p) => p.id);
@@ -292,6 +297,20 @@ export default function LiteratureLibraryView({
     batchGetPaperTranslations(ids).then((result) => {
       if (fetchId === translationsFetchRef.current) setPaperTranslations(result);
     }).catch(() => {});
+  }, [papers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const map: Record<string, boolean> = {};
+      for (const p of papers) {
+        if (cancelled) return;
+        const att = p.attachments.find((a) => a.kind === 'pdf' && a.storedPath);
+        map[p.id] = att ? await localPathExists(att.storedPath).catch(() => false) : false;
+      }
+      if (!cancelled) setPdfExistsMap(map);
+    })();
+    return () => { cancelled = true; };
   }, [papers]);
 
   const filteredPapers = useMemo(() => {
@@ -407,19 +426,22 @@ export default function LiteratureLibraryView({
         return;
       }
 
+      const isManual = sortBy === 'manual';
+      const combinedBy = isManual ? 'manual' : `${sortBy},${sortBy !== sortBy2 ? sortBy2 : 'title'}`;
+      const combinedDir = isManual ? 'asc' : `${sortDir},${sortBy !== sortBy2 ? sortDir2 : 'asc'}`;
       const nextPapers = await listLibraryPapers({
         categoryId: nextCategoryId,
         tagId: nextTagId,
         search: searchQuery,
-        sortBy: 'manual',
-        sortDirection: 'asc',
+        sortBy: combinedBy as any,
+        sortDirection: combinedDir as 'asc' | 'desc',
         limit: 500,
       });
 
       setPapers(nextPapers);
       setSelectedPaperId((current) => resolveSelectedPaperId(current, nextPapers));
     },
-    [demoLibrary, resolveDemoPapers, searchQuery, selectedCategoryId, selectedTagId],
+    [demoLibrary, resolveDemoPapers, searchQuery, selectedCategoryId, selectedTagId, sortBy, sortBy2, sortDir, sortDir2],
   );
 
   const refreshAll = useCallback(async () => {
@@ -1921,6 +1943,7 @@ export default function LiteratureLibraryView({
       <div data-tour="paper-list" className="flex h-full min-h-0 flex-col overflow-hidden">
         <LibraryStatusBar
           papers={papers}
+          pdfExistsMap={pdfExistsMap}
           onFilterByStatus={(filter) => {
             setStatusFilter(filter);
             if (filter === 'duplicates') {
@@ -1937,6 +1960,52 @@ export default function LiteratureLibraryView({
           onOpenManager={() => setTagManagerOpen(true)}
           onBatchModeToggle={batchMode ? undefined : () => setBatchMode(true)}
         />
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--pq-border)] px-3 py-1.5">
+          <span className="text-xs font-medium text-[var(--pq-text-faint)]">{l('排序', 'Sort')}</span>
+          <select
+            value={sortBy}
+            onChange={(e) => { setSortBy(e.target.value); if (e.target.value === 'manual') setSortBy2('title'); void refreshPapers(); }}
+            className="pq-input h-7 w-24 px-2 text-xs"
+          >
+            <option value="manual">{l('手动', 'Manual')}</option>
+            <option value="title">{l('标题', 'Title')}</option>
+            <option value="year">{l('年份', 'Year')}</option>
+            <option value="author">{l('作者', 'Author')}</option>
+            <option value="importedAt">{l('导入时间', 'Imported')}</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => { setSortDir((d) => d === 'asc' ? 'desc' : 'asc'); void refreshPapers(); }}
+            className="pq-icon-button h-6 w-6"
+            title={sortDir === 'asc' ? l('升序', 'Ascending') : l('降序', 'Descending')}
+          >
+            {sortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} /> : <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />}
+          </button>
+          {sortBy !== 'manual' && (
+            <>
+              <span className="text-xs text-[var(--pq-text-faint)]">{l('再按', 'then')}</span>
+              <select
+                value={sortBy2}
+                onChange={(e) => { setSortBy2(e.target.value); void refreshPapers(); }}
+                className="pq-input h-7 w-24 px-2 text-xs"
+              >
+                <option value="title">{l('标题', 'Title')}</option>
+                <option value="year">{l('年份', 'Year')}</option>
+                <option value="author">{l('作者', 'Author')}</option>
+                <option value="importedAt">{l('导入时间', 'Imported')}</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => { setSortDir2((d) => d === 'asc' ? 'desc' : 'asc'); void refreshPapers(); }}
+                className="pq-icon-button h-6 w-6"
+                title={sortDir2 === 'asc' ? l('升序', 'Ascending') : l('降序', 'Descending')}
+              >
+                {sortDir2 === 'asc' ? <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} /> : <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />}
+              </button>
+            </>
+          )}
+        </div>
 
         {batchMode ? (
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--pq-border)] px-3 py-2">

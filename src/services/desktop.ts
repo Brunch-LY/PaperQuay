@@ -170,6 +170,14 @@ export async function localPathExists(path: string): Promise<boolean> {
   }
 }
 
+export async function testEmbeddingConnection(request: { baseUrl: string; apiKey: string; model: string }): Promise<{ ok: boolean; dimensions?: number; model?: string; error?: string }> {
+  try {
+    return await invoke('test_embedding_connection', { request });
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 export async function getAppDefaultPaths(): Promise<AppDefaultPaths> {
   try {
     return await invoke<AppDefaultPaths>('get_app_default_paths');

@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { createLibraryDatabaseStore } = require('./libraryDatabaseStore.cjs');
 const { hashBytes, now } = require('./utils.cjs');
@@ -11,14 +12,17 @@ const SYSTEM_CATEGORIES = [
 ];
 
 function createAppPaths(app) {
-  let baseDir = process.env.PAPERQUAY_DATA_DIR;
-  if (!baseDir && app.isPackaged) {
-    const exeDir = path.dirname(app.getPath('exe'));
-    const configFile = path.join(exeDir, '.paperquay-datadir');
-    try { baseDir = fs.readFileSync(configFile, 'utf8').trim(); } catch {}
+  let dataDir;
+  const envDir = process.env.PAPERQUAY_DATA_DIR;
+  if (envDir) {
+    dataDir = envDir;
+  } else {
+    const homeDir = os.homedir();
+    for (const cf of [path.join(homeDir, '.paperquay-datadir'), ...(app.isPackaged ? [path.join(path.dirname(app.getPath('exe')), '.paperquay-datadir')] : [])]) {
+      try { dataDir = fs.readFileSync(cf, 'utf8').trim(); if (dataDir) break; } catch { dataDir = null; }
+    }
   }
-  if (!baseDir) baseDir = app.getPath('userData');
-  const dataDir = path.join(baseDir, 'PaperQuay');
+  if (!dataDir) dataDir = path.join(app.getPath('userData'), 'PaperQuay');
 
   return {
     dataDir,
@@ -61,6 +65,8 @@ function createDefaultLibrary(appPaths) {
       translationAppId: '',
       translationSecretKey: '',
       paperRepoDir: appPaths.paperRepoDefaultDir,
+      translationPresets: [],
+      titleTranslationPresetId: '',
     },
     categories: SYSTEM_CATEGORIES.map(([id, name, systemKey, sortOrder]) => ({
       id,
@@ -234,24 +240,28 @@ function paperMatches(paper, request, library) {
 }
 
 function sortPapers(papers, request = {}) {
-  const direction = request.sortDirection === 'asc' ? 1 : -1;
-  const sortBy = request.sortBy || 'manual';
-  const getValue = (paper) => {
-    if (sortBy === 'title') return paper.title.toLowerCase();
-    if (sortBy === 'year') return paper.year ?? '';
-    if (sortBy === 'author') return paper.authors[0]?.name?.toLowerCase() ?? '';
-    if (sortBy === 'updatedAt') return paper.updatedAt;
-    if (sortBy === 'lastReadAt') return paper.lastReadAt ?? 0;
-    if (sortBy === 'importedAt') return paper.importedAt;
+  const sortFields = (request.sortBy || 'manual').split(',').map((s) => s.trim());
+  const dirs = (request.sortDirection || 'asc').split(',').map((d) => d.trim() === 'asc' ? 1 : -1);
+  const getValues = (paper) => sortFields.map((field) => {
+    if (field === 'title') return paper.title?.toLowerCase() ?? '';
+    if (field === 'year') return paper.year ?? '';
+    if (field === 'author') return paper.authors[0]?.name?.toLowerCase() ?? '';
+    if (field === 'updatedAt') return paper.updatedAt;
+    if (field === 'lastReadAt') return paper.lastReadAt ?? 0;
+    if (field === 'importedAt') return paper.importedAt;
     return paper.sortOrder;
-  };
+  });
 
   return papers.slice().sort((left, right) => {
-    const leftValue = getValue(left);
-    const rightValue = getValue(right);
-    if (leftValue < rightValue) return sortBy === 'manual' ? -1 : -1 * direction;
-    if (leftValue > rightValue) return sortBy === 'manual' ? 1 : 1 * direction;
-    return left.title.localeCompare(right.title);
+    const leftVals = getValues(left);
+    const rightVals = getValues(right);
+    for (let i = 0; i < sortFields.length; i++) {
+      const isManual = sortFields[i] === 'manual';
+      const dir = i < dirs.length ? dirs[i] : 1;
+      if (leftVals[i] < rightVals[i]) return isManual ? -1 : -1 * dir;
+      if (leftVals[i] > rightVals[i]) return isManual ? 1 : 1 * dir;
+    }
+    return left.title?.localeCompare(right.title ?? '') ?? 0;
   });
 }
 

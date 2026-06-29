@@ -4,6 +4,7 @@ import {
   BookOpenText,
   ChevronRight,
   CheckCircle2,
+  Download,
   FileText,
   Languages,
   Loader2,
@@ -23,7 +24,7 @@ import type {
   UpdatePaperRequest,
 } from '../../../types/library';
 import type { PdfReadingHeatmap } from '../../../types/reader';
-import { getLibrarySettings, getPaperTranslation, savePaperTranslation, translateTextViaProvider } from '../../../services/library';
+import { fetchZoteroPdf, getLibrarySettings, getPaperTranslation, savePaperTranslation, translateTextViaProvider } from '../../../services/library';
 import {
   loadPaperHistory,
   PAPER_READING_HEATMAP_UPDATED_EVENT,
@@ -489,6 +490,8 @@ export default function LiteraturePaperDetails({
   const [translatedTitle, setTranslatedTitle] = useState<string | null>(null);
   const [translatingTitle, setTranslatingTitle] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
+  const [presets, setPresets] = useState<{ id: string; label: string; provider: string; apiKey: string; baseUrl: string; model: string; appId: string; secretKey: string }[]>([]);
+  const [currentPresetId, setCurrentPresetId] = useState<string>('');
   const [editingTranslation, setEditingTranslation] = useState(false);
   const [editTranslationText, setEditTranslationText] = useState('');
   const [readingHeatmap, setReadingHeatmap] = useState<PdfReadingHeatmap | null>(() =>
@@ -595,6 +598,13 @@ export default function LiteraturePaperDetails({
         setTranslatedTitle(result.translated_text);
         setEditTranslationText(result.translated_text);
       }
+    }).catch(() => {});
+  }, [selectedPaper?.id]);
+
+  useEffect(() => {
+    getLibrarySettings().then((s) => {
+      setPresets(s.translationPresets ?? []);
+      setCurrentPresetId(s.titleTranslationPresetId || '');
     }).catch(() => {});
   }, [selectedPaper?.id]);
 
@@ -721,30 +731,42 @@ export default function LiteraturePaperDetails({
                       </p>
                     )}
                   </div>
-                ) : (
-                  <button
+                  ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {presets.length > 0 && (
+                      <select
+                        value={currentPresetId}
+                        onChange={(e) => setCurrentPresetId(e.target.value)}
+                        className="pq-input h-7 max-w-[180px] px-2 text-xs"
+                      >
+                        <option value="">{l('默认', 'Default')}</option>
+                        {presets.map((p) => <option key={p.id} value={p.id}>{p.label || p.model}</option>)}
+                      </select>
+                    )}
+                    <button
                     type="button"
                     onClick={async () => {
                       if (!selectedPaper?.id || translatingTitle) return;
                       setTranslatingTitle(true);
                       try {
                         const settings = await getLibrarySettings();
+                        const preset = presets.find((p) => p.id === (currentPresetId || settings.titleTranslationPresetId));
+                        const p = preset || { provider: settings.translationProvider, apiKey: settings.translationApiKey, baseUrl: settings.translationBaseUrl, model: settings.translationModel, appId: settings.translationAppId, secretKey: settings.translationSecretKey };
                         let result: string;
 
-                        if (settings.translationProvider === 'ai') {
+                        if (p.provider === 'ai') {
                           const { translateTextOpenAICompatible } = await import('../../../services/translation');
-                          const baseUrl = settings.translationBaseUrl || 'https://api.openai.com/v1';
                           result = await translateTextOpenAICompatible({
-                            baseUrl,
-                            apiKey: settings.translationApiKey,
-                            model: settings.translationModel || 'gpt-4o-mini',
+                            baseUrl: p.baseUrl || 'https://api.openai.com/v1',
+                            apiKey: p.apiKey,
+                            model: p.model || 'gpt-4o-mini',
                             sourceLanguage: 'English',
                             targetLanguage: 'Chinese',
                             text: selectedPaper.title,
                           });
                         } else {
                           result = await translateTextViaProvider({
-                            provider: settings.translationProvider,
+                            provider: p.provider,
                             text: selectedPaper.title,
                             sourceLang: 'en',
                             targetLang: 'zh',
@@ -777,6 +799,7 @@ export default function LiteraturePaperDetails({
                     )}
                         {translatingTitle ? l('翻译中...', 'Translating...') : l('翻译标题', 'Translate Title')}
                       </button>
+                    </div>
                     )}
 
                     {translationError && !translatingTitle && (
@@ -824,6 +847,26 @@ export default function LiteraturePaperDetails({
                     title={l('MinerU 解析', 'MinerU Parse')}
                     description={l('提取结构化文本和版面块', 'Extract structured text and layout blocks')}
                   />
+                  {!hasPdf && (
+                    <ProcessingActionTile
+                      dataTour="zotero-fetch-pdf"
+                      disabled={false}
+                      active={false}
+                      busy={false}
+                      icon={<Download className="h-4 w-4" strokeWidth={1.9} />}
+                      onClick={async () => {
+                        if (!selectedPaper?.id) return;
+                        const settings = await getLibrarySettings();
+                        const dataDir = settings.zoteroLocalDataDir;
+                        if (!dataDir) { alert(l('请先配置 Zotero 数据目录', 'Configure Zotero data dir first')); return; }
+                        const result = await fetchZoteroPdf(selectedPaper.id, dataDir);
+                        if (result.ok) { alert(l(`PDF 已获取: ${result.fileName}`, `PDF fetched: ${result.fileName}`)); window.location.reload(); }
+                        else { alert(result.error || l('获取失败', 'Failed')); }
+                      }}
+                      title={l('从 Zotero 补充 PDF', 'Fetch PDF from Zotero')}
+                      description={l('在 Zotero 中按标题搜索并补充 PDF', 'Search Zotero by title and supplement PDF')}
+                    />
+                  )}
                   <ProcessingActionTile
                     dataTour="overview-translate-document"
                     disabled={isPaperPipelineActionDisabled({

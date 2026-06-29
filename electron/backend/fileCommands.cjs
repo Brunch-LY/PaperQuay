@@ -153,6 +153,26 @@ function createFileCommands(context) {
       approvedWritePaths.add(path.resolve(filePath));
     },
 
+    async test_embedding_connection({ request }) {
+      const { baseUrl, apiKey, model } = request ?? {};
+      if (!baseUrl || !apiKey || !model) return { ok: false, error: 'Missing params' };
+      try {
+        const url = baseUrl.replace(/\/+$/, '') + '/embeddings';
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({ input: 'test', model, encoding_format: 'float' }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const data = await response.json();
+        if (!response.ok) return { ok: false, error: data.error?.message || `HTTP ${response.status}` };
+        const dims = data.data?.[0]?.embedding?.length;
+        return { ok: true, dimensions: dims, model: data.model || model };
+      } catch (e) {
+        return { ok: false, error: e.message || String(e) };
+      }
+    },
+
     async path_exists({ path: filePath }) {
       return pathExists(filePath);
     },

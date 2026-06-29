@@ -1043,6 +1043,33 @@ function createLibraryCommands(context) {
               return pNorm && (pNorm === itemTitleNorm || pNorm.includes(itemTitleNorm) || itemTitleNorm.includes(pNorm));
             });
 
+            if (!matched && item.attachmentFilename) {
+              const zoteroFileName = item.attachmentFilename.toLowerCase().replace(/\.pdf$/i, '');
+              matched = library.papers.find((p) =>
+                p.attachments.some((a) => a.fileName && a.fileName.toLowerCase().replace(/\.pdf$/i, '') === zoteroFileName),
+              );
+            }
+
+            if (!matched && item.localPdfPath) {
+              const attKey = path.basename(path.dirname(item.localPdfPath));
+              if (attKey && attKey !== item.itemKey) {
+                matched = library.papers.find((p) =>
+                  p.attachments.some((a) => (a.originalPath || '').includes(attKey)),
+                ) ?? null;
+              }
+            }
+            if (!matched && item.localPdfPath) {
+              const zoteroFileName = path.basename(item.localPdfPath).toLowerCase().replace(/\.pdf$/i, '');
+              if (zoteroFileName && zoteroFileName.length > 5) {
+                matched = library.papers.find((p) =>
+                  p.attachments.some((a) => {
+                    const afn = (a.fileName || path.basename(a.originalPath || '') || path.basename(a.storedPath || '')).toLowerCase().replace(/\.pdf$/i, '');
+                    return afn === zoteroFileName;
+                  }),
+                ) ?? null;
+              }
+            }
+
             if (matched) {
               const hasValidPdf = matched.attachments.some((a) => { try { fs.accessSync(a.storedPath); return true; } catch { return false; } });
               if (!hasValidPdf) {
@@ -1105,6 +1132,45 @@ function createLibraryCommands(context) {
       }
       await store.save(library);
       return { total, supplemented, imported, duplicates, errors, skipped, titleMismatches };
+    },
+
+    async library_fetch_zotero_pdf({ request }) {
+      const { paperId, dataDir } = request ?? {};
+      if (!paperId || !dataDir) return { ok: false, error: 'Missing params' };
+
+      const { listLocalCollectionItems } = require('./zoteroLocal.cjs');
+      const library = store.load();
+      const paper = library.papers.find((p) => p.id === paperId);
+      if (!paper) return { ok: false, error: 'Paper not found' };
+
+      const hasPdf = paper.attachments.some((a) => { try { fs.accessSync(a.storedPath); return true; } catch { return false; } });
+      if (hasPdf) return { ok: false, error: 'PDF already exists' };
+
+      const norm = (t) => (t || '').replace(/[^a-z0-9\u4e00-\u9fa5]/gi, '').toLowerCase();
+      const paperTitleNorm = norm(paper.title);
+      if (!paperTitleNorm) return { ok: false, error: 'Paper has no title' };
+
+      const collections = await listLocalCollectionItems({ dataDir });
+      for (const item of collections) {
+        if (!item.localPdfPath) continue;
+        try { await ensureFile(item.localPdfPath); } catch { continue; }
+        const itemTitleNorm = norm(item.title || item.attachmentFilename || item.itemKey);
+        if (itemTitleNorm !== paperTitleNorm && !itemTitleNorm.includes(paperTitleNorm) && !paperTitleNorm.includes(itemTitleNorm)) continue;
+
+        const storageDir = library.settings.storageDir || path.join(appPaths.dataDir, 'paperquay-data');
+        const bytes = await fsp.readFile(item.localPdfPath);
+        const contentHash = hashBytes(bytes);
+        const attId = id('att');
+        const fileName = safeFileName(fileNameFromPath(item.localPdfPath));
+        const storedPath = path.join(storageDir, `${attId}-${fileName}`);
+        await fsp.copyFile(item.localPdfPath, storedPath);
+        const stat = await fsp.stat(storedPath);
+        paper.attachments.push({ id: attId, paperId, kind: 'pdf', originalPath: item.localPdfPath, storedPath, relativePath: path.relative(storageDir, storedPath), fileName, mimeType: 'application/pdf', fileSize: stat.size, contentHash, createdAt: now(), missing: false });
+        paper.updatedAt = now();
+        await store.save(library);
+        return { ok: true, fileName };
+      }
+      return { ok: false, error: 'No matching Zotero item found' };
     },
 
     async library_export_bibtex() {

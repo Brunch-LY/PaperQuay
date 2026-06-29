@@ -269,6 +269,14 @@ export async function batchDeletePapers(paperIds: string[], deleteFiles = false)
   }
 }
 
+export async function fetchZoteroPdf(paperId: string, dataDir: string): Promise<{ ok: boolean; fileName?: string; error?: string }> {
+  try {
+    return await invoke('library_fetch_zotero_pdf', { request: { paperId, dataDir } });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '从 Zotero 获取 PDF 失败'));
+  }
+}
+
 export async function zoteroSupplement(request: { dataDir: string; collectionKeys: string[] }): Promise<{ total: number; supplemented: number; imported: number; duplicates: number; errors: number; skipped: number; titleMismatches: { zotero: string; library: string }[] }> {
   try {
     return await invoke('library_zotero_supplement', { request });

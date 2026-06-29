@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   BookOpenText,
   CheckCircle2,
@@ -8,18 +8,21 @@ import {
   Languages,
   Library,
   Loader2,
+  Pencil,
+  Plus,
   RefreshCw,
   Settings2,
   Sparkles,
+  Trash2,
   Upload,
   XCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
 
-import { openExternalUrl } from '../../services/desktop';
-import { exportBibtex, migrateAllToRepo, translateAllTitles, translateTextViaProvider } from '../../services/library';
+import { openExternalUrl, testEmbeddingConnection } from '../../services/desktop';
+import { exportBibtex, getLibrarySettings, getPaperTranslation, listLibraryPapers, migrateAllToRepo, savePaperTranslation, translateTextViaProvider } from '../../services/library';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
-import type { LibraryImportMode, LibrarySettings } from '../../types/library';
+import type { LibraryImportMode, LibrarySettings, LiteraturePaper, TranslationModelPreset } from '../../types/library';
 import type { ReaderSettings } from '../../types/reader';
 import {
   buildLanguageOptions,
@@ -28,7 +31,10 @@ import {
   buildSummaryLanguageOptions,
   buildSummarySourceOptions,
   clampBatchConcurrency,
+  EMPTY_BATCH_PROGRESS,
   resolveModelPreset,
+  sleep,
+  type BatchProgressState,
   type PreferencesSectionKey,
 } from './readerShared';
 import {
@@ -121,6 +127,8 @@ const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   translationAppId: '',
   translationSecretKey: '',
   paperRepoDir: '',
+  translationPresets: [],
+  titleTranslationPresetId: '',
 };
 
 export function buildReaderPreferencesSections(
@@ -979,6 +987,13 @@ export function ReaderPreferencesContent({
               )}
             </div>
           ) : null}
+
+          <EmbeddingTestButton
+            baseUrl={settings.embeddingBaseUrl}
+            apiKey={embeddingApiKey}
+            model={settings.embeddingModel}
+            l={l}
+          />
         </SettingsField>
       ) : null}
 
@@ -1323,12 +1338,21 @@ export function ReaderPreferencesContent({
               </div>
             )}
 
+            <TranslationPresetManager
+              presets={activeLibrarySettings.translationPresets ?? []}
+              selectedId={activeLibrarySettings.titleTranslationPresetId}
+              onUpdatePresets={(presets) => updateLibrarySetting('translationPresets', presets)}
+              onSelectPreset={(id) => updateLibrarySetting('titleTranslationPresetId', id)}
+              l={l}
+            />
+
             <TranslationTestButton
               settings={activeLibrarySettings}
               l={l}
             />
 
             <BatchTranslateButton
+              settings={activeLibrarySettings}
               l={l}
             />
           </SettingsField>
@@ -1602,6 +1626,98 @@ interface TranslationTestButtonProps {
   l: ReaderPreferencesLocalizer;
 }
 
+function TranslationPresetManager({ presets, selectedId, onUpdatePresets, onSelectPreset, l }: {
+  presets: TranslationModelPreset[];
+  selectedId: string;
+  onUpdatePresets: (presets: TranslationModelPreset[]) => void;
+  onSelectPreset: (id: string) => void;
+  l: ReaderPreferencesLocalizer;
+}) {
+  const [editing, setEditing] = useState<TranslationModelPreset | null>(null);
+
+  const handleAdd = () => {
+    const newPreset: TranslationModelPreset = { id: `preset_${Date.now()}`, label: l('新预设', 'New Preset'), provider: 'ai', apiKey: '', baseUrl: '', model: 'gpt-4o-mini', appId: '', secretKey: '' };
+    onUpdatePresets([...presets, newPreset]);
+    setEditing(newPreset);
+  };
+
+  const handleSave = (preset: TranslationModelPreset) => {
+    onUpdatePresets(presets.map((p) => p.id === preset.id ? preset : p));
+    setEditing(null);
+  };
+
+  const handleDelete = (id: string) => {
+    onUpdatePresets(presets.filter((p) => p.id !== id));
+    if (selectedId === id) onSelectPreset('');
+  };
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--pq-text-faint)]">
+          {l('翻译预设', 'Translation Presets')}
+        </span>
+        <button type="button" onClick={handleAdd} className="pq-icon-button h-6 w-6">
+          <Plus className="h-3.5 w-3.5" strokeWidth={1.9} />
+        </button>
+      </div>
+
+      {presets.length > 0 && (
+        <div className="space-y-1">
+          {presets.map((p) => (
+            <div key={p.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[var(--pq-surface-2)]">
+              <input
+                type="radio"
+                checked={selectedId === p.id}
+                onChange={() => onSelectPreset(p.id)}
+                className="h-3.5 w-3.5"
+              />
+              <span className="flex-1 truncate text-sm">{p.label || p.model}</span>
+              <span className="text-[10px] text-[var(--pq-text-faint)]">{p.provider}</span>
+              <button type="button" onClick={() => setEditing(editing?.id === p.id ? null : p)} className="pq-icon-button h-6 w-6 opacity-0 group-hover:opacity-100">
+                <Pencil className="h-3 w-3" strokeWidth={1.9} />
+              </button>
+              <button type="button" onClick={() => handleDelete(p.id)} className="pq-icon-button h-6 w-6 text-[var(--pq-text-faint)] hover:text-[var(--pq-danger)]">
+                <Trash2 className="h-3 w-3" strokeWidth={1.9} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <div className="rounded-lg border border-[var(--pq-border)] p-3 space-y-2">
+          <SettingsInput value={editing.label} onChange={(e) => setEditing({ ...editing, label: e.target.value })} placeholder={l('预设名称', 'Preset name')} />
+          <select value={editing.provider} onChange={(e) => setEditing({ ...editing, provider: e.target.value as any })} className="pq-input h-9 w-full px-2 text-sm">
+            <option value="ai">AI (OpenAI Compatible)</option>
+            <option value="baidu">Baidu</option>
+            <option value="google">Google</option>
+            <option value="deepl">DeepL</option>
+            <option value="aliyun">Aliyun</option>
+            <option value="tencent">Tencent</option>
+            <option value="volc">Volc</option>
+          </select>
+          {editing.provider === 'ai' && (
+            <><SettingsInput value={editing.baseUrl} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />
+              <SettingsInput value={editing.model} onChange={(e) => setEditing({ ...editing, model: e.target.value })} placeholder="gpt-4o-mini" />
+            </>
+          )}
+          <SettingsInput type="password" value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} placeholder="API Key" />
+          {editing.provider === 'baidu' && (
+            <><SettingsInput value={editing.appId} onChange={(e) => setEditing({ ...editing, appId: e.target.value })} placeholder="APP ID" />
+              <SettingsInput type="password" value={editing.secretKey} onChange={(e) => setEditing({ ...editing, secretKey: e.target.value })} placeholder="Secret Key" />
+            </>
+          )}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setEditing(null)} className="pq-button px-3 py-1.5 text-xs">{l('取消', 'Cancel')}</button>
+            <button type="button" onClick={() => handleSave(editing)} className="pq-button-primary px-3 py-1.5 text-xs">{l('保存', 'Save')}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TranslationTestButton({ settings, l }: TranslationTestButtonProps) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -1753,7 +1869,50 @@ function MigrateRepoButton({ repoDir, l }: MigrateRepoButtonProps) {
   );
 }
 
+function EmbeddingTestButton({ baseUrl, apiKey, model, l }: { baseUrl: string; apiKey: string; model: string; l: ReaderPreferencesLocalizer }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; dimensions?: number; model?: string; error?: string } | null>(null);
+
+  const handleTest = async () => {
+    if (!baseUrl.trim() || !apiKey.trim() || !model.trim()) return;
+    setTesting(true);
+    setResult(null);
+    const res = await testEmbeddingConnection({ baseUrl, apiKey, model });
+    setResult(res);
+    setTesting(false);
+  };
+
+  return (
+    <div className="mt-3 space-y-2">
+      <button
+        type="button"
+        onClick={handleTest}
+        disabled={testing}
+        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+      >
+        {testing ? (
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" strokeWidth={1.8} />
+        ) : null}
+        {testing ? l('测试中...', 'Testing...') : l('测试 Embedding 连接', 'Test Embedding')}
+      </button>
+
+      {result && (
+        <div className={`rounded-lg border px-3 py-2 text-xs leading-5 ${
+          result.ok
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : 'border-rose-200 bg-rose-50 text-rose-600'
+        }`}>
+          {result.ok
+            ? l(`连接成功！模型: ${result.model}，维度: ${result.dimensions}`, `OK! Model: ${result.model}, dims: ${result.dimensions}`)
+            : l(`连接失败: ${result.error}`, `Failed: ${result.error}`)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface BatchTranslateButtonProps {
+  settings: LibrarySettings;
   l: ReaderPreferencesLocalizer;
 }
 
@@ -1790,53 +1949,136 @@ function ExportBibtexButton({ l }: { l: ReaderPreferencesLocalizer }) {
   );
 }
 
-function BatchTranslateButton({ l }: BatchTranslateButtonProps) {
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ total: number; translated: number; skipped: number; failed: number } | null>(null);
+function BatchTranslateButton({ settings, l }: BatchTranslateButtonProps) {
+  const [progress, setProgress] = useState<BatchProgressState>(EMPTY_BATCH_PROGRESS);
+  const runningRef = useRef(false);
+  const pausedRef = useRef(false);
+  const cancelRef = useRef(false);
 
   const handleBatchTranslate = useCallback(async () => {
-    setBusy(true);
-    setResult(null);
+    if (runningRef.current) return;
+    runningRef.current = true;
+    pausedRef.current = false;
+    cancelRef.current = false;
+
     try {
-      const res = await translateAllTitles();
-      setResult(res);
-    } catch (error) {
-      setResult({ total: 0, translated: 0, skipped: 0, failed: 1 });
+      const allPapers = await listLibraryPapers({ limit: 5000 });
+      const candidates = [] as { paper: LiteraturePaper; title: string }[];
+
+      for (const paper of allPapers) {
+        if (!paper.title?.trim() || !paper.id) continue;
+        const existing = await getPaperTranslation({ paperId: paper.id, field: 'title', targetLang: 'zh-CN' }).catch(() => null);
+        if (!existing?.translated_text) candidates.push({ paper, title: paper.title });
+      }
+
+      if (candidates.length === 0) {
+        setProgress({ running: false, paused: false, cancelRequested: false, total: 0, completed: 0, succeeded: 0, skipped: 0, failed: 0, currentLabel: '' });
+        return;
+      }
+
+      const total = candidates.length;
+      setProgress({ running: true, paused: false, cancelRequested: false, total, completed: 0, succeeded: 0, skipped: 0, failed: 0, currentLabel: candidates[0].title });
+
+      const BATCH = 3;
+      let completed = 0, succeeded = 0, failed = 0;
+
+      for (let i = 0; i < candidates.length; i += BATCH) {
+        if (cancelRef.current) break;
+        while (pausedRef.current && !cancelRef.current) await sleep(200);
+
+        const batch = candidates.slice(i, i + BATCH);
+        const results = await Promise.allSettled(batch.map(async ({ paper, title }) => {
+          const settingsData = await getLibrarySettings();
+          if (settingsData.translationProvider === 'ai') {
+            const { translateTextOpenAICompatible } = await import('../../services/translation');
+            return await translateTextOpenAICompatible({
+              baseUrl: settingsData.translationBaseUrl || 'https://api.openai.com/v1',
+              apiKey: settingsData.translationApiKey,
+              model: settingsData.translationModel || 'gpt-4o-mini',
+              sourceLanguage: 'English',
+              targetLanguage: 'Chinese',
+              text: title,
+            });
+          } else {
+            return await translateTextViaProvider({
+              provider: settingsData.translationProvider,
+              text: title,
+              sourceLang: 'en',
+              targetLang: 'zh',
+            });
+          }
+        }));
+
+        for (let j = 0; j < batch.length; j++) {
+          const r = results[j];
+          if (r.status === 'fulfilled') {
+            succeeded += 1;
+            await savePaperTranslation({
+              paperId: batch[j].paper.id,
+              field: 'title',
+              targetLang: 'zh-CN',
+              translatedText: r.value,
+            }).catch(() => { failed += 1; succeeded -= 1; });
+          } else {
+            failed += 1;
+          }
+        }
+
+        completed += batch.length;
+        const nextIdx = Math.min(i + BATCH, candidates.length - 1);
+        setProgress((p) => ({ ...p, completed, succeeded, failed, currentLabel: candidates[nextIdx]?.title ?? '' }));
+      }
+
+      setProgress((p) => ({ ...p, running: false, completed }));
+    } catch {
+      setProgress((p) => ({ ...p, running: false }));
     } finally {
-      setBusy(false);
+      runningRef.current = false;
     }
   }, []);
 
+  const handlePause = useCallback(() => { pausedRef.current = !pausedRef.current; setProgress((p) => ({ ...p, paused: !p.paused })); }, []);
+  const handleCancel = useCallback(() => { cancelRef.current = true; setProgress((p) => ({ ...p, cancelRequested: true })); }, []);
+
   return (
     <div className="mt-3 space-y-2">
-      <button
-        type="button"
-        onClick={handleBatchTranslate}
-        disabled={busy}
-        className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60"
-      >
-        {busy ? (
-          <Loader2 className="mr-2 inline h-4 w-4 animate-spin" strokeWidth={1.8} />
-        ) : (
-          <Languages className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
-        )}
-        {busy ? l('翻译中...', 'Translating...') : l('一键翻译所有标题', 'Translate All Titles')}
-      </button>
-
-      {result && (
-        <div className={`rounded-lg border px-3 py-2 text-xs leading-5 ${
-          result.failed === 0
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : result.translated > 0
-              ? 'border-amber-200 bg-amber-50 text-amber-700'
-              : 'border-rose-200 bg-rose-50 text-rose-600'
-        }`}>
-          {l(
-            `完成：共 ${result.total} 篇，翻译 ${result.translated}，跳过 ${result.skipped}`,
-            `Done: ${result.total} papers, ${result.translated} translated, ${result.skipped} skipped`,
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={handleBatchTranslate}
+          disabled={progress.running}
+          className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-60"
+        >
+          {progress.running ? (
+            <Loader2 className="mr-2 inline h-4 w-4 animate-spin" strokeWidth={1.8} />
+          ) : (
+            <Languages className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
           )}
-        </div>
-      )}
+          {l('翻译所有标题', 'Translate All Titles')}
+        </button>
+
+        {progress.running && !progress.cancelRequested && (
+          <button
+            type="button"
+            onClick={handlePause}
+            className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 transition hover:bg-amber-100"
+          >
+            {progress.paused ? l('继续', 'Resume') : l('暂停', 'Pause')}
+          </button>
+        )}
+
+        {progress.running && !progress.cancelRequested && (
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600 transition hover:bg-rose-100"
+          >
+            {l('取消', 'Cancel')}
+          </button>
+        )}
+      </div>
+
+      <BatchProgressCard title={l('标题翻译进度', 'Title Translation Progress')} progress={progress} tone="indigo" />
     </div>
   );
 }

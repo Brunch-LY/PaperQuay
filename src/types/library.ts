@@ -20,6 +20,8 @@ export interface LibrarySettings {
   translationAppId: string;
   translationSecretKey: string;
   paperRepoDir: string;
+  translationPresets: TranslationModelPreset[];
+  titleTranslationPresetId: string;
 }
 
 export interface LiteratureAuthor {
@@ -192,6 +194,17 @@ export interface LiteraturePaperTaskState {
   completed?: number | null;
   total?: number | null;
   updatedAt: number;
+}
+
+export interface TranslationModelPreset {
+  id: string;
+  label: string;
+  provider: 'ai' | 'google' | 'deepl' | 'baidu' | 'aliyun' | 'tencent' | 'volc';
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  appId: string;
+  secretKey: string;
 }
 
 export interface ReorderPapersRequest {
