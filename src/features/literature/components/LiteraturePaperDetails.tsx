@@ -579,6 +579,7 @@ export default function LiteraturePaperDetails({
   const pipelineBusy = isPaperPipelineBusy(actionState);
   const aiSummary = selectedPaper?.aiSummary?.trim() ?? '';
   const overviewSections = useMemo(() => parseOverviewSections(aiSummary), [aiSummary]);
+  console.log('[Details] render: aiSummary len=', aiSummary.length, 'paperId=', selectedPaper?.id?.slice(0,8));
   const activeOverviewSection =
     overviewSections.find((section) => section.key === activeOverviewKey) ?? overviewSections[0];
 

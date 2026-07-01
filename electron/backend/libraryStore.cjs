@@ -178,9 +178,10 @@ function normalizeAuthor(name, sortOrder) {
 }
 
 function normalizeTag(name) {
+  const normalized = name.trim();
   return {
-    id: `tag_${hashBytes(Buffer.from(name.toLowerCase())).slice(0, 12)}`,
-    name,
+    id: `tag_${hashBytes(Buffer.from(normalized.toLowerCase())).slice(0, 12)}`,
+    name: normalized,
     color: null,
   };
 }

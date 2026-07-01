@@ -174,18 +174,22 @@ export function useReaderLibraryPreview({
 
   const persistNativeLibraryOverview = useCallback(
     async (item: WorkspaceItem, summary: PaperSummary, sourceKey: string) => {
+      console.log('[persist] entered, source:', item.source, 'textLen:', formatPaperSummaryForLibrary(summary).length);
       if (item.source !== 'native-library') {
+        console.log('[persist] skipped: source is', item.source);
         return;
       }
 
       const summaryText = formatPaperSummaryForLibrary(summary);
 
       if (!summaryText) {
+        console.log('[persist] skipped: empty summary');
         return;
       }
 
       const saveKey = `${item.itemKey}::${sourceKey || 'overview'}::${textSignature(summaryText)}`;
 
+      console.log('[persist] dispatching event, paperId:', item.itemKey.slice(0,8), 'len:', summaryText.length);
       window.dispatchEvent(
         new CustomEvent('paperquay:native-summary-updated', {
           detail: {
@@ -829,7 +833,14 @@ export function useReaderLibraryPreview({
             sourceKey,
           },
         }));
-        void persistNativeLibraryOverview(item, summary, sourceKey).catch(() => undefined);
+        let summaryText = '';
+        try { summaryText = formatPaperSummaryForLibrary(summary); } catch { summaryText = ''; }
+        if (summaryText) {
+          console.log('[persist] direct dispatch, len:', summaryText.length, 'paperId:', item.itemKey.slice(0,8));
+          window.dispatchEvent(new CustomEvent('paperquay:native-summary-updated', { detail: { paperId: item.itemKey, aiSummary: summaryText } }));
+          document.dispatchEvent(new CustomEvent('paperquay:native-summary-updated', { detail: { paperId: item.itemKey, aiSummary: summaryText } }));
+          updateLibraryPaper({ paperId: item.itemKey, aiSummary: summaryText }).catch(() => {});
+        }
         return 'generated';
       } catch (nextError) {
         if (libraryPreviewRequestIdRef.current[item.workspaceId] !== requestId) {

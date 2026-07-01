@@ -1055,7 +1055,18 @@ function createLibraryCommands(context) {
       }
       if (request.keywords) paper.keywords = request.keywords.map(cleanString).filter(Boolean);
       if (request.authors) paper.authors = request.authors.map(cleanString).filter(Boolean).map(normalizeAuthor);
-      if (request.tags) paper.tags = request.tags.map(cleanString).filter(Boolean).map(normalizeTag);
+      if (request.tags) {
+        const existingTags = new Map();
+        for (const paper of library.papers) {
+          for (const tag of paper.tags) {
+            existingTags.set(tag.name.toLowerCase(), tag.name);
+          }
+        }
+        const tagNames = request.tags.map(cleanString).filter(Boolean);
+        const uniqueNames = [...new Set(tagNames.map((n) => n.toLowerCase()))]
+          .map((lower) => existingTags.get(lower) || tagNames.find((n) => n.toLowerCase() === lower) || lower);
+        paper.tags = uniqueNames.map(normalizeTag);
+      }
       if (request.isFavorite != null) paper.isFavorite = Boolean(request.isFavorite);
       paper.updatedAt = now();
 

@@ -442,6 +442,11 @@ export default function LiteraturePaperList({
               placeholder={l('搜索标题、作者、摘要、DOI...', 'Search title, author, abstract, DOI...')}
               className="pq-input h-9 w-full pl-9 pr-3 text-sm placeholder:text-[var(--pq-text-faint)]"
             />
+            {searchQuery.trim() && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--pq-text-faint)]">
+                {papers.length}
+              </span>
+            )}
           </div>
 
           <button
@@ -493,7 +498,7 @@ export default function LiteraturePaperList({
           </div>
         ) : (
           <div className="space-y-2">
-            {papers.map((paper) => {
+            {papers.map((paper, index) => {
               const active = selectedPaper?.id === paper.id;
               const pdfPath = paperPdfPath(paper);
               const showBeforeIndicator =
@@ -549,8 +554,8 @@ export default function LiteraturePaperList({
                     className={clsx(
                       'pq-card grid w-full cursor-grab gap-3 px-3 py-3 text-left transition active:cursor-grabbing',
                       showReadingHeatmap
-                        ? 'grid-cols-[28px_minmax(0,1fr)_minmax(128px,160px)_72px_96px] max-[900px]:grid-cols-[28px_minmax(0,1fr)_64px_86px]'
-                        : 'grid-cols-[28px_minmax(0,1fr)_100px_110px]',
+                        ? 'grid-cols-[28px_32px_minmax(0,1fr)_minmax(128px,160px)_72px_96px] max-[900px]:grid-cols-[28px_32px_minmax(0,1fr)_64px_86px]'
+                        : 'grid-cols-[28px_32px_minmax(0,1fr)_100px_110px]',
                       active
                         ? 'border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-soft)] ring-1 ring-[var(--pq-accent-ring)]'
                         : batchSelected
@@ -572,6 +577,9 @@ export default function LiteraturePaperList({
                         />
                       </span>
                     )}
+                    <span className="flex w-8 shrink-0 items-center justify-center text-xs text-[var(--pq-text-faint)]">
+                      {index + 1}
+                    </span>
                     <span
                       data-paper-sort-handle
                       draggable={false}

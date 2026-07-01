@@ -686,11 +686,15 @@ export default function LiteratureLibraryView({
         return;
       }
 
-      setPapers((current) =>
-        current.map((paper) =>
+      console.log('[Library] summary event:', detail.paperId, 'len:', detail.aiSummary?.length, 'papers:', papers.length);
+
+      setPapers((current) => {
+        const found = current.find((p) => p.id === detail.paperId);
+        console.log('[Library] setPapers: found=', !!found, 'paperId=', detail.paperId.slice(0,8));
+        return current.map((paper) =>
           paper.id === detail.paperId ? { ...paper, aiSummary: detail.aiSummary } : paper,
-        ),
-      );
+        );
+      });
       setPaperStatuses((current) =>
         applyPaperSummaryStatusUpdate(current, detail.paperId, detail.aiSummary),
       );

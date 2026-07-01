@@ -52,7 +52,15 @@ export default function TagPickerDialog({
       const tag = allTags.find((t) => t.id === id);
       if (tag) names.push(tag.name);
     }
-    if (newTagName.trim()) names.push(newTagName.trim());
+    const typedName = newTagName.trim();
+    if (typedName) {
+      const existingMatch = allTags.find((t) => t.name.trim() === typedName);
+      if (existingMatch) {
+        names.push(existingMatch.name);
+      } else {
+        names.push(typedName);
+      }
+    }
     if (names.length > 0) {
       onSubmit(names);
       setSelectedIds(new Set());

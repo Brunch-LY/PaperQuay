@@ -980,17 +980,19 @@ export function chunkItems<T>(items: T[], size: number): T[][] {
 }
 
 export function formatPaperSummaryForLibrary(summary: PaperSummary): string {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const sections = [
-    ['Overview', summary.overview || summary.abstract],
-    ['Background', summary.background],
-    ['Research Problem', summary.researchProblem],
-    ['Approach', summary.approach],
-    ['Experiment Setup', summary.experimentSetup],
-    ['Key Findings', summary.keyFindings.join('\n')],
-    ['Conclusions', summary.conclusions],
-    ['Limitations', summary.limitations],
-    ['Takeaways', summary.takeaways.join('\n')],
-    ['Keywords', summary.keywords.join(', ')],
+    ['Overview', str(summary.overview) || str(summary.abstract)],
+    ['Background', str(summary.background)],
+    ['Research Problem', str(summary.researchProblem)],
+    ['Approach', str(summary.approach)],
+    ['Experiment Setup', str(summary.experimentSetup)],
+    ['Key Findings', arr(summary.keyFindings).join('\n')],
+    ['Conclusions', str(summary.conclusions)],
+    ['Limitations', str(summary.limitations)],
+    ['Takeaways', arr(summary.takeaways).join('\n')],
+    ['Keywords', arr(summary.keywords).join(', ')],
   ]
     .map(([title, content]) => [title, content.trim()] as const)
     .filter(([, content]) => content.length > 0)
