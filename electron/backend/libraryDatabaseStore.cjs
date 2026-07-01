@@ -548,14 +548,30 @@ function createLibraryDatabaseStore(appPaths, helpers) {
         DO UPDATE SET translated_text = excluded.translated_text, source_lang = excluded.source_lang, updated_at = excluded.updated_at
       `).run(paperId, field, sourceLang ?? null, targetLang, translatedText, Date.now());
       try { db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all(); } catch {}
+
+      const backupPath = path.join(appPaths.dataDir, '.translations-backup.json');
+      try {
+        let backup = {};
+        try { backup = JSON.parse(fs.readFileSync(backupPath, 'utf-8')); } catch {}
+        backup[`${paperId}|${field}|${targetLang}`] = { source_lang: sourceLang ?? null, translated_text: translatedText, updated_at: Date.now() };
+        fs.writeFileSync(backupPath, JSON.stringify(backup));
+      } catch {}
     },
 
     getTranslation({ paperId, field, targetLang }) {
       if (!paperId || !field || !targetLang) return null;
-      const row = db.prepare(
+      let row = db.prepare(
         'SELECT translated_text, source_lang, updated_at FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?'
       ).get(paperId, field, targetLang);
-      return row ?? null;
+      if (row) return row;
+
+      const backupPath = path.join(appPaths.dataDir, '.translations-backup.json');
+      try {
+        const backup = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
+        const key = `${paperId}|${field}|${targetLang}`;
+        if (backup[key]) return backup[key];
+      } catch {}
+      return null;
     },
 
     close() {
