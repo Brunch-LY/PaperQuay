@@ -663,7 +663,7 @@ function createLibraryCommands(context) {
 
   const commands = {
     async library_init() {
-      try { const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 }); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close(); } catch {}
+      try { const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 }); db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all(); db.close(); } catch {}
 
       const oldPaths = [];
       const targetPath = appPaths.dataDir;

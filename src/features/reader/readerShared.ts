@@ -193,6 +193,7 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   softPageShadow: true,
   mineruCacheDir: '',
   remotePdfDownloadDir: '',
+  agentHistoryDir: '',
   translationBatchSize: 10,
   translationConcurrency: 1,
   translationRequestsPerMinute: 0,
@@ -863,6 +864,10 @@ export function mergeReaderConfigWithDefaults(
     nextSettings.remotePdfDownloadDir = defaultPaths.remotePdfDownloadDir;
   } else if (looksLikeCorruptedGeneratedPath(nextSettings.remotePdfDownloadDir) || nextSettings.remotePdfDownloadDir.includes('.dev-data') || /^\.\.?[/\\]/.test(nextSettings.remotePdfDownloadDir)) {
     nextSettings.remotePdfDownloadDir = defaultPaths.remotePdfDownloadDir;
+  }
+
+  if (!nextSettings.agentHistoryDir.trim()) {
+    nextSettings.agentHistoryDir = defaultPaths.agentHistoryDir;
   }
 
   return {

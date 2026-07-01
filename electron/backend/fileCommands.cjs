@@ -36,7 +36,7 @@ function createFileCommands(context) {
 
   return {
     async get_app_default_paths() {
-      for (const dir of [appPaths.mineruCacheDir, appPaths.storageDefaultDir, appPaths.paperRepoDefaultDir, appPaths.remotePdfDownloadDir]) {
+      for (const dir of [appPaths.mineruCacheDir, appPaths.storageDefaultDir, appPaths.paperRepoDefaultDir, appPaths.remotePdfDownloadDir, appPaths.agentHistoryDir]) {
         try { await fsp.mkdir(dir, { recursive: true }); } catch {}
       }
 
@@ -47,6 +47,7 @@ function createFileCommands(context) {
         remotePdfDownloadDir: appPaths.remotePdfDownloadDir,
         storageDefaultDir: appPaths.storageDefaultDir,
         paperRepoDefaultDir: appPaths.paperRepoDefaultDir,
+        agentHistoryDir: appPaths.agentHistoryDir,
       };
     },
 

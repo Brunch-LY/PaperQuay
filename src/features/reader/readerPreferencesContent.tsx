@@ -82,6 +82,7 @@ interface ReaderPreferencesContentProps
     | 'onEnrichAllLibraryMetadata'
     | 'onSelectMineruCacheDir'
     | 'onSelectRemotePdfDownloadDir'
+    | 'onSelectAgentHistoryDir'
     | 'onListLlmModels'
     | 'onTestLlmConnection'
     | 'onQaModelPresetAdd'
@@ -255,6 +256,7 @@ export function ReaderPreferencesContent({
   onEnrichAllLibraryMetadata,
   onSelectMineruCacheDir,
   onSelectRemotePdfDownloadDir,
+  onSelectAgentHistoryDir,
   onListLlmModels,
   onTestLlmConnection,
   onQaModelPresetAdd,
@@ -575,6 +577,40 @@ export function ReaderPreferencesContent({
               <button
                 type="button"
                 onClick={() => onSettingChange('remotePdfDownloadDir', '')}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+              >
+                {l('清空路径', 'Clear Path')}
+              </button>
+            </div>
+          </SettingsField>
+
+          <SettingsField
+            label={l('Agent 历史记录目录', 'Agent History Directory')}
+            description={l(
+              'Agent 对话和输出内容将保存在此目录下，每个对话存为独立文件。',
+              'Agent conversations and outputs will be saved here, one file per session.',
+            )}
+          >
+            <SettingsInput
+              value={settings.agentHistoryDir}
+              onChange={(event) => onSettingChange('agentHistoryDir', event.target.value)}
+              placeholder={l(
+                '选择本地目录保存 Agent 历史记录',
+                'Choose a directory for Agent history',
+              )}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onSelectAgentHistoryDir}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+              >
+                <FolderOpen className="mr-2 inline h-4 w-4" strokeWidth={1.8} />
+                {l('选择目录', 'Select Directory')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onSettingChange('agentHistoryDir', '')}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
               >
                 {l('清空路径', 'Clear Path')}

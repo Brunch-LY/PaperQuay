@@ -39,6 +39,7 @@ function createAppPaths(app) {
     paperRepoDefaultDir: path.join(dataDir, 'papers'),
     mineruCacheDefaultDir: path.join(dataDir, '.mineru-cache'),
     storageDefaultDir: path.join(dataDir, 'papers'),
+    agentHistoryDir: path.join(dataDir, '.agent-history'),
   };
 }
 

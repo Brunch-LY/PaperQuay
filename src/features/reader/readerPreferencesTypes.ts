@@ -58,6 +58,7 @@ export interface ReaderPreferencesWindowProps {
   onEnrichAllLibraryMetadata: () => void;
   onSelectMineruCacheDir: () => void;
   onSelectRemotePdfDownloadDir: () => void;
+  onSelectAgentHistoryDir: () => void;
   onListLlmModels: (preset: QaModelPreset) => Promise<OpenAICompatibleModelListResult>;
   onTestLlmConnection: (preset?: QaModelPreset) => Promise<OpenAICompatibleTestResult>;
   onQaModelPresetAdd: () => void;

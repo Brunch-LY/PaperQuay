@@ -547,7 +547,7 @@ function createLibraryDatabaseStore(appPaths, helpers) {
         ON CONFLICT(paper_id, field, target_lang)
         DO UPDATE SET translated_text = excluded.translated_text, source_lang = excluded.source_lang, updated_at = excluded.updated_at
       `).run(paperId, field, sourceLang ?? null, targetLang, translatedText, Date.now());
-      try { db.exec('PRAGMA wal_checkpoint(PASSIVE)'); } catch {}
+      try { db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all(); } catch {}
     },
 
     getTranslation({ paperId, field, targetLang }) {

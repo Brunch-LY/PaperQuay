@@ -69,6 +69,7 @@ export interface UseReaderLibraryActionsResult {
   handleOpenStandalonePdf: () => Promise<void>;
   handleSelectMineruCacheDir: () => Promise<void>;
   handleSelectRemotePdfDownloadDir: () => Promise<void>;
+  handleSelectAgentHistoryDir: () => Promise<void>;
   handleListLlmModels: (preset: QaModelPreset) => Promise<OpenAICompatibleModelListResult>;
   handleTestLlmConnection: (preset?: QaModelPreset) => Promise<OpenAICompatibleTestResult>;
   handleToggleBatchMineruPause: () => void;
@@ -962,6 +963,24 @@ export function useReaderLibraryActions({
     }
   }, [l, setError, setStatusMessage, updateSetting]);
 
+  const handleSelectAgentHistoryDir = useCallback(async () => {
+    try {
+      const selectedDir = await selectDirectory(
+        l('选择 Agent 历史记录目录', 'Select the Agent history directory'),
+      );
+      if (!selectedDir) {
+        setStatusMessage(l('未选择 Agent 历史记录目录', 'No Agent history directory selected'));
+        return;
+      }
+      updateSetting('agentHistoryDir', selectedDir);
+      setStatusMessage(l(`已更新 Agent 历史记录目录：${truncateMiddle(selectedDir, 48)}`, `Updated the Agent history directory: ${truncateMiddle(selectedDir, 48)}`));
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : l('选择 Agent 历史记录目录失败', 'Failed to select the Agent history directory');
+      setError(message);
+      setStatusMessage(message);
+    }
+  }, [l, setError, setStatusMessage, updateSetting]);
+
   const handleTestLlmConnection = useCallback(
     async (
       preset?: QaModelPreset,
@@ -1079,6 +1098,7 @@ export function useReaderLibraryActions({
     handleOpenStandalonePdf,
     handleSelectMineruCacheDir,
     handleSelectRemotePdfDownloadDir,
+    handleSelectAgentHistoryDir,
     handleListLlmModels,
     handleTestLlmConnection,
     handleToggleBatchMineruPause,

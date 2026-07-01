@@ -437,6 +437,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
     handleOpenStandalonePdf,
     handleSelectMineruCacheDir,
     handleSelectRemotePdfDownloadDir,
+    handleSelectAgentHistoryDir,
     handleListLlmModels,
     handleTestLlmConnection,
     handleToggleBatchMineruPause,
@@ -858,6 +859,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           onEnrichAllLibraryMetadata={emitLibraryMetadataEnrichRequest}
           onSelectMineruCacheDir={() => void handleSelectMineruCacheDir()}
           onSelectRemotePdfDownloadDir={() => void handleSelectRemotePdfDownloadDir()}
+          onSelectAgentHistoryDir={() => void handleSelectAgentHistoryDir()}
           onListLlmModels={handleListLlmModels}
           onTestLlmConnection={handleTestLlmConnection}
           onQaModelPresetAdd={addQaModelPreset}

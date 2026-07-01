@@ -2,6 +2,11 @@ import { FileSearch, FolderTree, Sparkles, Tags, WandSparkles } from 'lucide-rea
 import type { LibraryAgentPlan, LibraryAgentTool } from '../../services/libraryAgent';
 import type { LiteraturePaper } from '../../types/library';
 import type { DocumentChatAttachment, UiLanguage } from '../../types/reader';
+import {
+  getAppDefaultPaths,
+  readLocalTextFileIfExists,
+  writeLocalTextFile,
+} from '../../services/desktop';
 import type {
   AgentCapability,
   AgentChatMessage,
@@ -184,20 +189,45 @@ export function buildAgentHistorySession({
   };
 }
 
-export function loadAgentHistorySessions(): AgentHistorySession[] {
+export async function loadAgentHistorySessions(): Promise<AgentHistorySession[]> {
+  try {
+    const paths = await getAppDefaultPaths();
+    const dir = paths.agentHistoryDir;
+    if (!dir) return loadFromLocalStorage();
+
+    const sessions: AgentHistorySession[] = [];
+    const listing = await readLocalTextFileIfExists(`${dir}/index.json`);
+    const indexEntries = listing ? (() => { try { return JSON.parse(listing); } catch { return []; } })() : [];
+
+    if (Array.isArray(indexEntries) && indexEntries.length > 0) {
+      for (const entry of indexEntries) {
+        try {
+          const raw = await readLocalTextFileIfExists(`${dir}/${entry.fileName}`);
+          if (!raw) continue;
+          const session = JSON.parse(raw);
+          if (session && typeof session === 'object' && session.id) {
+            sessions.push(session);
+          }
+        } catch { continue; }
+      }
+    }
+
+    if (sessions.length === 0) return loadFromLocalStorage();
+    return sessions
+      .filter((item) => hasAgentConversationHistory(item.messages ?? []))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_AGENT_HISTORY_SESSIONS);
+  } catch {
+    return loadFromLocalStorage();
+  }
+}
+
+function loadFromLocalStorage(): AgentHistorySession[] {
   try {
     const rawValue = window.localStorage.getItem(AGENT_HISTORY_STORAGE_KEY);
-
-    if (!rawValue) {
-      return [];
-    }
-
+    if (!rawValue) return [];
     const parsed = JSON.parse(rawValue);
-
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
+    if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((item): item is AgentHistorySession => Boolean(item && typeof item === 'object' && item.id))
       .filter((item) => hasAgentConversationHistory(item.messages ?? []))
@@ -207,7 +237,7 @@ export function loadAgentHistorySessions(): AgentHistorySession[] {
   }
 }
 
-export function saveAgentHistorySessions(sessions: AgentHistorySession[]) {
+export async function saveAgentHistorySessions(sessions: AgentHistorySession[]) {
   const normalized = sessions
     .filter((session) => hasAgentConversationHistory(session.messages))
     .slice()
@@ -215,6 +245,20 @@ export function saveAgentHistorySessions(sessions: AgentHistorySession[]) {
     .slice(0, MAX_AGENT_HISTORY_SESSIONS);
 
   window.localStorage.setItem(AGENT_HISTORY_STORAGE_KEY, JSON.stringify(normalized));
+
+  try {
+    const paths = await getAppDefaultPaths();
+    const dir = paths.agentHistoryDir;
+    if (!dir) return;
+
+    const indexEntries: { id: string; title: string; fileName: string; updatedAt: number }[] = [];
+    for (const session of normalized) {
+      const fileName = `${session.id.replace(/[:]/g, '_')}.json`;
+      indexEntries.push({ id: session.id, title: session.title, fileName, updatedAt: session.updatedAt });
+      await writeLocalTextFile(`${dir}/${fileName}`, JSON.stringify(session)).catch(() => {});
+    }
+    await writeLocalTextFile(`${dir}/index.json`, JSON.stringify(indexEntries)).catch(() => {});
+  } catch {}
 }
 
 export function paperAuthors(paper: LiteraturePaper, locale: UiLanguage = 'zh-CN'): string {

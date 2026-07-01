@@ -6,6 +6,7 @@ export interface AppDefaultPaths {
   configPath: string;
   mineruCacheDir: string;
   remotePdfDownloadDir: string;
+  agentHistoryDir: string;
 }
 
 export interface LocalDirectoryFileEntry {

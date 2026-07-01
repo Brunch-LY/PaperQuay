@@ -100,7 +100,7 @@ function AgentWorkspace() {
   const [expandedStepKeys, setExpandedStepKeys] = useState<Set<string>>(() => new Set());
   const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
   const [activeSessionId, setActiveSessionId] = useState(() => newAgentSessionId());
-  const [historySessions, setHistorySessions] = useState<AgentHistorySession[]>(() => loadAgentHistorySessions());
+  const [historySessions, setHistorySessions] = useState<AgentHistorySession[]>([]);
   const [historySidebarCollapsed, setHistorySidebarCollapsed] = useState(false);
   const [agentAttachments, setAgentAttachments] = useState<DocumentChatAttachment[]>([]);
   const [agentRagEnabled, setAgentRagEnabled] = useState(true);
@@ -108,6 +108,11 @@ function AgentWorkspace() {
   const [selectedAgentReasoningEffort, setSelectedAgentReasoningEffort] =
     useState<ModelReasoningEffort>('auto');
   const [capturingScreenshot, setCapturingScreenshot] = useState(false);
+
+  useEffect(() => {
+    loadAgentHistorySessions().then(setHistorySessions).catch(() => {});
+  }, []);
+
   const [messages, setMessages] = useState<AgentChatMessage[]>(() => [
     {
       id: newMessageId(),
@@ -382,7 +387,7 @@ function AgentWorkspace() {
   ]);
 
   useEffect(() => {
-    saveAgentHistorySessions(historySessions);
+    void saveAgentHistorySessions(historySessions);
   }, [historySessions]);
 
   useEffect(() => {

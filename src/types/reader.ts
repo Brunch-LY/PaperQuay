@@ -534,6 +534,7 @@ export interface ReaderSettings {
   softPageShadow: boolean;
   mineruCacheDir: string;
   remotePdfDownloadDir: string;
+  agentHistoryDir: string;
   translationBatchSize: number;
   translationConcurrency: number;
   translationRequestsPerMinute: number;
