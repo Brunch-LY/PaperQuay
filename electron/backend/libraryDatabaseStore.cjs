@@ -540,6 +540,24 @@ function createLibraryDatabaseStore(appPaths, helpers) {
   }
 
   return {
+    saveTranslation({ paperId, field, sourceLang, targetLang, translatedText }) {
+      if (!paperId || !field || !targetLang || !translatedText) return;
+      db.prepare(`INSERT INTO paper_translations (paper_id, field, source_lang, target_lang, translated_text, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(paper_id, field, target_lang)
+        DO UPDATE SET translated_text = excluded.translated_text, source_lang = excluded.source_lang, updated_at = excluded.updated_at
+      `).run(paperId, field, sourceLang ?? null, targetLang, translatedText, Date.now());
+      try { db.exec('PRAGMA wal_checkpoint(PASSIVE)'); } catch {}
+    },
+
+    getTranslation({ paperId, field, targetLang }) {
+      if (!paperId || !field || !targetLang) return null;
+      const row = db.prepare(
+        'SELECT translated_text, source_lang, updated_at FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?'
+      ).get(paperId, field, targetLang);
+      return row ?? null;
+    },
+
     close() {
       if (db.isOpen) db.close();
     },

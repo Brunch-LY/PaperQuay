@@ -170,6 +170,14 @@ export async function localPathExists(path: string): Promise<boolean> {
   }
 }
 
+export async function getReaderPresetConfig(presetId?: string): Promise<{ baseUrl: string; model: string; apiKey: string }> {
+  try {
+    return await invoke('get_reader_preset_config', { request: { presetId } });
+  } catch {
+    return { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' };
+  }
+}
+
 export async function testEmbeddingConnection(request: { baseUrl: string; apiKey: string; model: string }): Promise<{ ok: boolean; dimensions?: number; model?: string; error?: string }> {
   try {
     return await invoke('test_embedding_connection', { request });

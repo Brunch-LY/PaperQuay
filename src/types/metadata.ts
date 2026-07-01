@@ -2,6 +2,8 @@ export interface MetadataLookupRequest {
   doi?: string | null;
   title?: string | null;
   path?: string | null;
+  year?: string | null;
+  paperId?: string | null;
 }
 
 export interface MetadataLookupResult {

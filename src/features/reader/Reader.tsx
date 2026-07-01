@@ -878,6 +878,7 @@ function Reader({ workspaceActive = true }: ReaderProps) {
           batchSummaryPaused={batchSummaryPaused}
           batchMineruProgress={batchMineruProgress}
           batchSummaryProgress={batchSummaryProgress}
+          batchError={error}
         />
       </div>
     </AppLocaleProvider>

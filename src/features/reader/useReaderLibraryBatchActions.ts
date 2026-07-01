@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { runMineruCloudParse } from '../../services/desktop';
+import { runMineruCloudParseWithOcrFallback } from './mineruOcrFallback';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
+import { listLibraryPapers } from '../../services/library';
 import { buildMineruCachePaths } from '../../utils/mineruCache';
+import type { WorkspaceItem } from '../../types/reader';
+import type { LiteraturePaper } from '../../types/library';
 import {
   clampBatchConcurrency,
+  createNativeLibraryWorkspaceItem,
   EMPTY_BATCH_PROGRESS,
   getAutoParseAttemptKey,
   getAutoSummaryAttemptKey,
@@ -100,7 +104,27 @@ export function useReaderLibraryBatchActions({
         return;
       }
 
-      if (allKnownItems.length === 0) {
+      let allPapers: LiteraturePaper[] = [];
+      try { allPapers = await listLibraryPapers({ sortBy: 'manual', limit: 0 }); } catch {}
+
+      const candidateItemsMap = new Map<string, WorkspaceItem>();
+      for (const item of allKnownItems) {
+        candidateItemsMap.set(item.workspaceId, item);
+      }
+
+      for (const paper of allPapers) {
+        const workspaceId = `native-library:${paper.id}`;
+        if (candidateItemsMap.has(workspaceId)) continue;
+        if (itemParseStatusMap[workspaceId]) continue;
+        const wsItem = createNativeLibraryWorkspaceItem(paper);
+        if (wsItem && wsItem.localPdfPath) {
+          candidateItemsMap.set(workspaceId, wsItem);
+        }
+      }
+
+      const allCandidateItems = Array.from(candidateItemsMap.values());
+
+      if (allCandidateItems.length === 0) {
         if (!auto) {
           setStatusMessage(
             l('当前没有可解析的文献', 'No documents are available for parsing'),
@@ -109,9 +133,11 @@ export function useReaderLibraryBatchActions({
         return;
       }
 
-      const candidates = allKnownItems.filter((item) => {
+      const candidates = allCandidateItems.filter((item) => {
         const attemptKey = getAutoParseAttemptKey(item);
-        return !(auto && autoMineruAttemptedRef.current.has(attemptKey));
+        if (auto && autoMineruAttemptedRef.current.has(attemptKey)) return false;
+        if (itemParseStatusMap[item.workspaceId]) return false;
+        return true;
       });
 
       if (candidates.length === 0) {
@@ -152,6 +178,8 @@ export function useReaderLibraryBatchActions({
       let completedCount = 0;
       let successCount = 0;
       let lastErrorMessage = '';
+      let failedErrors: string[] = [];
+      const MAX_FAILED_ERRORS = 5;
       let cursor = 0;
 
       const waitForResumeOrCancel = async () => {
@@ -230,7 +258,7 @@ export function useReaderLibraryBatchActions({
               const cachePaths = settings.mineruCacheDir.trim()
                 ? buildMineruCachePaths(settings.mineruCacheDir.trim(), item)
                 : null;
-              const result = await runMineruCloudParse({
+              const parseResult = await runMineruCloudParseWithOcrFallback({
                 apiToken: mineruApiToken.trim(),
                 pdfPath,
                 extractDir: cachePaths?.directory,
@@ -242,7 +270,8 @@ export function useReaderLibraryBatchActions({
                 timeoutSecs: 900,
                 pollIntervalSecs: 5,
               });
-              const jsonText = result.contentJsonText ?? result.middleJsonText;
+              const result = parseResult.result;
+              const jsonText = parseResult.jsonText || (result.contentJsonText ?? result.middleJsonText);
 
               if (!jsonText?.trim()) {
                 throw new Error(
@@ -286,10 +315,13 @@ export function useReaderLibraryBatchActions({
               successCount += 1;
             } catch (nextError) {
               failedCount += 1;
-              lastErrorMessage =
-                nextError instanceof Error
-                  ? nextError.message
-                  : l('MinerU 解析失败', 'MinerU parsing failed');
+              const msg = nextError instanceof Error
+                ? nextError.message
+                : l('MinerU 解析失败', 'MinerU parsing failed');
+              lastErrorMessage = msg;
+              if (failedErrors.length < MAX_FAILED_ERRORS) {
+                failedErrors.push(`${item.title}: ${msg}`);
+              }
             } finally {
               completedCount += 1;
               autoMineruAttemptedRef.current.add(attemptKey);
@@ -333,7 +365,10 @@ export function useReaderLibraryBatchActions({
 
       if (!auto) {
         if (lastErrorMessage && !batchMineruCancelRequestedRef.current) {
-          setError(lastErrorMessage);
+          const displayError = failedErrors.length > 1
+            ? failedErrors.join('\n')
+            : lastErrorMessage;
+          setError(displayError);
         }
 
         setStatusMessage(

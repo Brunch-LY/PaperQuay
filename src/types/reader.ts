@@ -543,6 +543,7 @@ export interface ReaderSettings {
   summaryModel: string;
   translationModelPresetId: string;
   selectionTranslationModelPresetId: string;
+  titleTranslationModelPresetId: string;
   summaryModelPresetId: string;
   agentModelPresetId: string;
   embeddingBaseUrl: string;

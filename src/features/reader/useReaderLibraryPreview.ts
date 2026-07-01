@@ -50,6 +50,7 @@ import {
   EMPTY_LIBRARY_PREVIEW_STATE,
   formatPaperSummaryForLibrary,
   getModelRuntimeConfig,
+  hasSummaryContent,
   textSignature,
   type LibraryPreviewLoadResult,
   type LibraryPreviewOutcome,
@@ -185,24 +186,37 @@ export function useReaderLibraryPreview({
 
       const saveKey = `${item.itemKey}::${sourceKey || 'overview'}::${textSignature(summaryText)}`;
 
+      window.dispatchEvent(
+        new CustomEvent('paperquay:native-summary-updated', {
+          detail: {
+            paperId: item.itemKey,
+            aiSummary: summaryText,
+          },
+        }),
+      );
+      document.dispatchEvent(
+        new CustomEvent('paperquay:native-summary-updated', {
+          detail: {
+            paperId: item.itemKey,
+            aiSummary: summaryText,
+          },
+        }),
+      );
+
       if (savedNativeSummaryKeysRef.current.has(saveKey)) {
         return;
       }
 
       savedNativeSummaryKeysRef.current.add(saveKey);
-      const updatedPaper = await updateLibraryPaper({
-        paperId: item.itemKey,
-        aiSummary: summaryText,
-      });
 
-      window.dispatchEvent(
-        new CustomEvent('paperquay:native-summary-updated', {
-          detail: {
-            paperId: updatedPaper.id,
-            aiSummary: updatedPaper.aiSummary,
-          },
-        }),
-      );
+      try {
+        await updateLibraryPaper({
+          paperId: item.itemKey,
+          aiSummary: summaryText,
+        });
+      } catch (err) {
+        console.error('[persistNativeLibraryOverview] Failed to persist overview to library:', err);
+      }
     },
     [],
   );
@@ -218,6 +232,14 @@ export function useReaderLibraryPreview({
 
     if (payload.item.source === 'native-library' && payload.hasBlocks) {
       window.dispatchEvent(
+        new CustomEvent('paperquay:native-mineru-status-updated', {
+          detail: {
+            paperId: payload.item.itemKey,
+            mineruParsed: true,
+          },
+        }),
+      );
+      document.dispatchEvent(
         new CustomEvent('paperquay:native-mineru-status-updated', {
           detail: {
             paperId: payload.item.itemKey,
@@ -351,6 +373,23 @@ export function useReaderLibraryPreview({
           },
         };
       });
+
+      window.dispatchEvent(
+        new CustomEvent('paperquay:native-mineru-status-updated', {
+          detail: {
+            paperId: item.itemKey,
+            mineruParsed: true,
+          },
+        }),
+      );
+      document.dispatchEvent(
+        new CustomEvent('paperquay:native-mineru-status-updated', {
+          detail: {
+            paperId: item.itemKey,
+            mineruParsed: true,
+          },
+        }),
+      );
 
       return {
         pages,
@@ -521,6 +560,31 @@ export function useReaderLibraryPreview({
         }
 
         if (!force && historySummary) {
+          if (!hasSummaryContent(historySummary)) {
+            setLibraryPreviewStates((current) => ({
+              ...current,
+              [item.workspaceId]: {
+                summary: null,
+                loading: false,
+                error: '',
+                operation: createPaperTaskState(
+                  'overview',
+                  'error',
+                  l('历史概览内容为空，请重新生成', 'Historical overview is empty, please regenerate.'),
+                  100,
+                  100,
+                ),
+                hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
+                blockCount: previewContext.blocks.length,
+                currentPdfName: previewContext.currentPdfName,
+                currentJsonName: previewContext.currentJsonName,
+                statusMessage: l('历史概览为空', 'Historical overview is empty'),
+                sourceKey,
+              },
+            }));
+            return 'loaded';
+          }
+
           setLibraryPreviewStates((current) => ({
             ...current,
             [item.workspaceId]: {
@@ -549,6 +613,33 @@ export function useReaderLibraryPreview({
         }
 
         if (!force && cachedSummary) {
+          if (!hasSummaryContent(cachedSummary)) {
+            setLibraryPreviewStates((current) => ({
+              ...current,
+              [item.workspaceId]: {
+                summary: null,
+                loading: false,
+                error: '',
+                operation: allowGenerate
+                  ? createPaperTaskState(
+                      'overview',
+                      'error',
+                      l('缓存概览内容为空，请重新生成', 'Cached overview is empty, please regenerate.'),
+                      100,
+                      100,
+                    )
+                  : current[item.workspaceId]?.operation ?? null,
+                hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
+                blockCount: previewContext.blocks.length,
+                currentPdfName: previewContext.currentPdfName,
+                currentJsonName: previewContext.currentJsonName,
+                statusMessage: l('缓存概览为空', 'Cached overview is empty'),
+                sourceKey,
+              },
+            }));
+            return 'loaded';
+          }
+
           setLibraryPreviewStates((current) => ({
             ...current,
             [item.workspaceId]: {
@@ -687,6 +778,32 @@ export function useReaderLibraryPreview({
 
         if (libraryPreviewRequestIdRef.current[item.workspaceId] !== requestId) {
           return 'skipped';
+        }
+
+        const isEmpty = !hasSummaryContent(summary);
+        if (isEmpty) {
+          setLibraryPreviewStates((current) => ({
+            ...current,
+            [item.workspaceId]: {
+              summary: null,
+              loading: false,
+              error: '',
+              operation: createPaperTaskState(
+                'overview',
+                'error',
+                l('AI 返回了空概览，请重试或检查模型配置', 'AI returned an empty overview. Retry or check model settings.'),
+                100,
+                100,
+              ),
+              hasBlocks: Boolean(documentText.trim()) || previewContext.blocks.length > 0,
+              blockCount: previewContext.blocks.length,
+              currentPdfName: previewContext.currentPdfName,
+              currentJsonName: previewContext.currentJsonName,
+              statusMessage: l('AI 返回了空概览', 'AI returned an empty overview'),
+              sourceKey,
+            },
+          }));
+          return 'empty';
         }
 
         await savePreviewSummary(item, sourceKey, summary).catch(() => undefined);

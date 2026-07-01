@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, FolderPlus, Sparkles, Star, Tag, Trash2 } from 'lucide-react';
+import { FolderMinus, FolderPlus, Sparkles, Star, Tag, Trash2 } from 'lucide-react';
 import { useLocaleText } from '../../i18n/uiLanguage';
 import { localPathExists } from '../../services/desktop';
 import { lookupLiteratureMetadata } from '../../services/metadata';
@@ -20,6 +20,8 @@ import {
   batchGetPaperTranslations,
   findDuplicatePapers,
   importPdfsToLibrary,
+  removePaperFromLibraryCategory,
+  scanPapersFolder,
   zoteroSupplement,
   createLibraryCategory,
   deleteLibraryPaper,
@@ -67,6 +69,7 @@ import {
   mergeLocalPdfMetadataIntoDraft,
   mergeRemoteMetadataIntoDraft,
   titleFromPdfPath,
+  extractYearFromPath,
 } from './importMetadata';
 import type { ImportDraftItem } from './importTypes';
 import LiteratureCategorySidebar from './components/LiteratureCategorySidebar';
@@ -324,11 +327,14 @@ export default function LiteratureLibraryView({
         return pdfAtts.every((a) => a.missing);
       });
     }
+    if (statusFilter === 'no-mineru') {
+      return papers.filter((p) => !paperStatuses[p.id]?.mineruParsed);
+    }
     if (statusFilter === 'no-overview') {
       return papers.filter((p) => !p.aiSummary?.trim());
     }
     return papers;
-  }, [papers, statusFilter, duplicateIds]);
+  }, [papers, statusFilter, duplicateIds, paperStatuses]);
 
   const selectedCategory = useMemo(
     () => categories.find((category) => category.id === selectedCategoryId) ?? null,
@@ -704,11 +710,15 @@ export default function LiteratureLibraryView({
     };
 
     window.addEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
+    document.addEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
     window.addEventListener('paperquay:native-mineru-status-updated', handleNativeMineruStatusUpdated);
+    document.addEventListener('paperquay:native-mineru-status-updated', handleNativeMineruStatusUpdated);
 
     return () => {
       window.removeEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
+      document.removeEventListener('paperquay:native-summary-updated', handleNativeSummaryUpdated);
       window.removeEventListener('paperquay:native-mineru-status-updated', handleNativeMineruStatusUpdated);
+      document.removeEventListener('paperquay:native-mineru-status-updated', handleNativeMineruStatusUpdated);
     };
   }, []);
 
@@ -1021,6 +1031,7 @@ export default function LiteratureLibraryView({
             doi: draft.doi || null,
             title: draft.title || titleFromPdfPath(draft.path),
             path: draft.path,
+            year: draft.year || extractYearFromPath(draft.path) || null,
           });
 
           if (!metadata) {
@@ -1236,6 +1247,8 @@ export default function LiteratureLibraryView({
             doi: paper.doi,
             title: paper.title,
             path: paperPdfPath(paper),
+            year: paper.year || extractYearFromPath(paperPdfPath(paper)) || null,
+            paperId: paper.id,
           });
 
           if (!metadata) {
@@ -1500,7 +1513,7 @@ export default function LiteratureLibraryView({
     setConfirmDialog({
       kind: 'delete-paper',
       paper,
-      deleteFiles: selectedCategory?.systemKey === 'all',
+      deleteFiles: true,
     });
   };
 
@@ -1692,6 +1705,8 @@ export default function LiteratureLibraryView({
         doi: doi || null,
         title: title || metadataDialog.paper.title,
         path: paperPdfPath(metadataDialog.paper),
+        year: metadataDialog.paper.year || extractYearFromPath(paperPdfPath(metadataDialog.paper)) || null,
+        paperId: metadataDialog.paper.id,
       });
       const updateRequest = buildManualMetadataUpdateRequest(
         metadataDialog.paper,
@@ -1777,6 +1792,26 @@ export default function LiteratureLibraryView({
 
     if (paper) {
       handleDeletePaper(paper);
+    }
+  };
+
+  const handleRemovePaperFromCategory = async () => {
+    const paper = paperContextMenu?.paper;
+
+    setPaperContextMenu(null);
+
+    if (paper && selectedCategory && !selectedCategory.isSystem && paper.categoryIds.includes(selectedCategory.id)) {
+      setPaperSaving(true);
+      try {
+        await removePaperFromLibraryCategory({ paperId: paper.id, categoryId: selectedCategory.id });
+        await refreshAll();
+        setStatusMessage(l('已从当前分类移除文献', 'Removed paper from current category'));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setStatusMessage(l('移除失败', 'Failed to remove'));
+      } finally {
+        setPaperSaving(false);
+      }
     }
   };
 
@@ -1944,6 +1979,7 @@ export default function LiteratureLibraryView({
         <LibraryStatusBar
           papers={papers}
           pdfExistsMap={pdfExistsMap}
+          paperStatuses={paperStatuses}
           onFilterByStatus={(filter) => {
             setStatusFilter(filter);
             if (filter === 'duplicates') {
@@ -1952,6 +1988,7 @@ export default function LiteratureLibraryView({
               setDuplicateIds(null);
             }
           }}
+          onRefresh={() => void refreshAll()}
         />
         <TagFilterBar
           tags={allTags}
@@ -1959,53 +1996,32 @@ export default function LiteratureLibraryView({
           onSelectTag={handleSelectTag}
           onOpenManager={() => setTagManagerOpen(true)}
           onBatchModeToggle={batchMode ? undefined : () => setBatchMode(true)}
+          onScanPapers={async () => {
+            setWorking(true);
+            setStatusMessage(l('正在扫描 papers 目录...', 'Scanning papers...'));
+            try {
+              const result = await scanPapersFolder() as any;
+              if (result.error) {
+                setStatusMessage(l(`扫描失败：${result.error}`, `Scan failed: ${result.error}`));
+              } else {
+                setStatusMessage(l(`扫描完成：${result.found} 个 PDF，新增 ${result.imported}，跳过 ${result.ignored}`, `Scan done: ${result.found} PDFs, ${result.imported} new, ${result.ignored} skipped`));
+                if (result.imported > 0) void refreshAll();
+              }
+            } catch (e: any) {
+              setStatusMessage(l(`扫描失败：${e.message}`, `Scan failed: ${e.message}`));
+            } finally {
+              setWorking(false);
+            }
+          }}
+          sortBy={sortBy}
+          sortBy2={sortBy2}
+          sortDir={sortDir}
+          sortDir2={sortDir2}
+          onSortChange={(v) => { setSortBy(v); void refreshPapers(); }}
+          onSort2Change={(v) => { setSortBy2(v); void refreshPapers(); }}
+          onSortDirChange={() => { setSortDir((d) => d === 'asc' ? 'desc' : 'asc'); void refreshPapers(); }}
+          onSortDir2Change={() => { setSortDir2((d) => d === 'asc' ? 'desc' : 'asc'); void refreshPapers(); }}
         />
-
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--pq-border)] px-3 py-1.5">
-          <span className="text-xs font-medium text-[var(--pq-text-faint)]">{l('排序', 'Sort')}</span>
-          <select
-            value={sortBy}
-            onChange={(e) => { setSortBy(e.target.value); if (e.target.value === 'manual') setSortBy2('title'); void refreshPapers(); }}
-            className="pq-input h-7 w-24 px-2 text-xs"
-          >
-            <option value="manual">{l('手动', 'Manual')}</option>
-            <option value="title">{l('标题', 'Title')}</option>
-            <option value="year">{l('年份', 'Year')}</option>
-            <option value="author">{l('作者', 'Author')}</option>
-            <option value="importedAt">{l('导入时间', 'Imported')}</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => { setSortDir((d) => d === 'asc' ? 'desc' : 'asc'); void refreshPapers(); }}
-            className="pq-icon-button h-6 w-6"
-            title={sortDir === 'asc' ? l('升序', 'Ascending') : l('降序', 'Descending')}
-          >
-            {sortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} /> : <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />}
-          </button>
-          {sortBy !== 'manual' && (
-            <>
-              <span className="text-xs text-[var(--pq-text-faint)]">{l('再按', 'then')}</span>
-              <select
-                value={sortBy2}
-                onChange={(e) => { setSortBy2(e.target.value); void refreshPapers(); }}
-                className="pq-input h-7 w-24 px-2 text-xs"
-              >
-                <option value="title">{l('标题', 'Title')}</option>
-                <option value="year">{l('年份', 'Year')}</option>
-                <option value="author">{l('作者', 'Author')}</option>
-                <option value="importedAt">{l('导入时间', 'Imported')}</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => { setSortDir2((d) => d === 'asc' ? 'desc' : 'asc'); void refreshPapers(); }}
-                className="pq-icon-button h-6 w-6"
-                title={sortDir2 === 'asc' ? l('升序', 'Ascending') : l('降序', 'Descending')}
-              >
-                {sortDir2 === 'asc' ? <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} /> : <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />}
-              </button>
-            </>
-          )}
-        </div>
 
         {batchMode ? (
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--pq-border)] px-3 py-2">
@@ -2015,6 +2031,25 @@ export default function LiteratureLibraryView({
               className="pq-button px-2.5 py-1.5 text-xs"
             >
               {l('退出批量模式', 'Exit Batch Mode')}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setBatchSelectedIds(new Set(filteredPapers.map((p) => p.id)));
+              }}
+              className="pq-button px-2.5 py-1.5 text-xs"
+            >
+              {l('全选', 'Select All')}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setBatchSelectedIds(new Set())}
+              className="pq-button px-2.5 py-1.5 text-xs"
+              disabled={batchSelectedIds.size === 0}
+            >
+              {l('取消全选', 'Deselect All')}
             </button>
 
             <span className="h-4 w-px bg-[var(--pq-border)]" />
@@ -2060,11 +2095,11 @@ export default function LiteratureLibraryView({
             {batchSelectedIds.size > 0 && (
               <button
                 type="button"
-                onClick={async () => {
-                  if (!window.confirm(l(`确定删除选中的 ${batchSelectedIds.size} 篇文献？`, `Delete ${batchSelectedIds.size} selected papers?`))) return;
-                  setWorking(true);
-                  try {
-                    const result = await batchDeletePapers(Array.from(batchSelectedIds), false);
+                    onClick={async () => {
+                      if (!window.confirm(l(`确定删除选中的 ${batchSelectedIds.size} 篇文献及对应 PDF 文件？`, `Delete ${batchSelectedIds.size} selected papers and their PDF files?`))) return;
+                      setWorking(true);
+                      try {
+                        const result = await batchDeletePapers(Array.from(batchSelectedIds), true);
                     setBatchSelectedIds(new Set());
                     setBatchMode(false);
                     await refreshAll();
@@ -2156,6 +2191,8 @@ export default function LiteratureLibraryView({
           onRunMineruParse={onRunMineruParse}
           onTranslatePaper={onTranslatePaper}
           onGenerateSummary={onGenerateSummary}
+          mineruParsed={selectedPaper ? paperStatuses[selectedPaper.id]?.mineruParsed ?? false : false}
+          overviewGenerated={selectedPaper ? paperStatuses[selectedPaper.id]?.overviewGenerated ?? Boolean(selectedPaper.aiSummary?.trim()) : false}
         />
       </div>
 
@@ -2223,6 +2260,17 @@ export default function LiteratureLibraryView({
               <Sparkles className="mr-2 h-4 w-4 text-violet-600 dark:text-violet-200" strokeWidth={1.9} />
               {l('解析元数据', 'Parse Metadata')}
             </button>
+            {selectedCategory && !selectedCategory.isSystem && (
+              <button
+                type="button"
+                onClick={() => void handleRemovePaperFromCategory()}
+                disabled={paperSaving}
+                className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium text-amber-600 transition hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-400/10"
+              >
+                <FolderMinus className="mr-2 h-4 w-4" strokeWidth={1.9} />
+                {l('从当前分类移除', 'Remove from Category')}
+              </button>
+            )}
             <div className="my-1 border-t border-slate-100 dark:border-white/10" />
             <button
               type="button"
@@ -2453,10 +2501,7 @@ export default function LiteratureLibraryView({
             ? l(`删除分类“${confirmDialog.category.name}”及其所有子分类？这只会移除分类关系，不会删除磁盘上的 PDF 文件。`, `Delete category "${confirmDialog.category.name}" and all subcategories? This only removes category relations and does not delete PDF files on disk.`,
               )
             : confirmDialog?.kind === 'delete-paper'
-              ? confirmDialog.deleteFiles
-                ? l(`从所有文献中删除“${confirmDialog.paper.title}”？这也会删除磁盘上的 PDF 文件。`, `Delete "${confirmDialog.paper.title}" from All Papers? This will also delete PDF files from disk.`,
-                  )
-                : l(`删除“${confirmDialog.paper.title}”的文献记录？磁盘上的 PDF 文件不会被删除。`, `Delete the paper record for "${confirmDialog.paper.title}"? PDF files on disk will not be deleted.`,
+                ? l(`删除"${confirmDialog.paper.title}"及对应的 PDF 文件？`, `Delete "${confirmDialog.paper.title}" and its PDF files?`,
                   )
               : ''
         }

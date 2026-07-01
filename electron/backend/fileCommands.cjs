@@ -6,6 +6,7 @@ const {
   cleanString,
   ensureFile,
   pathExists,
+  readJson,
   safeFileName,
   now,
 } = require('./utils.cjs');
@@ -171,6 +172,36 @@ function createFileCommands(context) {
       } catch (e) {
         return { ok: false, error: e.message || String(e) };
       }
+    },
+
+    async get_reader_preset_config({ request }) {
+      const { presetId, fallbackBaseUrl, fallbackModel } = request ?? {};
+      const config = readJson(appPaths.configPath, null);
+      const rawPresets = (config?.secrets?.qaModelPresets || []).filter((p) => p && typeof p === 'object');
+      const secrets = config?.secrets?.qaModelPresetApiKeys || {};
+      const targetId = presetId || config?.settings?.titleTranslationModelPresetId || 'default';
+
+      const presets = rawPresets.map((p, i) => ({
+        id: p.id?.trim() || (i === 0 ? 'default' : `preset-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`),
+        label: p.label || '',
+        model: p.model || '',
+        baseUrl: p.baseUrl || '',
+        apiKey: p.apiKey || '',
+      }));
+
+      const getApiKey = (p) => (p.id && secrets[p.id]?.apiKey) || p.apiKey || '';
+
+      let preset = presets.find((p) => p.id === targetId) || presets.find((p) => getApiKey(p) && p.baseUrl) || presets[0] || null;
+
+      if (preset) {
+        return {
+          baseUrl: preset.baseUrl || fallbackBaseUrl || 'https://api.openai.com/v1',
+          model: preset.model || fallbackModel || 'gpt-4o-mini',
+          apiKey: getApiKey(preset),
+        };
+      }
+
+      return { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', apiKey: '' };
     },
 
     async path_exists({ path: filePath }) {

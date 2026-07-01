@@ -286,7 +286,7 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
                     )}
                   </div>
 
-                  {editingId === tag.id ? (
+                   {editingId === tag.id ? (
                     <input
                       value={editingName}
                       onChange={(e) => setEditingName(e.target.value)}
@@ -302,6 +302,9 @@ export default function TagManager({ open, tags, onClose, onTagsChange }: TagMan
                       title={l('双击编辑', 'Double-click to edit')}
                     >
                       {tag.name}
+                      {(tag as any).paperCount != null && (
+                        <span className="ml-1.5 text-xs text-[var(--pq-text-faint)]">{(tag as any).paperCount}</span>
+                      )}
                     </span>
                   )}
 

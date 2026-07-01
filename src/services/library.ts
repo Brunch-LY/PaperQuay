@@ -151,6 +151,16 @@ export async function assignPaperToLibraryCategory(
   }
 }
 
+export async function removePaperFromLibraryCategory(
+  request: AssignPaperCategoryRequest,
+): Promise<LiteraturePaper> {
+  try {
+    return await invoke<LiteraturePaper>('library_remove_paper_category', { request });
+  } catch (error) {
+    throw new Error(toErrorMessage(error, '从分类移除文献失败'));
+  }
+}
+
 export async function updateLibraryPaper(
   request: UpdatePaperRequest,
 ): Promise<LiteraturePaper> {

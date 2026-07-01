@@ -504,6 +504,7 @@ export default function LiteraturePaperList({
               const mineruParsed = status?.mineruParsed ?? false;
               const overviewGenerated =
                 status?.overviewGenerated ?? Boolean(paper.aiSummary?.trim());
+              const batchSelected = batchMode && (batchSelectedIds?.has(paper.id) ?? false);
 
               return (
                 <div key={paper.id} className="relative">
@@ -536,6 +537,11 @@ export default function LiteraturePaperList({
                         return;
                       }
 
+                      if (batchMode) {
+                        onBatchToggle?.(paper.id);
+                        return;
+                      }
+
                       onSelectPaper(paper.id);
                     }}
                     onDoubleClick={() => onOpenPaper(paper)}
@@ -547,7 +553,9 @@ export default function LiteraturePaperList({
                         : 'grid-cols-[28px_minmax(0,1fr)_100px_110px]',
                       active
                         ? 'border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-soft)] ring-1 ring-[var(--pq-accent-ring)]'
-                        : dropIndicator?.paperId === paper.id
+                        : batchSelected
+                          ? 'border-blue-300/55 bg-blue-50 ring-1 ring-blue-300/40'
+                          : dropIndicator?.paperId === paper.id
                           ? 'border-[var(--pq-accent-border-strong)] bg-[var(--pq-accent-soft)]'
                           : 'hover:border-[var(--pq-accent-border)] hover:bg-white/92',
                       sortDraggingPaperId === paper.id && 'opacity-60 ring-2 ring-teal-300/60',
@@ -635,7 +643,7 @@ export default function LiteraturePaperList({
                       </span>
                       {paper.tags.length > 0 ? (
                         <span className="mt-2 flex flex-wrap gap-1.5">
-                          {paper.tags.slice(0, 3).map((tag) => (
+                          {paper.tags.map((tag) => (
                             <span
                               key={tag.id}
                               className="rounded-full border border-cyan-300/45 bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 dark:border-cyan-300/18 dark:bg-cyan-300/10 dark:text-cyan-100"
@@ -643,11 +651,6 @@ export default function LiteraturePaperList({
                               {tag.name}
                             </span>
                           ))}
-                          {paper.tags.length > 3 ? (
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-white/[0.06] dark:text-[#a0a0a0]">
-                              +{paper.tags.length - 3}
-                            </span>
-                          ) : null}
                         </span>
                       ) : null}
                       <span className="mt-2 block truncate text-[11px] text-slate-400 dark:text-[#8d8d8d]">

@@ -67,7 +67,12 @@ async function pathExists(filePath) {
 }
 
 async function ensureFile(filePath) {
-  const stat = await fsp.stat(filePath);
+  let stat;
+  try {
+    stat = await fsp.stat(filePath);
+  } catch (err) {
+    throw new Error(`文件不存在: ${filePath}`);
+  }
   if (!stat.isFile()) {
     throw new Error(`Path is not a file: ${filePath}`);
   }

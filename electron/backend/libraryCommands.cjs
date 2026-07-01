@@ -210,6 +210,160 @@ function normalizeDoi(value) {
     .trim();
 }
 
+const DOI_PATTERN = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i;
+
+function hashFnv1a(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function mineruMarkdownPath(paperId, mineruCacheDir) {
+  if (!paperId || !mineruCacheDir) return null;
+  const key = `native-library:${paperId}`;
+  const dirName = `document-${hashFnv1a(key)}`;
+  return path.join(mineruCacheDir, dirName, 'full.md');
+}
+
+async function extractMetadataFromMineruMarkdown(paperId, mineruCacheDir) {
+  const mdPath = mineruMarkdownPath(paperId, mineruCacheDir);
+  if (!mdPath) return null;
+  let text;
+  try { text = await fsp.readFile(mdPath, 'utf-8'); } catch { return null; }
+  if (!text || !text.trim()) return null;
+
+  const lines = text.split('\n');
+  let firstTitle = null;
+  let firstAuthorLine = null;
+  let accumulatedAbstract = '';
+  let inAbstract = false;
+  let foundDoi = null;
+
+  for (let i = 0; i < Math.min(lines.length, 120); i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const doiMatch = line.match(DOI_PATTERN);
+    if (doiMatch) {
+      foundDoi = doiMatch[0].replace(/[.,;)\]}]+$/, '');
+      if (foundDoi.includes('/') && foundDoi.length >= 12 && !foundDoi) continue;
+    }
+
+    if (!firstTitle && line.startsWith('## ')) {
+      firstTitle = line.slice(3).trim();
+      continue;
+    }
+
+    if (firstTitle && !firstAuthorLine) {
+      const clean = line.replace(/^\*\*|\*\*$/g, '').replace(/^#+\s*/, '').trim();
+      if (clean.length >= 8 && /[A-Z]/.test(clean) && (clean.includes(',') || /[A-Z][a-z]+\s+[A-Z]/.test(clean))) {
+        firstAuthorLine = clean;
+        continue;
+      }
+    }
+
+    if (firstTitle && firstAuthorLine && !inAbstract) {
+      const clean = line.replace(/^\*\*|\*\*$/g, '').replace(/^#+\s*/, '');
+      const lower = clean.toLowerCase().trim();
+      if (lower === 'abstract' || lower === '摘要') {
+        inAbstract = true;
+        continue;
+      }
+      if (lower.length > 30 && /^[A-Z]/.test(clean)) {
+        inAbstract = true;
+      }
+    }
+
+    if (inAbstract) {
+      const clean = line.replace(/^\*\*|\*\*$/g, '').replace(/^#+\s*/, '').trim();
+      if (clean.length < 6 || /^(introduction|1\.|i\.|背景|引言|绪论|related work|keywords|key words|关键词)/i.test(clean)) {
+        break;
+      }
+      accumulatedAbstract += (accumulatedAbstract ? ' ' : '') + clean;
+    }
+  }
+
+  const result = {};
+  if (foundDoi) result.doi = normalizeDoi(foundDoi) || foundDoi;
+  if (firstTitle) result.title = firstTitle;
+  if (firstAuthorLine) result.authors = firstAuthorLine.split(/,\s*/).filter((a) => a.trim().length > 1);
+  if (accumulatedAbstract.trim()) result.abstractText = accumulatedAbstract.trim();
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function extractDoiFromPdfFile(filePath) {
+  if (!filePath || typeof filePath !== 'string') return null;
+  let fileHandle = null;
+  try {
+    fs.accessSync(filePath);
+    const BUF_SIZE = 128 * 1024;
+    fileHandle = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(BUF_SIZE);
+    const bytesRead = fs.readSync(fileHandle, buffer, 0, BUF_SIZE, 0);
+    const rawText = buffer.toString('utf-8', 0, bytesRead);
+
+    const metaDoiMatch = rawText.match(/\/Subject\s*[<(]\s*([^)>]+?)\s*[>)]/i)
+                      || rawText.match(/\/DOI\s*[<(]\s*([^)>]+?)\s*[>)]/i)
+                      || rawText.match(/\/Keywords\s*[<(]\s*([^)>]+?)\s*[>)]/i);
+
+    if (metaDoiMatch) {
+      const candidate = metaDoiMatch[1].trim();
+      const doiMatch = candidate.match(DOI_PATTERN);
+      if (doiMatch) return doiMatch[0].replace(/[.,;)\]}]+$/, '');
+    }
+
+    const rawDoiMatch = rawText.match(DOI_PATTERN);
+    if (rawDoiMatch) {
+      const doi = rawDoiMatch[0].replace(/[.,;)\]}]+$/, '');
+      if (doi.includes('/') && doi.length >= 12) {
+        return doi;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fileHandle !== null) {
+      try { fs.closeSync(fileHandle); } catch {}
+    }
+  }
+}
+
+function extractYearFromFilename(filePath) {
+  if (!filePath) return null;
+  const basename = path.basename(filePath, '.pdf');
+  const match = basename.match(/\b(18|19|20|21)\d{2}\b/);
+  return match ? match[0] : null;
+}
+
+function cleanTitleForRetry(value) {
+  if (!value || typeof value !== 'string') return null;
+
+  let cleaned = value.trim();
+
+  cleaned = cleaned.replace(/[\s_-]*[vV]\.?\s*\d+(\.\d+)*\s*$/g, '');
+  cleaned = cleaned.replace(/\s*[\[(（]\s*\d+\s*[\]）)]\s*$/g, '');
+  cleaned = cleaned.replace(/[\s_-]*(?:final|FINAL|_?draft|DRAFT|_?copy(?!right)|_?v\d+)\s*$/g, '');
+  cleaned = cleaned.replace(/\s*[\[(（]\s*(?:18|19|20|21)\d{2}(?:[.\-/]\d{1,2})*\s*[\]）)]\s*$/g, '');
+  cleaned = cleaned.replace(/^(?:Paper|Article|Research|Review|Report|Thesis)\s*[-:：]\s*/i, '').trim();
+  cleaned = cleaned.replace(/[\s_-]*[-—–\s]*副本\s*$/g, '');
+  cleaned = cleaned.replace(/\s*-\s*副本\s*$/g, '');
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  cleaned = cleaned.replace(/[,\s]+$/, '');
+
+  const original = value.trim();
+  if (cleaned === original || !cleaned || cleaned.length < 4) {
+    return null;
+  }
+
+  return cleaned;
+}
+
 function firstString(...values) {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
@@ -300,12 +454,30 @@ function titleSimilarity(left, right) {
   return Math.max(diceCoefficient(normalizedLeft, normalizedRight), containmentScore);
 }
 
-function bestOpenAlexTitleMatch(results, requestedTitle) {
+function bestOpenAlexTitleMatch(results, requestedTitle, requestedYear) {
   const candidates = (Array.isArray(results) ? results : [])
-    .map((item) => ({
-      item,
-      score: titleSimilarity(requestedTitle, firstString(item?.title, item?.display_name)),
-    }))
+    .map((item) => {
+      let score = titleSimilarity(requestedTitle, firstString(item?.title, item?.display_name));
+
+      if (requestedYear && score >= 0.70) {
+        const itemYear = normalizeYear(
+          item?.publication_year ?? item?.publication_date
+        );
+
+        if (itemYear && requestedYear) {
+          const yearDiff = Math.abs(Number(itemYear) - Number(requestedYear));
+          if (yearDiff === 0) {
+            score = Math.min(score + 0.12, 1.0);
+          } else if (yearDiff === 1) {
+            score = Math.min(score + 0.06, 1.0);
+          } else if (yearDiff <= 3) {
+            score = Math.min(score + 0.03, 1.0);
+          }
+        }
+      }
+
+      return { item, score };
+    })
     .filter((candidate) => candidate.score >= 0.78)
     .sort((left, right) => right.score - left.score);
 
@@ -440,7 +612,7 @@ function mergeMetadataResults(...results) {
   return merged;
 }
 
-async function lookupOpenAlexMetadata({ doi, title, settings }) {
+async function lookupOpenAlexMetadata({ doi, title, year, settings }) {
   if (settings?.openAlexEnabled === false) {
     return null;
   }
@@ -466,7 +638,7 @@ async function lookupOpenAlexMetadata({ doi, title, settings }) {
   }
 
   const data = await readRequestJson(await fetch(endpoint), 'OpenAlex metadata');
-  const item = doi ? data : bestOpenAlexTitleMatch(data?.results, title);
+  const item = doi ? data : bestOpenAlexTitleMatch(data?.results, title, year);
   return mapOpenAlexWork(item);
 }
 
@@ -491,7 +663,9 @@ function createLibraryCommands(context) {
 
   const commands = {
     async library_init() {
-      const oldPaths = ['E:/PaperQuayData', 'E:/opencode_project/PaperQuay/.dev-data/PaperQuay'];
+      try { const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 }); db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close(); } catch {}
+
+      const oldPaths = [];
       const targetPath = appPaths.dataDir;
       const hasData = (p) => { try { fs.accessSync(path.join(p, 'paperquay-library.sqlite')); return true; } catch { return false; } };
 
@@ -503,7 +677,7 @@ function createLibraryCommands(context) {
             const dst = path.join(targetPath, dir);
             try { fs.accessSync(src); await fsp.cp(src, dst, { recursive: true, force: true }); } catch {}
           }
-          for (const file of ['paperquay-library.sqlite', 'paperquay-library.sqlite-shm', 'paperquay-library.sqlite-wal', 'paperquay-notes.sqlite', 'paperquay-notes.sqlite-shm', 'paperquay-notes.sqlite-wal', 'paperquay-rag.sqlite', 'paperquay-rag.sqlite-shm', 'paperquay-rag.sqlite-wal']) {
+          for (const file of ['paperquay-notes.sqlite', 'paperquay-notes.sqlite-shm', 'paperquay-notes.sqlite-wal', 'paperquay-rag.sqlite', 'paperquay-rag.sqlite-shm', 'paperquay-rag.sqlite-wal']) {
             const src = path.join(oldPath, file);
             const dst = path.join(targetPath, file);
             try { fs.accessSync(src); await fsp.copyFile(src, dst); } catch {}
@@ -512,15 +686,14 @@ function createLibraryCommands(context) {
       }
 
       const library = store.load();
-
-      if (library.settings.storageDir && (
-        library.settings.storageDir.includes('.dev-data') ||
-        !path.isAbsolute(library.settings.storageDir) ||
-        (() => { try { fs.accessSync(library.settings.storageDir); return false; } catch { return true; } })()
-      )) {
-        const newDir = appPaths.storageDefaultDir;
-        await fsp.mkdir(newDir, { recursive: true });
-        library.settings.storageDir = newDir;
+      let settingsChanged = false;
+      const sd = library.settings.storageDir;
+      let sdInvalid = false;
+      if (sd) { try { fs.accessSync(sd); } catch { sdInvalid = true; } }
+      if (sd && (sd.includes('.dev-data') || !path.isAbsolute(sd) || sdInvalid)) {
+        library.settings.storageDir = appPaths.storageDefaultDir;
+        await fsp.mkdir(appPaths.storageDefaultDir, { recursive: true });
+        settingsChanged = true;
       }
 
       let fixed = 0;
@@ -551,6 +724,7 @@ function createLibraryCommands(context) {
           const contentHash = hashBytes(bytes);
           if (library.papers.some((p) => p.attachments.some((a) => a.contentHash === contentHash))) continue;
           const fnNoExt = entry.name.replace(/\.pdf$/i, '');
+          const stat = await fsp.stat(filePath);
           library.papers.push({
             id: id('paper'),
             title: fnNoExt,
@@ -560,7 +734,7 @@ function createLibraryCommands(context) {
             source: 'local',
             sortOrder: Math.min(0, ...library.papers.map((p) => p.sortOrder ?? 0)) - 1,
             authors: [], tags: [], categoryIds: [],
-            attachments: [{ id: id('att'), paperId: '', kind: 'pdf', originalPath: filePath, storedPath: filePath, relativePath: null, fileName: entry.name, mimeType: 'application/pdf', fileSize: entries.find(() => true) ? (await fsp.stat(filePath)).size : 0, contentHash, createdAt: now(), missing: false }],
+            attachments: [{ id: id('att'), paperId: '', kind: 'pdf', originalPath: filePath, storedPath: filePath, relativePath: null, fileName: entry.name, mimeType: 'application/pdf', fileSize: stat.size, contentHash, createdAt: now(), missing: false }],
           });
           const last = library.papers[library.papers.length - 1];
           last.attachments[0].paperId = last.id;
@@ -569,7 +743,22 @@ function createLibraryCommands(context) {
         }
       } catch {}
 
-      if (fixed > 0 || scanned > 0) store.save(library);
+      try {
+        const allStoredPaths = new Set(library.papers.flatMap((p) => p.attachments.map((a) => a.storedPath)));
+        const dirEntries = await fsp.readdir(papersDir, { withFileTypes: true });
+        let orphanCleaned = 0;
+        for (const entry of dirEntries) {
+          if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.pdf')) continue;
+          const fullPath = path.join(papersDir, entry.name);
+          if (!allStoredPaths.has(fullPath)) {
+            await fsp.rm(fullPath, { force: true }).catch(() => {});
+            orphanCleaned += 1;
+          }
+        }
+        if (orphanCleaned > 0) console.log(`[library_init] Cleaned ${orphanCleaned} orphaned PDFs from ${papersDir}`);
+      } catch {}
+
+      if (settingsChanged || fixed > 0 || scanned > 0) store.save(library);
       return {
         settings: library.settings,
         categories: attachCategoryCounts(library),
@@ -671,7 +860,7 @@ function createLibraryCommands(context) {
 
     async library_list_papers({ request = {} }) {
       const library = store.load();
-      const limit = Math.max(1, Math.min(1000, request.limit ?? 300));
+      const limit = request.limit === 0 ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.min(1000, request.limit ?? 300));
       return sortPapers(library.papers.filter((paper) => paperMatches(paper, request, library)), request).slice(0, limit);
     },
 
@@ -841,6 +1030,16 @@ function createLibraryCommands(context) {
       const paper = library.papers.find((item) => item.id === request.paperId);
       if (!paper) throw new Error('Paper does not exist');
       if (!paper.categoryIds.includes(request.categoryId)) paper.categoryIds.push(request.categoryId);
+      paper.updatedAt = now();
+      await store.save(library);
+      return paper;
+    },
+
+    async library_remove_paper_category({ request }) {
+      const library = store.load();
+      const paper = library.papers.find((item) => item.id === request.paperId);
+      if (!paper) throw new Error('Paper does not exist');
+      paper.categoryIds = paper.categoryIds.filter((id) => id !== request.categoryId);
       paper.updatedAt = now();
       await store.save(library);
       return paper;
@@ -1243,7 +1442,17 @@ function createLibraryCommands(context) {
 
     async library_scan_papers_folder() {
       const library = store.load();
+
+      const sd = library.settings.storageDir;
+      let sdInvalid = false;
+      if (sd) { try { fs.accessSync(sd); } catch { sdInvalid = true; } }
+      if (sd && (sd.includes('.dev-data') || !path.isAbsolute(sd) || sdInvalid)) {
+        library.settings.storageDir = appPaths.storageDefaultDir;
+        store.save(library);
+      }
+
       const papersDir = library.settings.storageDir || appPaths.storageDefaultDir;
+      try { await fsp.mkdir(papersDir, { recursive: true }); } catch {}
       let found = 0, imported = 0, ignored = 0;
       try {
         const entries = await fsp.readdir(papersDir, { withFileTypes: true });
@@ -1259,31 +1468,26 @@ function createLibraryCommands(context) {
           if (existing) { ignored += 1; continue; }
 
           const fnNoExt = entry.name.replace(/\.pdf$/i, '');
+          const stat = await fsp.stat(filePath);
           library.papers.push({
             id: id('paper'),
             title: fnNoExt,
-            year: null,
-            publication: null, doi: null, url: null, abstractText: null, keywords: [],
+            year: null, publication: null, doi: null, url: null, abstractText: null, keywords: [],
             importedAt: now(), updatedAt: now(), lastReadAt: null, readingProgress: 0,
             isFavorite: false, userNote: null, aiSummary: null, citation: null,
             source: 'local',
             sortOrder: Math.min(0, ...library.papers.map((p) => p.sortOrder ?? 0)) - 1,
             authors: [], tags: [], categoryIds: [],
-            attachments: [{
-              id: id('att'), paperId: '', kind: 'pdf',
-              originalPath: filePath, storedPath: filePath,
-              relativePath: null, fileName: entry.name, mimeType: 'application/pdf',
-              fileSize: await fsp.stat(filePath).then(s => s.size),
-              contentHash, createdAt: now(), missing: false,
-            }],
+            attachments: [{ id: id('att'), paperId: '', kind: 'pdf', originalPath: filePath, storedPath: filePath, relativePath: null, fileName: entry.name, mimeType: 'application/pdf', fileSize: stat.size, contentHash, createdAt: now(), missing: false }],
           });
-          library.papers[library.papers.length - 1].attachments[0].paperId = library.papers[library.papers.length - 1].id;
-          library.papers[library.papers.length - 1].attachments[0].id = id('att');
+          const last = library.papers[library.papers.length - 1];
+          last.attachments[0].paperId = last.id;
+          last.attachments[0].id = id('att');
           imported += 1;
         }
-        if (imported > 0) await store.save(library);
+        if (imported > 0) store.save(library);
         return { found, imported, ignored };
-      } catch { return { found: 0, imported: 0, ignored: 0 }; }
+      } catch (e) { return { found: 0, imported: 0, ignored: 0, error: String(e) }; }
     },
 
     async library_export_bibtex() {
@@ -1367,48 +1571,23 @@ function createLibraryCommands(context) {
 
     async library_get_translation({ request }) {
       const { paperId, field, targetLang } = request ?? {};
-      if (!paperId || !field || !targetLang) return null;
-      const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
-      try {
-        const row = db.prepare(
-          'SELECT translated_text, source_lang, updated_at FROM paper_translations WHERE paper_id = ? AND field = ? AND target_lang = ?'
-        ).get(paperId, field, targetLang);
-        return row ?? null;
-      } finally {
-        db.close();
-      }
+      return store.getTranslation({ paperId, field, targetLang });
     },
 
     async library_batch_get_translations({ request }) {
       const { paperIds, field, targetLang } = request ?? {};
       if (!paperIds?.length || !field || !targetLang) return {};
-      const placeholders = paperIds.map(() => '?').join(',');
-      const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
-      try {
-        const rows = db.prepare(
-          `SELECT paper_id, translated_text FROM paper_translations WHERE field = ? AND target_lang = ? AND paper_id IN (${placeholders})`
-        ).all(field, targetLang, ...paperIds);
-        const result = {};
-        for (const row of rows) result[row.paper_id] = row.translated_text;
-        return result;
-      } finally {
-        db.close();
+      const result = {};
+      for (const paperId of paperIds) {
+        const row = store.getTranslation({ paperId, field, targetLang });
+        if (row) result[paperId] = row.translated_text;
       }
+      return result;
     },
 
     async library_save_translation({ request }) {
       const { paperId, field, sourceLang, targetLang, translatedText } = request ?? {};
-      if (!paperId || !field || !targetLang || !translatedText) return;
-      const db = new DatabaseSync(appPaths.libraryDatabasePath, { timeout: 3000 });
-      try {
-        db.prepare(`INSERT INTO paper_translations (paper_id, field, source_lang, target_lang, translated_text, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(paper_id, field, target_lang)
-          DO UPDATE SET translated_text = excluded.translated_text, source_lang = excluded.source_lang, updated_at = excluded.updated_at
-        `).run(paperId, field, sourceLang ?? null, targetLang, translatedText, Date.now());
-      } finally {
-        db.close();
-      }
+      store.saveTranslation({ paperId, field, sourceLang, targetLang, translatedText });
     },
 
     async library_translate_text({ request }) {
@@ -1461,16 +1640,73 @@ function createLibraryCommands(context) {
 
     async lookup_literature_metadata({ request }) {
       const library = store.load();
-      const doi = normalizeDoi(request?.doi);
-      const title = cleanString(request?.title);
+      let doi = normalizeDoi(request?.doi);
+      let title = cleanString(request?.title);
+      let year = cleanString(request?.year) || null;
+
+      if (!doi && request?.path) {
+        doi = extractDoiFromPdfFile(request.path);
+      }
+
+      if (!year && request?.path) {
+        year = extractYearFromFilename(request.path);
+      }
+
       if (!doi && !title) return null;
 
-      const [openAlexResult, crossrefResult] = await Promise.all([
-        lookupOpenAlexMetadata({ doi, title, settings: library.settings }).catch(() => null),
+      const [openAlexResult1, crossrefResult1] = await Promise.all([
+        lookupOpenAlexMetadata({ doi, title, year, settings: library.settings }).catch(() => null),
         lookupCrossrefMetadata({ doi, title }).catch(() => null),
       ]);
 
-      return mergeMetadataResults(openAlexResult, crossrefResult);
+      const firstResult = mergeMetadataResults(openAlexResult1, crossrefResult1);
+      if (firstResult) return firstResult;
+
+      if (!doi && title) {
+        const cleanedTitle = cleanTitleForRetry(title);
+
+        if (cleanedTitle && cleanedTitle !== title) {
+          const [openAlexResult2, crossrefResult2] = await Promise.all([
+            lookupOpenAlexMetadata({ doi: null, title: cleanedTitle, year, settings: library.settings }).catch(() => null),
+            lookupCrossrefMetadata({ doi: null, title: cleanedTitle }).catch(() => null),
+          ]);
+
+          const secondResult = mergeMetadataResults(openAlexResult2, crossrefResult2);
+          if (secondResult) return secondResult;
+        }
+      }
+
+      const paperId = request?.paperId || (request?.path ? path.basename(request.path, '.pdf') : null);
+      if (paperId && appPaths.mineruCacheDir) {
+        const mineruMeta = await extractMetadataFromMineruMarkdown(paperId, appPaths.mineruCacheDir);
+
+        if (mineruMeta && (mineruMeta.doi || mineruMeta.title)) {
+          const mDoi = mineruMeta.doi || null;
+          const mTitle = mineruMeta.title || title;
+          const [openAlexResultM, crossrefResultM] = await Promise.all([
+            lookupOpenAlexMetadata({ doi: mDoi, title: mTitle, year, settings: library.settings }).catch(() => null),
+            lookupCrossrefMetadata({ doi: mDoi, title: mTitle }).catch(() => null),
+          ]);
+
+          const mineruApiResult = mergeMetadataResults(openAlexResultM, crossrefResultM);
+          if (mineruApiResult) return mineruApiResult;
+        }
+
+        if (mineruMeta && (mineruMeta.doi || mineruMeta.title || (mineruMeta.authors && mineruMeta.authors.length > 0))) {
+          return {
+            source: 'mineru-markdown',
+            doi: mineruMeta.doi || null,
+            title: mineruMeta.title || null,
+            authors: mineruMeta.authors || [],
+            year: year || null,
+            publication: null,
+            url: null,
+            abstractText: mineruMeta.abstractText || null,
+          };
+        }
+      }
+
+      return null;
     },
   };
 

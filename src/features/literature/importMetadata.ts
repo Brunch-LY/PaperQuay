@@ -84,6 +84,13 @@ export function titleFromPdfPath(path: string): string {
   return getFileNameFromPath(path).replace(/\.pdf$/i, '') || 'Untitled PDF';
 }
 
+export function extractYearFromPath(filePath: string | null): string | null {
+  if (!filePath) return null;
+  const basename = filePath.replace(/\.pdf$/i, '');
+  const match = basename.match(/\b(18|19|20|21)\d{2}\b/);
+  return match ? match[0] : null;
+}
+
 export function mergeLocalPdfMetadataIntoDraft(
   draft: ImportDraftItem,
   metadata: LocalPdfMetadataPreview,

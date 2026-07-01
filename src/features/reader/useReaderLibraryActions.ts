@@ -262,6 +262,14 @@ export function useReaderLibraryActions({
               },
             }),
           );
+          document.dispatchEvent(
+            new CustomEvent('paperquay:native-mineru-status-updated', {
+              detail: {
+                paperId: item.itemKey,
+                mineruParsed: true,
+              },
+            }),
+          );
           setStatusMessage(l('已复用已有的 MinerU 解析结果', 'Reused the existing MinerU parse result'));
           return;
         }
@@ -378,6 +386,14 @@ export function useReaderLibraryActions({
           },
         );
         window.dispatchEvent(
+          new CustomEvent('paperquay:native-mineru-status-updated', {
+            detail: {
+              paperId: item.itemKey,
+              mineruParsed: true,
+            },
+          }),
+        );
+        document.dispatchEvent(
           new CustomEvent('paperquay:native-mineru-status-updated', {
             detail: {
               paperId: item.itemKey,

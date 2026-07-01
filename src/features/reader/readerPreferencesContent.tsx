@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
-import { openExternalUrl, testEmbeddingConnection } from '../../services/desktop';
+import { openExternalUrl, getReaderPresetConfig, testEmbeddingConnection } from '../../services/desktop';
 import { exportBibtex, getLibrarySettings, getPaperTranslation, listLibraryPapers, migrateAllToRepo, savePaperTranslation, translateTextViaProvider } from '../../services/library';
 import { resolveSummaryOutputLanguage } from '../../services/summarySource';
 import type { LibraryImportMode, LibrarySettings, LiteraturePaper, TranslationModelPreset } from '../../types/library';
@@ -102,6 +102,7 @@ interface ReaderPreferencesContentProps
     | 'batchSummaryPaused'
     | 'batchMineruProgress'
     | 'batchSummaryProgress'
+    | 'batchError'
   > {
   activeSection: PreferencesSectionKey;
   l: ReaderPreferencesLocalizer;
@@ -274,6 +275,7 @@ export function ReaderPreferencesContent({
   batchSummaryPaused = false,
   batchMineruProgress,
   batchSummaryProgress,
+  batchError,
 }: ReaderPreferencesContentProps) {
   const languageOptions = buildLanguageOptions(settings.uiLanguage);
   const summaryLanguageOptions = buildSummaryLanguageOptions(settings.uiLanguage);
@@ -827,6 +829,11 @@ export function ReaderPreferencesContent({
                   </button>
                 ) : null}
               </div>
+              {batchError ? (
+                <div className="mt-2 rounded-lg border border-rose-300/50 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {batchError}
+                </div>
+              ) : null}
               <BatchProgressCard
                 title={l('MinerU 批量解析进度', 'MinerU Batch Progress')}
                 progress={batchMineruProgress}
@@ -1178,178 +1185,25 @@ export function ReaderPreferencesContent({
           <SettingsField
             label={l('标题翻译', 'Title Translation')}
             description={l(
-              '配置翻译服务，可在论文详情页翻译标题。',
-              'Configure translation service for paper title translation.',
+              '选择用于翻译文献标题的 AI 模型。使用左侧 AI 模型预设中的配置。',
+              'Choose the AI model for translating paper titles. Uses presets from the AI Models section.',
             )}
           >
-            <SettingsSelect
-              value={activeLibrarySettings.translationProvider}
-              onChange={(event) =>
-                updateLibrarySetting('translationProvider', event.target.value as any)
-              }
-            >
-              <option value="ai">{l('AI 翻译 (OpenAI 兼容)', 'AI (OpenAI Compatible)')}</option>
-              <option value="baidu">{l('百度翻译', 'Baidu Translate')}</option>
-              <option value="aliyun">{l('阿里云翻译', 'Alibaba Cloud Translate')}</option>
-              <option value="tencent">{l('腾讯云翻译', 'Tencent Cloud Translate')}</option>
-              <option value="volc">{l('火山引擎翻译', 'Volcano Engine Translate')}</option>
-              <option value="google">{l('Google 翻译', 'Google Translate')}</option>
-              <option value="deepl">{l('DeepL 翻译', 'DeepL Translate')}</option>
-            </SettingsSelect>
-
-            {activeLibrarySettings.translationProvider === 'ai' && (
-              <>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                      {l('服务商预设', 'Provider Preset')}
-                    </div>
-                    <SettingsSelect
-                      value=""
-                      onChange={(event) => {
-                        const presets: Record<string, { baseUrl: string; model: string }> = {
-                          openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-                          deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-                          moonshot: { baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-                          qwen: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
-                          baidu: { baseUrl: 'https://qianfan.baidubce.com/v2', model: 'ernie-4.0' },
-                          tencent: { baseUrl: 'https://api.lkeap.cloud.tencent.com/v1', model: 'deepseek-v3' },
-                          volc: { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
-                          siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
-                        };
-                        const preset = presets[event.target.value];
-                        if (preset) {
-                          updateLibrarySetting('translationBaseUrl', preset.baseUrl);
-                          updateLibrarySetting('translationModel', preset.model);
-                        }
-                      }}
-                    >
-                      <option value="">{l('手动输入', 'Manual')}</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="deepseek">DeepSeek（深度求索）</option>
-                      <option value="moonshot">Moonshot（月之暗面）</option>
-                      <option value="qwen">Qwen（阿里通义千问）</option>
-                      <option value="baidu">百度千帆</option>
-                      <option value="tencent">腾讯混元</option>
-                      <option value="volc">火山引擎豆包</option>
-                      <option value="siliconflow">SiliconFlow（硅基流动）</option>
-                    </SettingsSelect>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                      {l('API 地址', 'API Base URL')}
-                    </div>
-                    <SettingsInput
-                      value={activeLibrarySettings.translationBaseUrl}
-                      onChange={(event) => updateLibrarySetting('translationBaseUrl', event.target.value)}
-                      placeholder="https://api.openai.com/v1"
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                      {l('API Key', 'API Key')}
-                    </div>
-                    <SettingsInput
-                      type="password"
-                      value={activeLibrarySettings.translationApiKey}
-                      onChange={(event) => updateLibrarySetting('translationApiKey', event.target.value)}
-                      placeholder="sk-..."
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                      {l('模型', 'Model')}
-                    </div>
-                    <SettingsInput
-                      value={activeLibrarySettings.translationModel}
-                      onChange={(event) => updateLibrarySetting('translationModel', event.target.value)}
-                      placeholder="gpt-4o-mini"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {(activeLibrarySettings.translationProvider === 'google' || activeLibrarySettings.translationProvider === 'deepl') && (
-              <div className="space-y-1.5">
-                <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                  {l('API Key', 'API Key')}
-                </div>
-                <SettingsInput
-                  type="password"
-                  value={activeLibrarySettings.translationApiKey}
-                  onChange={(event) => updateLibrarySetting('translationApiKey', event.target.value)}
-                  placeholder={l('API Key', 'API Key')}
-                />
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-slate-500">{l('标题翻译模型', 'Title Translation Model')}</div>
+              <SettingsSelect
+                value={settings.titleTranslationModelPresetId}
+                onChange={(event) => onSettingChange('titleTranslationModelPresetId', event.target.value)}
+              >
+                <option value="default">{l('跟随全文翻译模型', 'Follow document translation model')}</option>
+                {qaModelPresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>{preset.label}</option>
+                ))}
+              </SettingsSelect>
+              <div className="text-[11px] leading-5 text-slate-400">
+                {l('也可在文献详情面板中手动选择其他模型。翻译预设不再需要单独配置 API Key。', 'You can also manually select different models in the paper details panel. No separate API key needed for title translation.')}
               </div>
-            )}
-
-            {activeLibrarySettings.translationProvider === 'baidu' && (
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                    APP ID
-                  </div>
-                  <SettingsInput
-                    value={activeLibrarySettings.translationAppId}
-                    onChange={(event) => updateLibrarySetting('translationAppId', event.target.value)}
-                    placeholder={l('APP ID', 'APP ID')}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                    {l('密钥', 'Secret Key')}
-                  </div>
-                  <SettingsInput
-                    type="password"
-                    value={activeLibrarySettings.translationSecretKey}
-                    onChange={(event) => updateLibrarySetting('translationSecretKey', event.target.value)}
-                    placeholder={l('密钥', 'Secret Key')}
-                  />
-                </div>
-              </div>
-            )}
-
-            {(activeLibrarySettings.translationProvider === 'aliyun' || activeLibrarySettings.translationProvider === 'tencent' || activeLibrarySettings.translationProvider === 'volc') && (
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                    {l('Access Key / SecretId', 'Access Key / SecretId')}
-                  </div>
-                  <SettingsInput
-                    value={activeLibrarySettings.translationApiKey}
-                    onChange={(event) => updateLibrarySetting('translationApiKey', event.target.value)}
-                    placeholder={l('Access Key', 'Access Key')}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <div className="text-xs font-medium text-slate-500 dark:text-[var(--pq-text-muted)]">
-                    {l('Secret Key', 'Secret Key')}
-                  </div>
-                  <SettingsInput
-                    type="password"
-                    value={activeLibrarySettings.translationSecretKey}
-                    onChange={(event) => updateLibrarySetting('translationSecretKey', event.target.value)}
-                    placeholder={l('Secret Key', 'Secret Key')}
-                  />
-                </div>
-              </div>
-            )}
-
-            <TranslationPresetManager
-              presets={activeLibrarySettings.translationPresets ?? []}
-              selectedId={activeLibrarySettings.titleTranslationPresetId}
-              onUpdatePresets={(presets) => updateLibrarySetting('translationPresets', presets)}
-              onSelectPreset={(id) => updateLibrarySetting('titleTranslationPresetId', id)}
-              l={l}
-            />
-
-            <TranslationTestButton
-              settings={activeLibrarySettings}
-              l={l}
-            />
+            </div>
 
             <BatchTranslateButton
               settings={activeLibrarySettings}
@@ -1988,6 +1842,18 @@ function BatchTranslateButton({ settings, l }: BatchTranslateButtonProps) {
 
         const batch = candidates.slice(i, i + BATCH);
         const results = await Promise.allSettled(batch.map(async ({ paper, title }) => {
+          const preset = await getReaderPresetConfig();
+          if (preset.apiKey) {
+            const { translateTextOpenAICompatible } = await import('../../services/translation');
+            return await translateTextOpenAICompatible({
+              baseUrl: preset.baseUrl,
+              apiKey: preset.apiKey,
+              model: preset.model,
+              sourceLanguage: 'English',
+              targetLanguage: 'Chinese',
+              text: title,
+            });
+          }
           const settingsData = await getLibrarySettings();
           if (settingsData.translationProvider === 'ai') {
             const { translateTextOpenAICompatible } = await import('../../services/translation');

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import clsx from 'clsx';
 import {
   AlertCircle,
   BookOpenText,
@@ -25,6 +26,7 @@ import type {
 } from '../../../types/library';
 import type { PdfReadingHeatmap } from '../../../types/reader';
 import { fetchZoteroPdf, getLibrarySettings, getPaperTranslation, savePaperTranslation, translateTextViaProvider } from '../../../services/library';
+import { getReaderPresetConfig } from '../../../services/desktop';
 import {
   loadPaperHistory,
   PAPER_READING_HEATMAP_UPDATED_EVENT,
@@ -48,6 +50,8 @@ interface LiteraturePaperDetailsProps {
   onRunMineruParse?: (paper: LiteraturePaper) => void;
   onTranslatePaper?: (paper: LiteraturePaper) => void;
   onGenerateSummary?: (paper: LiteraturePaper) => void;
+  mineruParsed?: boolean;
+  overviewGenerated?: boolean;
 }
 
 interface PaperEditDraft {
@@ -479,6 +483,8 @@ export default function LiteraturePaperDetails({
   onRunMineruParse,
   onTranslatePaper,
   onGenerateSummary,
+  mineruParsed,
+  overviewGenerated,
 }: LiteraturePaperDetailsProps) {
   const l = useLocaleText();
   const locale = useAppLocale();
@@ -490,7 +496,6 @@ export default function LiteraturePaperDetails({
   const [translatedTitle, setTranslatedTitle] = useState<string | null>(null);
   const [translatingTitle, setTranslatingTitle] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
-  const [presets, setPresets] = useState<{ id: string; label: string; provider: string; apiKey: string; baseUrl: string; model: string; appId: string; secretKey: string }[]>([]);
   const [currentPresetId, setCurrentPresetId] = useState<string>('');
   const [editingTranslation, setEditingTranslation] = useState(false);
   const [editTranslationText, setEditTranslationText] = useState('');
@@ -603,7 +608,6 @@ export default function LiteraturePaperDetails({
 
   useEffect(() => {
     getLibrarySettings().then((s) => {
-      setPresets(s.translationPresets ?? []);
       setCurrentPresetId(s.titleTranslationPresetId || '');
     }).catch(() => {});
   }, [selectedPaper?.id]);
@@ -733,45 +737,32 @@ export default function LiteraturePaperDetails({
                   </div>
                   ) : (
                   <div className="flex flex-wrap items-center gap-2">
-                    {presets.length > 0 && (
-                      <select
-                        value={currentPresetId}
-                        onChange={(e) => setCurrentPresetId(e.target.value)}
-                        className="pq-input h-7 max-w-[180px] px-2 text-xs"
-                      >
-                        <option value="">{l('默认', 'Default')}</option>
-                        {presets.map((p) => <option key={p.id} value={p.id}>{p.label || p.model}</option>)}
-                      </select>
-                    )}
+                    <span className="text-[10px] text-[var(--pq-text-faint)]">{l('模型预设', 'Model')}:</span>
                     <button
                     type="button"
                     onClick={async () => {
                       if (!selectedPaper?.id || translatingTitle) return;
                       setTranslatingTitle(true);
                       try {
-                        const settings = await getLibrarySettings();
-                        const preset = presets.find((p) => p.id === (currentPresetId || settings.titleTranslationPresetId));
-                        const p = preset || { provider: settings.translationProvider, apiKey: settings.translationApiKey, baseUrl: settings.translationBaseUrl, model: settings.translationModel, appId: settings.translationAppId, secretKey: settings.translationSecretKey };
-                        let result: string;
-
-                        if (p.provider === 'ai') {
-                          const { translateTextOpenAICompatible } = await import('../../../services/translation');
-                          result = await translateTextOpenAICompatible({
-                            baseUrl: p.baseUrl || 'https://api.openai.com/v1',
-                            apiKey: p.apiKey,
-                            model: p.model || 'gpt-4o-mini',
-                            sourceLanguage: 'English',
-                            targetLanguage: 'Chinese',
-                            text: selectedPaper.title,
-                          });
-                        } else {
-                          result = await translateTextViaProvider({
-                            provider: p.provider,
-                            text: selectedPaper.title,
-                            sourceLang: 'en',
-                            targetLang: 'zh',
-                          });
+                        const preset = await getReaderPresetConfig();
+                        if (!preset.apiKey) {
+                          const ls = await getLibrarySettings();
+                          preset.apiKey = ls.translationApiKey || '';
+                          preset.baseUrl = preset.baseUrl || ls.translationBaseUrl || 'https://api.openai.com/v1';
+                          preset.model = preset.model || ls.translationModel || 'gpt-4o-mini';
                         }
+                        if (!preset.apiKey) {
+                          throw new Error('请在「设置 → AI 模型」中添加模型并填写 API Key');
+                        }
+                        const { translateTextOpenAICompatible } = await import('../../../services/translation');
+                        const result = await translateTextOpenAICompatible({
+                          baseUrl: preset.baseUrl,
+                          apiKey: preset.apiKey,
+                          model: preset.model,
+                          sourceLanguage: 'English',
+                          targetLanguage: 'Chinese',
+                          text: selectedPaper.title,
+                        });
 
                         setTranslatedTitle(result);
                         setEditTranslationText(result);
@@ -860,7 +851,7 @@ export default function LiteraturePaperDetails({
                         const dataDir = settings.zoteroLocalDataDir;
                         if (!dataDir) { alert(l('请先配置 Zotero 数据目录', 'Configure Zotero data dir first')); return; }
                         const result = await fetchZoteroPdf(selectedPaper.id, dataDir);
-                        if (result.ok) { alert(l(`PDF 已获取: ${result.fileName}`, `PDF fetched: ${result.fileName}`)); window.location.reload(); }
+                        if (result.ok) { alert(l(`PDF 已获取: ${result.fileName}`, `PDF fetched: ${result.fileName}`)); onSavePaper({ paperId: selectedPaper.id, isFavorite: selectedPaper.isFavorite }); }
                         else { alert(result.error || l('获取失败', 'Failed')); }
                       }}
                       title={l('从 Zotero 补充 PDF', 'Fetch PDF from Zotero')}
@@ -900,6 +891,27 @@ export default function LiteraturePaperDetails({
                 {actionState ? (
                   <div className="mt-3">
                     <TaskStatusPanel state={actionState} />
+                  </div>
+                ) : null}
+
+                {selectedPaper ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span className={clsx(
+                      'rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                      mineruParsed
+                        ? 'border-emerald-300/55 bg-emerald-50 text-emerald-700 dark:border-emerald-600/40 dark:bg-emerald-950/40 dark:text-emerald-400'
+                        : 'border-amber-300/55 bg-amber-50 text-amber-700 dark:border-amber-600/40 dark:bg-amber-950/40 dark:text-amber-400',
+                    )}>
+                      {mineruParsed ? l('MinerU 已解析', 'MinerU Parsed') : l('MinerU 未解析', 'MinerU Not Parsed')}
+                    </span>
+                    <span className={clsx(
+                      'rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                      overviewGenerated
+                        ? 'border-emerald-300/55 bg-emerald-50 text-emerald-700 dark:border-emerald-600/40 dark:bg-emerald-950/40 dark:text-emerald-400'
+                        : 'border-amber-300/55 bg-amber-50 text-amber-700 dark:border-amber-600/40 dark:bg-amber-950/40 dark:text-amber-400',
+                    )}>
+                      {overviewGenerated ? l('概览已生成', 'Overview Ready') : l('概览未生成', 'No Overview')}
+                    </span>
                   </div>
                 ) : null}
               </section>

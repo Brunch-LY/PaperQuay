@@ -616,7 +616,7 @@ async function localFileMatches(filePath, object) {
 
 function restorePdfTarget(library, object, appPaths) {
   const source = parseAttachmentSource(object.source);
-  const storageDir = library.settings?.storageDir || path.join(appPaths.dataDir, 'paperquay-data');
+  const storageDir = library.settings?.storageDir || appPaths.storageDefaultDir;
   const fileName = safeFileName(path.posix.basename(object.remotePath) || 'paper.pdf');
   const paper = source ? library.papers.find((item) => item.id === source.paperId) : null;
   const attachment = paper?.attachments?.find((item) => item.id === source.attachmentId);

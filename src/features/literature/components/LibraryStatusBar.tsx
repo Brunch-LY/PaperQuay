@@ -3,14 +3,17 @@ import { AlertTriangle, ChevronDown, ChevronRight, ScanSearch, Trash2, X } from 
 import { useLocaleText } from '../../../i18n/uiLanguage';
 import { batchDeletePapers, findDuplicatePapers } from '../../../services/library';
 import type { LiteraturePaper } from '../../../types/library';
+import type { LiteraturePaperListStatus } from './LiteraturePaperList';
 
 interface LibraryStatusBarProps {
   papers: LiteraturePaper[];
   pdfExistsMap?: Record<string, boolean>;
-  onFilterByStatus?: (filter: null | 'no-pdf' | 'no-overview' | 'duplicates') => void;
+  paperStatuses?: Record<string, LiteraturePaperListStatus>;
+  onFilterByStatus?: (filter: null | 'no-pdf' | 'no-mineru' | 'no-overview' | 'duplicates') => void;
+  onRefresh?: () => void;
 }
 
-export default function LibraryStatusBar({ papers, pdfExistsMap, onFilterByStatus }: LibraryStatusBarProps) {
+export default function LibraryStatusBar({ papers, pdfExistsMap, paperStatuses, onFilterByStatus, onRefresh }: LibraryStatusBarProps) {
   const l = useLocaleText();
   const [expanded, setExpanded] = useState(false);
   const [dupInfo, setDupInfo] = useState<{ totalDuplicates: number; groups: { type: string; value?: string; entries: { id: string; title: string; norm?: string; authors: string; year: string; doi: string }[] }[] } | null>(null);
@@ -19,6 +22,15 @@ export default function LibraryStatusBar({ papers, pdfExistsMap, onFilterByStatu
     if (pdfExistsMap) return papers.filter((p) => pdfExistsMap[p.id]).length;
     return papers.filter((p) => p.attachments.some((a) => a.kind === 'pdf')).length;
   }, [papers, pdfExistsMap]);
+
+  const mineruParsedCount = useMemo(() => {
+    if (!paperStatuses) return 0;
+    return papers.filter((p) => paperStatuses[p.id]?.mineruParsed).length;
+  }, [papers, paperStatuses]);
+
+  const overviewGeneratedCount = useMemo(() => {
+    return papers.filter((p) => p.aiSummary?.trim()).length;
+  }, [papers]);
 
   useEffect(() => {
     findDuplicatePapers().then(setDupInfo).catch(() => {});
@@ -47,6 +59,10 @@ export default function LibraryStatusBar({ papers, pdfExistsMap, onFilterByStatu
         <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
           <FilterBadge label={l('PDF', 'PDF')} count={pdfOkCount} total={papers.length} color="border-emerald-300/55 bg-emerald-50 text-emerald-700" />
           <FilterBadge label={l('缺 PDF', 'No PDF')} count={papers.length - pdfOkCount} total={papers.length} color="border-amber-300/55 bg-amber-50 text-amber-700" onClick={() => onFilterByStatus?.('no-pdf')} />
+          <FilterBadge label={l('已解析', 'Parsed')} count={mineruParsedCount} total={papers.length} color="border-emerald-300/55 bg-emerald-50 text-emerald-700" />
+          <FilterBadge label={l('未解析', 'Not Parsed')} count={papers.length - mineruParsedCount} total={papers.length} color="border-amber-300/55 bg-amber-50 text-amber-700" onClick={() => onFilterByStatus?.('no-mineru')} />
+          <FilterBadge label={l('有AI概览', 'Has AI Overview')} count={overviewGeneratedCount} total={papers.length} color="border-emerald-300/55 bg-emerald-50 text-emerald-700" />
+          <FilterBadge label={l('无AI概览', 'No AI Overview')} count={papers.length - overviewGeneratedCount} total={papers.length} color="border-amber-300/55 bg-amber-50 text-amber-700" onClick={() => onFilterByStatus?.('no-overview')} />
           <button
             type="button"
             onClick={() => setDupDialogOpen(true)}
@@ -67,6 +83,7 @@ export default function LibraryStatusBar({ papers, pdfExistsMap, onFilterByStatu
         <DuplicateDialog
           groups={dupInfo.groups}
           onClose={() => setDupDialogOpen(false)}
+          onRefresh={onRefresh}
           l={l}
         />
       )}
@@ -92,10 +109,12 @@ function FilterBadge({ label, count, total, color, onClick }: { label: string; c
 function DuplicateDialog({
   groups,
   onClose,
+  onRefresh,
   l,
 }: {
   groups: { type: string; value?: string; entries: { id: string; title: string; norm?: string; authors: string; year: string; doi: string }[] }[];
   onClose: () => void;
+  onRefresh?: () => void;
   l: (zh: string, en: string) => string;
 }) {
   const [deleting, setDeleting] = useState(false);
@@ -107,8 +126,9 @@ function DuplicateDialog({
     if (!window.confirm(l(`保留第一篇，删除其余 ${toDelete.length} 篇？\n保留：${kept.title}`, `Keep the first, delete ${toDelete.length} duplicates?\nKeep: ${kept.title}`))) return;
     setDeleting(true);
     try {
-      await batchDeletePapers(toDelete.map((e) => e.id), false);
-      window.location.reload();
+      await batchDeletePapers(toDelete.map((e) => e.id), true);
+      if (onRefresh) onRefresh();
+      onClose();
     } catch {
       alert(l('删除失败', 'Delete failed'));
     } finally {

@@ -202,6 +202,7 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   summaryModel: 'gpt-4o-mini',
   translationModelPresetId: 'default',
   selectionTranslationModelPresetId: 'default',
+  titleTranslationModelPresetId: 'default',
   summaryModelPresetId: 'default',
   agentModelPresetId: 'default',
   embeddingBaseUrl: 'https://api.openai.com',
@@ -563,7 +564,7 @@ export interface LibraryPreviewLoadResult {
   markdownText?: string;
 }
 
-export type LibraryPreviewOutcome = 'loaded' | 'generated' | 'skipped' | 'failed';
+export type LibraryPreviewOutcome = 'loaded' | 'generated' | 'skipped' | 'failed' | 'empty';
 
 export interface SummaryCacheEnvelope {
   version: number;
@@ -854,13 +855,13 @@ export function mergeReaderConfigWithDefaults(
 
   if (!nextSettings.mineruCacheDir.trim()) {
     nextSettings.mineruCacheDir = defaultPaths.mineruCacheDir;
-  } else if (looksLikeCorruptedGeneratedPath(nextSettings.mineruCacheDir)) {
+  } else if (looksLikeCorruptedGeneratedPath(nextSettings.mineruCacheDir) || nextSettings.mineruCacheDir.includes('.dev-data') || /^\.\.?[/\\]/.test(nextSettings.mineruCacheDir)) {
     nextSettings.mineruCacheDir = defaultPaths.mineruCacheDir;
   }
 
   if (!nextSettings.remotePdfDownloadDir.trim()) {
     nextSettings.remotePdfDownloadDir = defaultPaths.remotePdfDownloadDir;
-  } else if (looksLikeCorruptedGeneratedPath(nextSettings.remotePdfDownloadDir)) {
+  } else if (looksLikeCorruptedGeneratedPath(nextSettings.remotePdfDownloadDir) || nextSettings.remotePdfDownloadDir.includes('.dev-data') || /^\.\.?[/\\]/.test(nextSettings.remotePdfDownloadDir)) {
     nextSettings.remotePdfDownloadDir = defaultPaths.remotePdfDownloadDir;
   }
 
@@ -991,4 +992,18 @@ export function formatPaperSummaryForLibrary(summary: PaperSummary): string {
     .map(([title, content]) => `## ${title}\n${content}`);
 
   return sections.join('\n\n').trim();
+}
+
+export function hasSummaryContent(summary: PaperSummary): boolean {
+  return Boolean(
+    (summary.overview || summary.abstract || '').trim() ||
+    (summary.background || '').trim() ||
+    (summary.researchProblem || '').trim() ||
+    (summary.approach || '').trim() ||
+    (summary.experimentSetup || '').trim() ||
+    (summary.keyFindings || []).some((s) => s.trim()) ||
+    (summary.conclusions || '').trim() ||
+    (summary.limitations || '').trim() ||
+    (summary.takeaways || []).some((s) => s.trim()),
+  );
 }

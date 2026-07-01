@@ -366,6 +366,8 @@ export async function buildMetadataCompletionPlan(
       doi: paper.doi,
       title: paper.title,
       path: paperPdfPath(paper),
+      year: paper.year || null,
+      paperId: paper.id,
     });
 
     if (!metadata) {

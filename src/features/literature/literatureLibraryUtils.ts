@@ -349,7 +349,9 @@ export function metadataUpdateForPaper(
     if (
       key === 'title' &&
       currentValue?.trim() &&
-      (!pdfPath || !canAutoReplaceTitle(currentValue, pdfPath))
+      pdfPath &&
+      !canAutoReplaceTitle(currentValue, pdfPath) &&
+      !(metadata.doi?.trim())
     ) {
       return;
     }

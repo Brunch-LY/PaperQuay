@@ -136,6 +136,7 @@ import {
 import {
   chunkItems,
   getModelRuntimeConfig,
+  hasSummaryContent,
   pickLocaleText,
   resolveModelPreset,
 } from './readerShared';
@@ -1847,6 +1848,16 @@ function DocumentReaderTab({
             return;
           }
 
+          if (!hasSummaryContent(cachedSummary)) {
+            setPaperSummary(null);
+            setPaperSummarySourceKey('');
+            const errMsg = lRef.current('缓存的概览内容为空，请重新生成', 'Cached overview is empty, please regenerate.');
+            setPaperSummaryError(errMsg);
+            setStatusMessage(lRef.current('缓存概览为空', 'Cached overview is empty'));
+            updateLibraryOperation('overview', 'error', errMsg, 100, 100);
+            return;
+          }
+
           setPaperSummary(cachedSummary);
           setPaperSummarySourceKey(paperSummaryNextSourceKey);
           const successMessage = lRef.current('已从本地缓存恢复论文概览', 'Restored the paper overview from the local cache');
@@ -1871,6 +1882,20 @@ function DocumentReaderTab({
         });
 
         if (summaryRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        const isEmpty = !hasSummaryContent(summary);
+        if (isEmpty) {
+          setPaperSummary(null);
+          setPaperSummarySourceKey('');
+          const errMsg = lRef.current(
+            'AI 返回了空概览，请重试或检查模型配置',
+            'AI returned an empty overview. Retry or check model settings.',
+          );
+          setPaperSummaryError(errMsg);
+          setStatusMessage(lRef.current('AI 返回了空概览', 'AI returned an empty overview'));
+          updateLibraryOperation('overview', 'error', errMsg, 100, 100);
           return;
         }
 

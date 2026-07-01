@@ -78,4 +78,5 @@ export interface ReaderPreferencesWindowProps {
   batchSummaryPaused?: boolean;
   batchMineruProgress: BatchProgressState;
   batchSummaryProgress: BatchProgressState;
+  batchError?: string;
 }
